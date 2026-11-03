@@ -232,3 +232,18 @@ the measurement.
 
 Size alone was not enough — the stress suite proved a 1.5 MB junk page would have
 been read as "not sold" — so the payload must also look like Frontier's own app.
+
+## PHL BOS and DEN settled (2026-11-03, run 41700622687)
+
+The two contested PHL pairs were asked directly, four requests total:
+
+```
+sweep plan: 2/2 routes x 2 date(s) = 4 requests (shard full, budget 4; SWEEP_ONLY=BOS,DEN)
+2026-11-03 BOS: no-flights flights=0    2026-11-03 DEN: ok flights=4
+2026-11-04 BOS: no-flights flights=0    2026-11-04 DEN: ok flights=17
+sweeps=4/4 requests=4 flights=21 blocked=0 aborted=no
+```
+
+Both pairs are served. DEN returns real flights on both dates; BOS returns a valid
+payload with an empty flight list, a genuine no-flights day rather than a wrong city
+pair. Neither needs quarantining and neither is a guess any more.
