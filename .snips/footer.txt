@@ -1,0 +1,2 @@
+  ${view.sweep && view.sweep.quarantined ? `${view.sweep.quarantined} route${view.sweep.quarantined === 1 ? '' : 's'} retired after answering "not sold" &middot; FULL_SWEEP=1 re-checks them.<br>` : ''}
+  Read-only. Never touches booking or payment.

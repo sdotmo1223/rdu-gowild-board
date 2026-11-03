@@ -1,0 +1,13 @@
+    // A board that is healthy and empty looks exactly like one nobody is running.
+    // Count consecutive empty sweeps so the page can state a verdict instead of
+    // repeating "no seats" forever, and so an alert can say "still nothing".
+    if (boardRows.length > 0) {
+      state.zero = null;
+    } else {
+      const priorZero = state.zero && typeof state.zero === 'object' ? state.zero : null;
+      state.zero = {
+        count: priorZero ? Number(priorZero.count || 0) + 1 : 1,
+        since: priorZero && priorZero.since ? priorZero.since : now,
+      };
+    }
+

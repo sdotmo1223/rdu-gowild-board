@@ -122,6 +122,7 @@ export function buildBoard(state, now = Date.now()) {
     stale: ageMin === null || ageMin > STALE_AFTER_MIN,
     error: src.lastError || null,
     routeCount: src.routeCount || 0,
+    zero: src.zero && typeof src.zero === 'object' ? src.zero : null,
     sweep: src.lastSweep && typeof src.lastSweep === 'object' ? src.lastSweep : null,
   };
 }

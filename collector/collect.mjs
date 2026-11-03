@@ -11,11 +11,13 @@ import {
 } from '../src/routes.js';
 import { parseRoute, classifyFailure, shouldAbortSweep, mergeSweeps } from './parse.mjs';
 import { appendTransitions, recordObservation, recordFirstSeen } from '../src/history.js';
-import { buildAlert, sendAlert } from '../src/alerts.mjs';
+import { buildAlert, buildZeroAlert, sendAlert } from '../src/alerts.mjs';
 import { recordSchedule } from '../src/schedule.mjs';
 import { readCookieString, applyCookies } from './cookies.mjs';
 
 const KV_KEY = 'state';
+// A city pair retired after this many "not sold" answers.
+const QUARANTINE_AFTER = 3;
 const API_BASE = 'https://api.cloudflare.com/client/v4';
 const BASE_URL = 'https://booking.flyfrontier.com/Flight/Select';
 // The booking root keeps the fetches same-origin; /Flight/Select redirects to
@@ -154,15 +156,41 @@ async function main() {
   // 19/28, so a burst that big spends requests being told no. Two shards of seven
   // give the same coverage every 30 minutes for half the burst. FULL_SWEEP=1 asks
   // all 14 for a deliberate backfill.
-  const shard = process.env.FULL_SWEEP === '1' ? null : routeShard(startedAt);
-  const shardList = shardRoutes(ROUTES, shard);
+  // SWEEP_ONLY=ATL,MCO asks exactly the routes named. A one-round-trip question
+  // ("does Frontier sell PHL-BOS?") should not cost a CI queue slot, and a
+  // diagnostic must never hide behind the rotation.
+  const onlyCodes = String(process.env.SWEEP_ONLY || '')
+    .toUpperCase()
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  // A city pair that answers "not sold" is not an outage (see parse.mjs), but it
+  // must not be paid for forever. Three sightings retire it; FULL_SWEEP=1 or
+  // SWEEP_ONLY=CODE puts it back deliberately.
+  const watch = previous && previous.routeWatch && typeof previous.routeWatch === 'object' ? previous.routeWatch : {};
+  const quarantined = Object.keys(watch).filter((c) => Number(watch[c] && watch[c].notServed) >= QUARANTINE_AFTER);
+  const forced = onlyCodes.length > 0 || process.env.FULL_SWEEP === '1';
+  let routePool = onlyCodes.length ? ROUTES.filter((r) => onlyCodes.includes(r.code)) : ROUTES.slice();
+  if (quarantined.length && !forced) routePool = routePool.filter((r) => !quarantined.includes(r.code));
+  if (onlyCodes.length && !routePool.length) {
+    throw new Error(
+      `SWEEP_ONLY=${onlyCodes.join(',')} matched no route in this profile (${ROUTES.map((r) => r.code).join(',')})`,
+    );
+  }
+  const shard = forced ? null : routeShard(startedAt);
+  const shardList = shardRoutes(routePool, shard);
   // A per-profile request budget. Several origins in one job would otherwise add
   // up to a burst big enough to earn a refusal, and a refusal aborts. The budget
   // keeps each profile's burst small and simply defers the rest to the next tick,
   // where the rotation picks it up. Budget is in requests, not routes.
+  // FULL_SWEEP/SWEEP_ONLY mean "ask everything named", so the per-profile budget
+  // must not silently halve a deliberate backfill (it did: FULL_SWEEP asked 7 of
+  // 14 routes). The normal rotating tick is unaffected.
   const budget = Math.max(
     1,
-    Number(process.env.SWEEP_MAX_REQUESTS) || shardList.length * dates.length,
+    forced
+      ? routePool.length * dates.length
+      : Number(process.env.SWEEP_MAX_REQUESTS) || shardList.length * dates.length,
   );
   const maxRoutes = Math.max(1, Math.floor(budget / dates.length));
   // Slice with a clock-driven offset instead of always taking the first N. Taking
@@ -176,10 +204,12 @@ async function main() {
   const { chromium } = await import('playwright');
 
   console.log(
-    `sweep plan: ${plannedRoutes.length}/${ROUTES.length} routes x ${dates.length} date(s) = ${
+    `sweep plan: ${plannedRoutes.length}/${routePool.length} routes x ${dates.length} date(s) = ${
       dates.length * plannedRoutes.length
     } requests (shard ${shard === null ? 'full' : shard}, budget ${budget}${
       skipToday ? '; today skipped, departures finished' : ''
+    }${onlyCodes.length ? `; SWEEP_ONLY=${onlyCodes.join(',')}` : ''}${
+      quarantined.length && !forced ? `; ${quarantined.length} retired as not-sold` : ''
     })`,
   );
 
@@ -218,6 +248,8 @@ async function main() {
   await sleep(3000);
 
   const sweeps = [];
+  const notServedHits = [];
+  const servedHits = [];
   const total = dates.length * plannedRoutes.length;
   let requests = 0;
   let abortedAt = null;
@@ -243,6 +275,8 @@ async function main() {
 
       const parsed = parseRoute(response, date, route.code, route.city);
       sweeps.push({ date, dest: route.code, ...parsed });
+      if (parsed.notServed) notServedHits.push(route.code);
+      else if (parsed.ok && watch[route.code]) servedHits.push(route.code);
       console.log(`${date} ${route.code}: ${parsed.reason} flights=${parsed.flights.length} blocked=${parsed.blocked}`);
       if (shouldAbortSweep(parsed)) {
         abortedAt = { date, dest: route.code, reason: parsed.reason, attempts: sweeps.length };
@@ -265,6 +299,19 @@ async function main() {
   const okCount = sweeps.filter((s) => s.ok).length;
 
   const state = previous || { history: [] };
+  // Retire confirmed "not sold" pairs, and un-retire any that answered normally.
+  state.routeWatch = state.routeWatch && typeof state.routeWatch === 'object' ? state.routeWatch : {};
+  for (const code of new Set(notServedHits)) {
+    const w =
+      state.routeWatch[code] && typeof state.routeWatch[code] === 'object'
+        ? state.routeWatch[code]
+        : { notServed: 0, firstAt: now };
+    w.notServed = Number(w.notServed || 0) + 1;
+    w.lastAt = now;
+    state.routeWatch[code] = w;
+  }
+  for (const code of new Set(servedHits)) delete state.routeWatch[code];
+
   state.version = 1;
   state.routeCount = ROUTES.length;
   state.requests = requests;
@@ -359,6 +406,7 @@ async function main() {
       routes: plannedRoutes.length,
       total: ROUTES.length,
       skippedToday: skipToday,
+      quarantined: quarantined.length,
     };
 
     // Free schedule data: record what each route did on each swept date. No extra
@@ -372,6 +420,18 @@ async function main() {
     // One digest for the whole board (both dates). Calling this per-date would
     // overwrite lastRows and re-emit the other date's rows as new transitions.
     const boardRows = allFlights.filter((f) => f.goWild && f.allin !== null && f.allin <= 50);
+    // A board that is healthy and empty looks exactly like one nobody is running.
+    // Count consecutive empty sweeps so the page can state a verdict instead of
+    // repeating "no seats" forever, and so an alert can say "still nothing".
+    if (boardRows.length > 0) {
+      state.zero = null;
+    } else {
+      const priorZero = state.zero && typeof state.zero === 'object' ? state.zero : null;
+      state.zero = {
+        count: priorZero ? Number(priorZero.count || 0) + 1 : 1,
+        since: priorZero && priorZero.since ? priorZero.since : now,
+      };
+    }
     const transition = appendTransitions(state, boardRows, now);
     console.log(`digest=${transition.digest} changed=${transition.changed} newTransitions=${transition.added}`);
     // Durable first-seen timestamps feed the release-timing model; they live
@@ -415,7 +475,7 @@ async function main() {
   const topic = process.env.NTFY_TOPIC;
   if (topic) {
     const fresh = (state.history || []).filter((h) => h.ts === now);
-    const alert = buildAlert(state, fresh, now);
+    const alert = buildAlert(state, fresh, now) || buildZeroAlert(state, now);
     if (alert) {
       try {
         await sendAlert(topic, alert);

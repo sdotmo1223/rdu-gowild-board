@@ -1,3 +1,5 @@
+import { ORIGIN } from './routes.js';
+
 // Zero-cost push notifications via ntfy.sh.
 // No account, no key, no card: the topic name is the only secret and it lives in
 // an env var. The collector posts plain text; the phone subscribes to the topic.
@@ -19,6 +21,29 @@ export function shouldAlert(state, kind, now) {
   if (!last) return true;
   if (last.kind !== kind) return true;
   return now - last.at >= ERROR_REPEAT_MS;
+}
+
+// Silence is ambiguous: a board with zero qualifying rows and a board whose cron
+// is dead both show nothing. This fires when a HEALTHY sweep keeps finding
+// nothing, at most once a day, so an empty page is a statement and not a void.
+export const ZERO_REPEAT_MS = 24 * 3600 * 1000;
+
+export function buildZeroAlert(state, now) {
+  if (!state || state.lastError) return null;
+  const z = state.zero;
+  if (!z || !(Number(z.count) >= 3) || !z.since) return null;
+  const last = state.lastAlert;
+  if (last && last.kind === 'zero' && now - last.at < ZERO_REPEAT_MS) return null;
+  const hrs = Math.max(1, Math.round((now - z.since) / 3600000));
+  return {
+    kind: 'zero',
+    title: `GoWild: still nothing from ${ORIGIN}`,
+    message:
+      `${z.count} healthy sweeps over ${hrs}h and not one GoWild seat under $50.\n` +
+      'The collector is running; Frontier is simply not releasing seats here.\n' +
+      `Open /${String(ORIGIN).toLowerCase()} to see the current state.`,
+    priority: 'low',
+  };
 }
 
 function money(n) {

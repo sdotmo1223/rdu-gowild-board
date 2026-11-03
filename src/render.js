@@ -101,7 +101,7 @@ const STATE_COPY = {
   nogowild: (d) => `${d.total} departure${d.total === 1 ? '' : 's'}, but Frontier released no GoWild seats.`,
 };
 
-function dateSection(d) {
+function dateSection(d, view) {
   const label = d.blackout || d.peak ? `<span class="badge peak">${esc(PEAK_LABEL)}</span>` : '';
   const freshN = d.freshRoutes == null ? d.routesScanned : d.freshRoutes;
   const carriedNote = d.carriedRoutes
@@ -134,6 +134,9 @@ function dateSection(d) {
     body = `<div class="state warn">${esc(STATE_COPY.above(d))}</div>`;
   } else if (d.status === 'noflights') {
     body = `<div class="state">${esc(STATE_COPY.noflights)}</div>`;
+  } else if (d.status === 'nogowild' && view && view.zero && Number(view.zero.count) >= 3 && view.zero.since) {
+    const hrs = Math.max(1, Math.round((Date.now() - view.zero.since) / 3600000));
+    body = `<div class="state warn">${d.total} departure${d.total === 1 ? '' : 's'}, but Frontier released no GoWild seats. <strong>No GoWild from ${esc(PAGE_ORIGIN)} in ${view.zero.count} sweeps over ${hrs}h</strong> &mdash; that reads as a station-level decision, not a quiet day.</div>`;
   } else {
     body = `<div class="state warn">${esc(STATE_COPY.nogowild(d))}</div>`;
   }
@@ -412,7 +415,7 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
   <span class="stamp ${view.stale ? 'stale' : ''}">${esc(ago(view.ageMin))}</span>
 </header>
 ${banner}
-${view.dates.map(dateSection).join('')}
+${view.dates.map((d) => dateSection(d, view)).join('')}
 ${scheduleHtml(state)}
 ${heatmapHtml(state)}
 ${timingHtml(state)}
@@ -426,7 +429,8 @@ ${pricingHtml(state)}
   breakdown, so the total cannot be independently verified.<br>
   Showing all-in &le; $${MAX_ALL_IN.toFixed(2)} &middot; ${view.routeCount || 14} routes &middot; ${esc(PEAK_LABEL)} on blackout dates.<br>
   ${view.sweep && view.sweep.routes && view.sweep.total && view.sweep.routes < view.sweep.total ? `Half-sweep mode: ${view.sweep.routes} of ${view.sweep.total} routes per run, so every route is re-checked within 30 minutes.<br>` : ''}
-  Read-only. Never touches booking or payment.
+  ${view.sweep && view.sweep.quarantined ? `${view.sweep.quarantined} route${view.sweep.quarantined === 1 ? '' : 's'} retired after answering "not sold" &middot; FULL_SWEEP=1 re-checks them.<br>
+  ` : ''}Read-only. Never touches booking or payment.
 </footer>
 <script>
 window.__basePath = ${JSON.stringify(basePath)};

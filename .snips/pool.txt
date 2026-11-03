@@ -1,0 +1,23 @@
+  // SWEEP_ONLY=ATL,MCO asks exactly the routes named. A one-round-trip question
+  // ("does Frontier sell PHL-BOS?") should not cost a CI queue slot, and a
+  // diagnostic must never hide behind the rotation.
+  const onlyCodes = String(process.env.SWEEP_ONLY || '')
+    .toUpperCase()
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  // A city pair that answers "not sold" is not an outage (see parse.mjs), but it
+  // must not be paid for forever. Three sightings retire it; FULL_SWEEP=1 or
+  // SWEEP_ONLY=CODE puts it back deliberately.
+  const watch = previous && previous.routeWatch && typeof previous.routeWatch === 'object' ? previous.routeWatch : {};
+  const quarantined = Object.keys(watch).filter((c) => Number(watch[c] && watch[c].notServed) >= QUARANTINE_AFTER);
+  const forced = onlyCodes.length > 0 || process.env.FULL_SWEEP === '1';
+  let routePool = onlyCodes.length ? ROUTES.filter((r) => onlyCodes.includes(r.code)) : ROUTES.slice();
+  if (quarantined.length && !forced) routePool = routePool.filter((r) => !quarantined.includes(r.code));
+  if (onlyCodes.length && !routePool.length) {
+    throw new Error(
+      `SWEEP_ONLY=${onlyCodes.join(',')} matched no route in this profile (${ROUTES.map((r) => r.code).join(',')})`,
+    );
+  }
+  const shard = forced ? null : routeShard(startedAt);
+  const shardList = shardRoutes(routePool, shard);
