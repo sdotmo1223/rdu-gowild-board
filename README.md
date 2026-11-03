@@ -25,7 +25,7 @@ schedule and writes a JSON snapshot to KV; the Worker only reads KV and renders.
 ## Architecture
 
 ```
-GitHub Actions cron (every 2 h)     Cloudflare Worker (free)
+GitHub Actions cron (*/15)          Cloudflare Worker (free)
   └─ Playwright Chromium              ├─ /s/<BOARD_TOKEN>  → board page
        └─ 14 routes × 2 dates         ├─ /api/board        → JSON
             (sequential, 2–5 s)       └─ /api/ingest       → snapshot write (token)
@@ -33,15 +33,16 @@ GitHub Actions cron (every 2 h)     Cloudflare Worker (free)
                           └─ KV: "state"
 ```
 
-KV writes are digest-gated: a quiet board costs **one write per sweep (12/day)** against
+KV writes are digest-gated: a quiet board costs **one write per sweep (96/day)** against
 the 1,000/day free limit, plus one history row per genuine change.
 
-**Why every 2 hours and not 15 minutes.** Measured 2026-11-03: one run is ~2m05s of wall
-clock, billed as 3 minutes. GitHub Free gives a *private* repository 2,000 Actions minutes
-per month, so `*/15` (96 runs/day ≈ 288 billed min/day) exhausts the allowance in about a
-week and Actions then stops — taking the board down with it, silently. Every 2 hours is
-12 runs/day (~1,080 min/month) and fits. Making the repository public makes standard
-runners unmetered, which is the way back to 15-minute freshness for $0.
+**Why this repository is public.** Measured 2026-11-03: one run is ~2m05s of wall clock,
+billed as 3 minutes. GitHub Free meters a *private* repository at 2,000 Actions minutes per
+month, so `*/15` (96 runs/day ≈ 288 billed min/day) would exhaust that in about a week and
+Actions would then stop — taking the board down with it, silently. Standard runners are
+unmetered for public repositories, so this one is public and the cadence stays at 15
+minutes. No secret is in it: `.dev.vars` and `.board-token` are gitignored and have never
+been committed.
 
 ## Deploy
 
@@ -118,7 +119,7 @@ own nonstop table. The widely repeated "32 destinations" is an ABC11 article fro
 ## Constraints honoured
 
 - **$0**: Workers Free + KV Free + GitHub Actions free minutes. No card, no R2, no paid tier.
-- **Politeness**: strictly sequential, 2–5 s randomized, 2-hour cadence, one process
+- **Politeness**: strictly sequential, 2–5 s randomized, 15-minute cadence, one process
   ever (enforced by a GitHub Actions `concurrency` group).
 - **Read-only**: no checkout, payment, or booking path is ever requested.
 - **No stored password**: there is no login at all — only a session cookie you paste once.

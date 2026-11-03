@@ -5,15 +5,14 @@ name: board-collect
 # the only process that ever talks to Frontier.
 #
 # CADENCE, measured 2026-11-03: one run is ~2m05s of wall clock, billed as 3
-# minutes. GitHub Free gives a PRIVATE repo 2,000 Actions minutes per month, so
-# */15 (96 runs/day => ~288 min/day) spends the allowance in roughly a week and
-# then stops — a silent outage of the thing this board exists for. Every 2 hours
-# is 12 runs/day (~1,080 min/month), which fits with room to spare.
-# To restore 15-minute freshness for free, make the repository public (standard
-# runners are then unmetered) and put back '*/15 * * * *'.
+# minutes. GitHub Free meters 2,000 Actions minutes per month on a PRIVATE repo,
+# so */15 (96 runs/day => ~288 billed min/day) would exhaust that in about a
+# week and then stop. Standard runners are unmetered on a PUBLIC repo, which is
+# why this one is public; if it is ever made private again, drop to
+# '0 */2 * * *' (~1,080 min/month) in the same change.
 on:
   schedule:
-    - cron: '0 */2 * * *'
+    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 # Hard guarantee of the "exactly one agent touches Frontier" rule: a second run

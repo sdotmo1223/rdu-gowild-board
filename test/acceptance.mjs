@@ -139,10 +139,10 @@ check('no snapshot at all is an explicit state', () => {
 });
 
 check('staleness turns amber only once a sweep is genuinely missed', () => {
-  // Cadence is 2 hours, so a board one hour old is healthy, not alarming.
-  const fresh = buildBoard({ routeCount: 14, updatedAt: Date.now() - 60 * 60000, sweeps: [] });
+  // Cadence is 15 minutes, so a board ten minutes old is healthy.
+  const fresh = buildBoard({ routeCount: 14, updatedAt: Date.now() - 10 * 60000, sweeps: [] });
   const old = buildBoard({ routeCount: 14, updatedAt: Date.now() - (STALE_AFTER_MIN + 10) * 60000, sweeps: [] });
-  assert.equal(STALE_AFTER_MIN, 150, 'two cadence intervals plus slack');
+  assert.equal(STALE_AFTER_MIN, 45, 'three missed 15-minute sweeps');
   assert.equal(fresh.stale, false);
   assert.equal(old.stale, true);
   assert.ok(renderPage(old, {}, [], Date.now()).includes('class="stamp stale"'));

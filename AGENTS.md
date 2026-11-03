@@ -24,11 +24,11 @@ works, it costs $0, and silent failure is impossible.**
    **"estimated all-in"**. Never show `$0.01`, `$NaN`, `$undefined`, or a `-1`
    sentinel.
 4. **Politeness is not negotiable.** Strictly sequential, 2–5 s randomized delay,
-   2-hour cadence, exactly one process touching Frontier. Do not parallelize
+   15-minute cadence, exactly one process touching Frontier. Do not parallelize
    route fetches, do not add retries that multiply requests, do not "warm up"
-   extra routes. (The cadence is 2-hour because a 15-minute cron on this private
-   repo spends GitHub Free's 2,000 monthly Actions minutes in about a week and
-   then stops; make the repo public to go back to 15 minutes for $0.)
+   extra routes. (15 minutes is only affordable because the repo is public:
+   GitHub Free meters 2,000 Actions minutes/month on private repos, which a
+   15-minute Playwright cron exhausts in about a week. Keep it public.)
 5. **Read-only.** Never request checkout, payment, or booking paths.
 6. **The session cookie is optional and secret.** It is never logged, printed,
    committed, or pasted into chat. Only the pair count may be reported. It lives

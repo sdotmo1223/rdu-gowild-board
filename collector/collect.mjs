@@ -283,8 +283,12 @@ async function main() {
 
     // Free schedule data: record what each route did on each swept date. No extra
     // requests, and it is what makes a week-over-week rotation verdict possible.
-    const schedDates = [...new Set(merged.map((s) => s.date))];
-    for (const d of schedDates) recordSchedule(state, d, merged, now);
+    // Carried rows are the PREVIOUS sweep's answer. Feeding them back in would
+    // claim a route was re-checked when it was never asked, and would make a
+    // throttled sweep look like fresh evidence in the weekly matrix.
+    const askedThisSweep = merged.filter((s) => s && !s.carried);
+    const schedDates = [...new Set(askedThisSweep.map((s) => s.date))];
+    for (const d of schedDates) recordSchedule(state, d, askedThisSweep, now);
     // One digest for the whole board (both dates). Calling this per-date would
     // overwrite lastRows and re-emit the other date's rows as new transitions.
     const boardRows = allFlights.filter((f) => f.goWild && f.allin !== null && f.allin <= 50);
@@ -293,8 +297,23 @@ async function main() {
     // Durable first-seen timestamps feed the release-timing model; they live
     // outside `history` so the 4,000-row cap cannot evict them.
     recordFirstSeen(state, boardRows, now);
+    // Bookability for a date uses every row we hold for it (fresh + carried) so a
+    // route that was not re-asked is never counted as "not bookable". Whether the
+    // date counts as OBSERVED is a different question and needs a this-sweep
+    // answer: recording a date where every route was refused would add a
+    // denominator for a day we never actually saw.
+    const flightsFor = (dateISO) =>
+      merged
+        .filter((s) => s && s.date === dateISO)
+        .flatMap((s) => (Array.isArray(s.flights) ? s.flights : []))
+        .filter((f) => f && f.goWild && f.allin !== null && f.allin <= 50);
     for (const date of dates) {
-      recordObservation(state, date, boardRows.filter((f) => f.date === date));
+      const answered = askedThisSweep.some((s) => s.date === date && s.ok);
+      if (!answered) {
+        console.error(`date ${date}: no route answered this sweep; not recording an observation`);
+        continue;
+      }
+      recordObservation(state, date, flightsFor(date));
     }
   }
 
