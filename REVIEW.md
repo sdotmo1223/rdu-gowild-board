@@ -68,12 +68,41 @@ ordered fixes that raise the score. Numbers here are measured, not estimated.
 
 ## Peer review
 
-`spawn_agents` refused every code-review agent on this host
-(`code-reviewer-multi-prompt`, `code-searcher`, `gpt-5-agent`, `opus-agent`). The
-review below is therefore a **second pass by the same agent against the written
-invariants**, not an independent reviewer. That is a real limitation: a fresh reader
-catches different things, and this document should be re-run with a true peer reviewer
-before the next exam.
+### Why the first attempt failed (diagnosed 2026-11-03)
+
+`spawn_agents` is not the OpenCode registry. On this install it exposes exactly one
+spawnable agent, and every other name its description advertises is absent:
+
+```
+Agent "code-reviewer-multi-prompt" is not available to spawn
+Agent "code-searcher"            is not available to spawn
+Agent "gpt-5-agent"              is not available to spawn
+Agent "opus-agent"              is not available to spawn
+Agent "basher"                   is not available to spawn
+```
+
+The reviewers that do exist are OpenCode personas on disk:
+`~/.config/opencode/agents/{surgeon-reviewer, security-auditor, multi-agent-coordinator,
+research-analyst, rea, voice-smith}.md`.
+
+Dispatch through `opencode-cli.exe` (v2.2.3) was then attempted for real. What works
+and what does not, each with evidence:
+
+| Invocation | Result |
+|---|---|
+| `opencode-cli debug agents` | `ServiceUnavailableError: Location plugins did not finish activating` |
+| `run --agent surgeon-reviewer --auto "Reply with exactly: READY"` | **exit 0, replied** — the dispatch path itself is sound |
+| `run --agent surgeon-reviewer --auto "Read AGENTS.md and reply ..."` | no output within 100 s — **tool use stalls**, consistent with the plugin failure |
+| `run --agent surgeon-reviewer --auto <task file>` | `Error: You must provide a message` — `--file` attaches but does not replace the message |
+| `run --agent surgeon-reviewer --auto <14.6 KB prompt>` | `ETIMEDOUT` at 250 s; stderr shows the model is **`pulse-alpha-free`** |
+
+Conclusion: the persona layer works, but a real review cannot run headlessly here
+today — tool activation is broken and the free model cannot chew a 15 KB prompt inside
+a tool-call timeout. Two fixes, both outside this repo: start the OpenCode desktop
+service so plugins activate, and select a faster model with `--model`. Until then the
+review below is a **second pass by the same agent against the written invariants**, not
+an independent reviewer. Re-run `.agents/dispatch/peer-review.md` once both are fixed;
+the spec and the dispatch path are ready and proven up to the model call.
 
 ### Fixed during the review
 
