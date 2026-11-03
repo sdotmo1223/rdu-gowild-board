@@ -636,3 +636,38 @@ gh api -X POST repos/<owner>/<repo>/actions/workflows/<id>/dispatches -f ref=mai
 
 Use the id, not the filename, when a freshly pushed workflow is not yet resolvable
 by path.
+
+### Is JFK really gone? Measured, not just reported
+
+Claim under test: "Frontier does not fly JFK, therefore there is no GoWild from
+JFK." Press and airport rosters say so; a booking engine is better evidence, so
+`tools/route-probe.mjs` asked Frontier directly. Three requests, sequential, same
+minute, same code path.
+
+| Query | HTTP | Bytes | Parser | Flights | GoWild |
+|---|---|---|---|---|---|
+| JFK-ATL (their last JFK route, cut 2026-10-05) | 200 | 596,915 | `no-journeys-key` | 0 | 0 |
+| JFK-MCO (a route they fly daily from LGA and EWR) | 200 | 596,915 | `no-journeys-key` | 0 | 0 |
+| **LGA-MCO (control)** | 200 | 986,420 | `ok` | **2** | 0 |
+
+Reading it honestly:
+
+- Both JFK queries returned **byte-identical** payloads for two different
+  destinations. That is one generic "we do not serve this" page, not two
+  destination-specific answers.
+- It is **not a block**: the measured DataDome challenge is ~20,379 B, and these
+  are 596,915 B. The control also succeeded 5 seconds later, so no burst refusal
+  was in progress.
+- Caveat kept on the record: `no-journeys-key` is the same classification a soft
+  refusal produces, so this is strong but not airtight. The byte size and the
+  control are what make it convincing.
+
+Two independent conclusions:
+
+1. **JFK has no Frontier service at all** — not "JFK flights without GoWild".
+   GoWild is a fare on flights Frontier operates, so no flights means no GoWild by
+   definition. Frontier's NYC stations are LGA and EWR.
+2. **The LGA zero is real, not a parsing bug.** The probe independently found 2
+   LGA-MCO flights with 0 GoWild, matching what `/lga` shows. Whether LGA is
+   capacity-controlled hard (plausible: slot-constrained trunk routes) or simply
+   has no GoWild seats today is now an open measurement, not a mystery.

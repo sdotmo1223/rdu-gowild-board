@@ -84,6 +84,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `collector/parse.mjs` | `extractJourneys`, `normalizeFlight`, `parseRoute`, `classifyFailure` |
 | `collector/cookies.mjs` | optional cookie loading, never logs the value |
 | `tools/headless-probe.mjs` | one-request diagnostic; `HEADLESS=0` / `IGNORE_COOKIE=1` |
+| `tools/route-probe.mjs` | one-request "does Frontier sell this city pair?" probe: real Chromium + the collector parser |
 | `tools/render-state.mjs` | render `board.html` from a real collector snapshot |
 | `tools/seed-schedule.mjs` | rebuild `state.json` (incl. schedule) from `.sweep/` captures |
 | `PLAN.md` | the current ordered plan and its acceptance criteria |
