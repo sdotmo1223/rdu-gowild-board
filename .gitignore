@@ -24,3 +24,6 @@ threads/
 .board-token
 board.live.html
 .verify.log
+
+# rendered previews captured for the user
+preview-board.png
