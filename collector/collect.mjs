@@ -66,11 +66,60 @@ async function kvPut(env, state) {
   }
 }
 
+// Write path B: post the snapshot to our own Worker, which owns the KV write.
+// CI then needs no Cloudflare API token at all — only BOARD_TOKEN, which the
+// page already requires, so there is no fourth credential to get wrong.
+function ingestEnv() {
+  const url = process.env.BOARD_INGEST_URL;
+  const token = process.env.BOARD_TOKEN;
+  if (!url || !token) return null;
+  return { url, token };
+}
+
+async function ingestFetch(env, url, { method = 'GET', body } = {}) {
+  const headers = { Authorization: `Bearer ${env.token}` };
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const res = await fetch(url, { method, headers, body });
+  const text = await res.text();
+  let parsed = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    parsed = null;
+  }
+  return { status: res.status, ok: res.ok, parsed, text };
+}
+
 async function main() {
   // Two dates by default. SWEEP_DAYS raises the window for a deliberate backfill
   // (e.g. SWEEP_DAYS=4 once), but each extra day costs 14 more requests and the
   // measured soft throttle starts around the fifteenth request in a burst, so
   // raising it in the normal 15-minute cadence is a bad trade.
+  // Resolve and PROVE the write path before Frontier is touched. On 2026-11-03 a
+  // rejected token was only discovered after 19 fare requests had been spent,
+  // which is exactly the waste invariant 4 forbids.
+  const ingest = ingestEnv();
+  const kv = ingest ? null : kvEnv();
+  let previous = null;
+  if (ingest) {
+    const probe = await ingestFetch(ingest, `${ingest.url}?dryRun=1`, { method: 'POST', body: '{}' });
+    if (!probe.ok) {
+      throw new Error(
+        `ingest dry run rejected (HTTP ${probe.status}): ${probe.text.slice(0, 200)} — no Frontier requests were made`,
+      );
+    }
+    const got = await ingestFetch(ingest, ingest.url, { method: 'GET' });
+    if (!got.ok) throw new Error(`ingest read failed (HTTP ${got.status}) — no Frontier requests were made`);
+    previous = got.parsed && got.parsed.state ? got.parsed.state : null;
+    console.log('write path: worker-ingest (dry run + read ok)');
+  } else if (kv) {
+    // The read doubles as the credential check.
+    previous = await kvGet(kv);
+    console.log('write path: cloudflare-kv (read ok)');
+  } else {
+    console.log('write path: local-file (no write credentials configured)');
+  }
+
   const dayCount = Math.max(1, Math.min(7, Number(process.env.SWEEP_DAYS) || 2));
   const dates = Array.from({ length: dayCount }, (_, i) => easternDate(i));
   const { chromium } = await import('playwright');
@@ -151,8 +200,6 @@ async function main() {
   await browser.close();
 
   const now = Date.now();
-  const env = kvEnv();
-  const previous = env ? await kvGet(env) : null;
 
   const allFlights = sweeps.flatMap((s) => s.flights || []);
   const blockedCount = sweeps.filter((s) => s.blocked).length;
@@ -191,9 +238,18 @@ async function main() {
     // same date. Keep the previous rows for it and say plainly that they are old.
     // Measured 2026-11-02: sustained sweeping gets soft-throttled partway through,
     // so "half the sweep died" is a routine outcome, not an edge case.
-    const { sweeps: merged, deadDates, kept } = mergeSweeps(state.sweeps, sweeps, dates);
+    const { sweeps: merged, deadDates, kept, partial } = mergeSweeps(state.sweeps, sweeps, dates, {
+      expectedRoutes: ROUTES.length,
+      now,
+    });
     for (const k of kept) {
       console.error(`date ${k.date}: no usable route this sweep; kept ${k.rows} previous results`);
+    }
+    for (const p of partial) {
+      console.error(
+        `date ${p.date}: sweep stopped after ${p.attempted}/${p.expected} routes; ` +
+          `kept ${p.missing} previous results for routes never asked`,
+      );
     }
 
     state.lastError =
@@ -207,6 +263,14 @@ async function main() {
                 : '',
               abortedAt
                 ? `Sweep stopped at ${abortedAt.dest} after ${abortedAt.attempts}/${total} requests (${abortedAt.reason}).`
+                : '',
+              partial.length
+                ? partial
+                    .map(
+                      (p) =>
+                        `${p.date} only reached ${p.attempted}/${p.expected} routes; ${p.missing} rows carried from the previous sweep`,
+                    )
+                    .join('; ') + '.'
                 : '',
             ]
               .filter(Boolean)
@@ -256,17 +320,24 @@ async function main() {
       `history=${state.history.length} aborted=${abortedAt ? abortedAt.reason : 'no'}`,
   );
 
-  if (!env) {
-    // No Cloudflare credentials: emit the snapshot locally so the real renderer
-    // can be exercised against the collector's own output instead of a fixture.
+  if (ingest) {
+    const blob = JSON.stringify(state);
+    const res = await ingestFetch(ingest, ingest.url, { method: 'POST', body: blob });
+    if (!res.ok) throw new Error(`ingest write failed (HTTP ${res.status}): ${res.text.slice(0, 200)}`);
+    console.log(`ingest write complete: ${blob.length} bytes via the Worker.`);
+    return;
+  }
+  if (!kv) {
+    // No write path at all: emit the snapshot locally so the real renderer can
+    // be exercised against the collector's own output instead of a fixture.
     const out = process.env.STATE_OUT || 'state.json';
     const blob = JSON.stringify(state);
     writeFileSync(out, blob);
-    console.error(`Cloudflare KV env vars missing; wrote ${out} instead of uploading.`);
+    console.error(`No write credentials; wrote ${out} instead of uploading.`);
     console.log(`state=${out} bytes=${blob.length} sweeps=${sweeps.length}`);
     return;
   }
-  await kvPut(env, state);
+  await kvPut(kv, state);
   console.log('KV write complete.');
 }
 

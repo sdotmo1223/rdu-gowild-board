@@ -24,9 +24,11 @@ works, it costs $0, and silent failure is impossible.**
    **"estimated all-in"**. Never show `$0.01`, `$NaN`, `$undefined`, or a `-1`
    sentinel.
 4. **Politeness is not negotiable.** Strictly sequential, 2–5 s randomized delay,
-   15-minute cadence, exactly one process touching Frontier. Do not parallelize
+   2-hour cadence, exactly one process touching Frontier. Do not parallelize
    route fetches, do not add retries that multiply requests, do not "warm up"
-   extra routes.
+   extra routes. (The cadence is 2-hour because a 15-minute cron on this private
+   repo spends GitHub Free's 2,000 monthly Actions minutes in about a week and
+   then stops; make the repo public to go back to 15 minutes for $0.)
 5. **Read-only.** Never request checkout, payment, or booking paths.
 6. **The session cookie is optional and secret.** It is never logged, printed,
    committed, or pasted into chat. Only the pair count may be reported. It lives
@@ -71,7 +73,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `src/timing.mjs` | release-timing model: median local hour + median lead hours, `MIN_SAMPLES = 3` |
 | `src/schedule.mjs` | per-date operating matrix + week-over-week stable-vs-rotating verdict |
 | `src/alerts.mjs` | ntfy.sh push, deduped per error state to once / 6 h |
-| `src/index.js` | Worker router: `/s/<TOKEN>`, `/api/board`, token-scoped PWA assets |
+| `src/index.js` | Worker router: `/s/<TOKEN>`, `/api/board`, `/api/ingest` (token-gated snapshot write), PWA assets |
 | `collector/collect.mjs` | Playwright sweep → KV (or `state.json` with no credentials) |
 | `collector/parse.mjs` | `extractJourneys`, `normalizeFlight`, `parseRoute`, `classifyFailure` |
 | `collector/cookies.mjs` | optional cookie loading, never logs the value |

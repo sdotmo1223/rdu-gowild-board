@@ -1,5 +1,12 @@
 import { isBlackout, PEAK_LABEL, MAX_ALL_IN, MAX_STOPS, MAX_DURATION_MIN } from './routes.js';
 
+// The collector runs every 2 hours (a 15-minute cron on a private repo spends
+// GitHub Free's 2,000 Actions minutes in about a week and then stops dead). A
+// 45-minute threshold would therefore paint the board amber most of the day and
+// teach its one reader to ignore the warning. Amber now means a sweep was
+// genuinely missed, not "the cadence is slower than the old threshold".
+export const STALE_AFTER_MIN = 150;
+
 const byDep = (a, b) => String(a.dep).localeCompare(String(b.dep));
 
 // Nonstops first, then departure time.
@@ -95,7 +102,7 @@ export function buildBoard(state, now = Date.now()) {
     rows,
     updatedAt,
     ageMin,
-    stale: ageMin === null || ageMin > 45,
+    stale: ageMin === null || ageMin > STALE_AFTER_MIN,
     error: src.lastError || null,
     routeCount: src.routeCount || 0,
   };

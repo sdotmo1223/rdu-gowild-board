@@ -138,3 +138,22 @@ Reproduce with `powershell -NoProfile -ExecutionPolicy Bypass -File tools/verify
 | Worker -> HTML | 72,289 B, 65 rows, 9/9 route checks pass |
 | Cron | `board-collect` active, 15-minute schedule |
 | Total cost | $0 |
+
+## Scheduled runs, 2026-11-03 (measured)
+
+| Run | Trigger | Result | Evidence |
+|---|---|---|---|
+| 41640525601 | manual | **failed** | `KV GET 401` after 19/28 requests; first live `no-journeys-key` refusal at `2026-11-04 DEN` |
+| 41655488371 | manual | ok | `sweeps=28/28 requests=28 flights=151 blocked=0`, `KV write complete.`, board `ageMinutes=0 stale=false` |
+
+Live `/api/board` after run 41655488371: `routeCount=14`, `2026-11-03 status=ok total=40`,
+`2026-11-04 status=ok total=111`.
+
+Ingest boundary, verified against the deployed Worker:
+
+| Request | Result |
+|---|---|
+| `POST /api/ingest?dryRun=1` with the board token | `200 {"ok":true,"dryRun":true,"creds":"valid"}` |
+| same, no `Authorization` header | `401` |
+| same, `Bearer wrong-token-value` | `401` |
+| all-blocked sweep body | `409`, KB untouched (offline stress test) |

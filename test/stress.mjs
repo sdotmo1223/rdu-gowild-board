@@ -12,6 +12,7 @@ import { recordSchedule, weeklyPattern, weekKey } from '../src/schedule.mjs';
 import { mergeSweeps, shouldAbortSweep } from '../collector/parse.mjs';
 import { buildAlert } from '../src/alerts.mjs';
 import { normalizeSeats, parseRoute, extractJourneys, classifyFailure } from '../collector/parse.mjs';
+import worker from '../src/index.js';
 import {
   ROUTES,
   BLACKOUT_DATES,
@@ -535,6 +536,118 @@ check('the delivered page ships a client script that actually parses', () => {
   const m = /<script>([\s\S]*?)<\/script>/.exec(html);
   assert.ok(m, 'the page must carry its client script');
   assert.doesNotThrow(() => new Function(m[1]), 'a syntax error here silently kills pin and calendar export');
+});
+
+// A sweep that stops at request 19 must not shrink tomorrow from 14 routes to
+// the 5 it happened to ask about. The routes never asked keep their previous
+// result, flagged, instead of vanishing without a word.
+check('a truncated sweep keeps the routes it never asked about', () => {
+  const prev = ROUTES.map((r) => ({
+    date: '2026-11-04',
+    dest: r.code,
+    ok: true,
+    blocked: false,
+    flights: [{ goWild: true, allin: 15 }],
+  }));
+  const fresh = ROUTES.slice(0, 5).map((r) => ({
+    date: '2026-11-04',
+    dest: r.code,
+    ok: true,
+    blocked: false,
+    flights: [],
+  }));
+  const { sweeps, partial } = mergeSweeps(prev, fresh, ['2026-11-04'], { expectedRoutes: ROUTES.length });
+  const forDate = sweeps.filter((s) => s.date === '2026-11-04');
+  assert.equal(forDate.length, ROUTES.length, 'all 14 routes survive the refusal');
+  assert.equal(partial.length, 1);
+  assert.equal(partial[0].attempted, 5);
+  assert.equal(partial[0].missing, ROUTES.length - 5);
+  const carried = forDate.filter((s) => s.carried);
+  assert.equal(carried.length, ROUTES.length - 5);
+  assert.ok(carried.every((s) => s.flights.length === 1), 'carried rows are the real prior fares');
+
+  const full = ROUTES.map((r) => ({ date: '2026-11-04', dest: r.code, ok: true, blocked: false, flights: [] }));
+  const done = mergeSweeps(prev, full, ['2026-11-04'], { expectedRoutes: ROUTES.length });
+  assert.equal(done.partial.length, 0, 'a complete sweep carries nothing');
+  assert.equal(done.sweeps.filter((s) => s.carried).length, 0);
+  assert.equal(mergeSweeps(prev, [], ['2026-11-04']).kept.length, 1, 'the old signature still works');
+});
+
+async function checkAsync(name, fn) {
+  try {
+    await fn();
+    passed++;
+    console.log(`PASS  ${name}`);
+  } catch (err) {
+    failed++;
+    process.exitCode = 1;
+    console.log(`FAIL  ${name}\n      ${err.message}`);
+  }
+}
+
+// The Worker is the write path now. If this door is not locked, anyone who can
+// reach the origin can replace the board.
+await checkAsync('the ingest endpoint is a closed door without the board token', async () => {
+  const kv = new Map();
+  const env = {
+    BOARD_TOKEN: 'tok_abcdefgh',
+    BOARD: {
+      get: async () => (kv.has('state') ? JSON.parse(kv.get('state')) : null),
+      put: async (k, v) => kv.set(k, v),
+    },
+  };
+  const call = (method, { token, body, qs = '' } = {}) =>
+    worker.fetch(
+      new Request(`https://board.test/api/ingest${qs}`, {
+        method,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body,
+      }),
+      env,
+    );
+
+  assert.equal((await call('POST', { body: '{}' })).status, 401, 'no token must not write');
+  assert.equal((await call('POST', { token: 'wrong', body: '{}' })).status, 401, 'wrong token must not write');
+  assert.equal((await call('GET', {})).status, 401, 'reading the raw state needs the token too');
+  assert.equal((await call('DELETE', { token: 'tok_abcdefgh' })).status, 405);
+  assert.equal(kv.size, 0, 'nothing reached KV');
+
+  const dry = await call('POST', { token: 'tok_abcdefgh', body: '{}', qs: '?dryRun=1' });
+  assert.equal(dry.status, 200, 'the dry run proves the path');
+  assert.equal(kv.size, 0, 'and writes nothing');
+});
+
+await checkAsync('the ingest endpoint refuses to overwrite a good board with a failed sweep', async () => {
+  const kv = new Map();
+  kv.set('state', JSON.stringify({ sweeps: [{ date: '2026-11-03', dest: 'MCO', ok: true, flights: [] }], updatedAt: 1 }));
+  const env = {
+    BOARD_TOKEN: 'tok_abcdefgh',
+    BOARD: {
+      get: async () => JSON.parse(kv.get('state')),
+      put: async (k, v) => kv.set(k, v),
+    },
+  };
+  const post = (payload) =>
+    worker.fetch(
+      new Request('https://board.test/api/ingest', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer tok_abcdefgh', 'Content-Type': 'application/json' },
+        body: typeof payload === 'string' ? payload : JSON.stringify(payload),
+      }),
+      env,
+    );
+
+  assert.equal((await post('not json')).status, 400);
+  assert.equal((await post({ nope: true })).status, 400, 'the shape is checked');
+  const denied = await post({
+    sweeps: ROUTES.map((r) => ({ date: '2026-11-03', dest: r.code, ok: false, blocked: true, flights: [] })),
+  });
+  assert.equal(denied.status, 409, 'an all-blocked sweep must not land');
+  assert.equal(JSON.parse(kv.get('state')).sweeps.length, 1, 'the previous board is intact');
+
+  const good = { updatedAt: 2, sweeps: [{ date: '2026-11-03', dest: 'MCO', ok: true, blocked: false, flights: [] }] };
+  assert.equal((await post(good)).status, 200);
+  assert.equal(JSON.parse(kv.get('state')).updatedAt, 2, 'a usable sweep replaces the board');
 });
 
 console.log(`\nSTRESS: ${passed} passed, ${failed} failed`);

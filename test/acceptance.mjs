@@ -1,7 +1,7 @@
 // Offline acceptance checks. No network, no Frontier contact.
 import assert from 'node:assert/strict';
 import { parseRoute, extractJourneys, normalizeSeats } from '../collector/parse.mjs';
-import { buildBoard } from '../src/board.js';
+import { buildBoard, STALE_AFTER_MIN } from '../src/board.js';
 import { appendTransitions } from '../src/history.js';
 import { renderPage } from '../src/render.js';
 import { frequencyTable, headlineFrequency } from '../src/frequency.js';
@@ -138,9 +138,11 @@ check('no snapshot at all is an explicit state', () => {
   assert.ok(/not "no flights"/.test(html));
 });
 
-check('staleness turns amber past 45 minutes', () => {
-  const fresh = buildBoard({ routeCount: 14, updatedAt: Date.now() - 10 * 60000, sweeps: [] });
-  const old = buildBoard({ routeCount: 14, updatedAt: Date.now() - 90 * 60000, sweeps: [] });
+check('staleness turns amber only once a sweep is genuinely missed', () => {
+  // Cadence is 2 hours, so a board one hour old is healthy, not alarming.
+  const fresh = buildBoard({ routeCount: 14, updatedAt: Date.now() - 60 * 60000, sweeps: [] });
+  const old = buildBoard({ routeCount: 14, updatedAt: Date.now() - (STALE_AFTER_MIN + 10) * 60000, sweeps: [] });
+  assert.equal(STALE_AFTER_MIN, 150, 'two cadence intervals plus slack');
   assert.equal(fresh.stale, false);
   assert.equal(old.stale, true);
   assert.ok(renderPage(old, {}, [], Date.now()).includes('class="stamp stale"'));

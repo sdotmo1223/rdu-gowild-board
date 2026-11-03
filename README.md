@@ -25,15 +25,23 @@ schedule and writes a JSON snapshot to KV; the Worker only reads KV and renders.
 ## Architecture
 
 ```
-GitHub Actions cron (*/15)          Cloudflare Worker (free)
+GitHub Actions cron (every 2 h)     Cloudflare Worker (free)
   └─ Playwright Chromium              ├─ /s/<BOARD_TOKEN>  → board page
-       └─ 14 routes × 2 dates         └─ /api/board        → JSON
-            (sequential, 2–5 s)
-                 └─ KV: "state" ────────────┘
+       └─ 14 routes × 2 dates         ├─ /api/board        → JSON
+            (sequential, 2–5 s)       └─ /api/ingest       → snapshot write (token)
+                 └─ POST snapshot ─────────────┘
+                          └─ KV: "state"
 ```
 
-KV writes are digest-gated: a quiet board costs **one write per sweep (96/day)** against
+KV writes are digest-gated: a quiet board costs **one write per sweep (12/day)** against
 the 1,000/day free limit, plus one history row per genuine change.
+
+**Why every 2 hours and not 15 minutes.** Measured 2026-11-03: one run is ~2m05s of wall
+clock, billed as 3 minutes. GitHub Free gives a *private* repository 2,000 Actions minutes
+per month, so `*/15` (96 runs/day ≈ 288 billed min/day) exhausts the allowance in about a
+week and Actions then stops — taking the board down with it, silently. Every 2 hours is
+12 runs/day (~1,080 min/month) and fits. Making the repository public makes standard
+runners unmetered, which is the way back to 15-minute freshness for $0.
 
 ## Deploy
 
@@ -44,13 +52,19 @@ npx wrangler secret put BOARD_TOKEN        # any long random string
 npx wrangler deploy
 ```
 
-Then add three repository secrets for the collector:
+Then give the collector a way to write. The recommended path needs **no Cloudflare
+credential at all** — the collector POSTs the snapshot to `/api/ingest` on the Worker,
+which does the KV write, authenticated with the board token that already exists:
 
-| Secret | Where to get it |
-|---|---|
-| `CF_API_TOKEN` | Cloudflare dashboard → My Profile → API Tokens → *Workers KV Storage: Edit* |
-| `CF_ACCOUNT_ID` | Cloudflare dashboard → Workers & Pages → Account ID |
-| `CF_KV_NAMESPACE_ID` | the id from `kv namespace create` |
+| Name | Kind | Value |
+|---|---|---|
+| `BOARD_TOKEN` | secret | the same string you passed to `wrangler secret put BOARD_TOKEN` |
+| `BOARD_INGEST_URL` | variable | `https://<worker>.workers.dev/api/ingest` |
+
+The older direct-KV path still works if you prefer it — set `CF_API_TOKEN`
+(*Workers KV Storage: Edit*), `CF_ACCOUNT_ID` and `CF_KV_NAMESPACE_ID` as secrets instead.
+`/api/ingest` accepts `?dryRun=1`, which proves the credential in one request without
+writing anything, so a run can never spend 28 fare requests to discover it cannot write.
 
 Run once by hand (Actions → board-collect → Run workflow) and open
 `https://<worker>.workers.dev/s/<BOARD_TOKEN>`.
@@ -104,7 +118,7 @@ own nonstop table. The widely repeated "32 destinations" is an ABC11 article fro
 ## Constraints honoured
 
 - **$0**: Workers Free + KV Free + GitHub Actions free minutes. No card, no R2, no paid tier.
-- **Politeness**: strictly sequential, 2–5 s randomized, 15-minute cadence, one process
+- **Politeness**: strictly sequential, 2–5 s randomized, 2-hour cadence, one process
   ever (enforced by a GitHub Actions `concurrency` group).
 - **Read-only**: no checkout, payment, or booking path is ever requested.
 - **No stored password**: there is no login at all — only a session cookie you paste once.
@@ -114,14 +128,14 @@ own nonstop table. The widely repeated "32 destinations" is an ABC11 article fro
 Three earlier conclusions were wrong. They are superseded here rather than quietly edited
 out, because each one would have cost real debugging time.
 
-1. **The collector needs the session cookie after all.** `/Flight/InternalSelect` is only
-   answered for a session that already holds Frontier's cookies. Without them the request
-   bounces from `booking.flyfrontier.com` to `www.flyfrontier.com`, which has no such path
-   and answers **404 "Page not found"** in 1,728 bytes. That is *not* a DataDome block, and
-   for one whole sweep it was misread as one. With the 31-pair cookie the identical request
-   returns `200`, **1,090,467 bytes**, `journeys` present, 4 flights — including from
-   **headless** Chromium. The cookie is read from `FRONTIER_COOKIE` or the gitignored
-   `.dev.vars`; only the pair count is ever logged.
+1. **The cookie looked required, then turned out not to be.** `/Flight/InternalSelect`
+   without a session bounced to `www`, which has no such path and answers **404** in 1,728
+   bytes — misread for a whole sweep as a DataDome block. With the 31-pair cookie the
+   request returned `200`, 1,090,467 bytes, `journeys` present. **Superseded 2026-11-02:** a
+   cookie-less headless browser warming up on the booking *root* returns the full payload
+   (measured, identical bytes). The cookie is applied when present, purely for resilience;
+   **0 pairs is a supported mode** and is what every scheduled run has used. It is read
+   from `FRONTIER_COOKIE` or the gitignored `.dev.vars`; only the pair count is ever logged.
 2. **Headless Chromium is fine.** Measured headless and headed side by side: byte-identical
    payloads. The "DataDome probably blocks headless" risk is retired.
 3. **A sweep where no route parses is a failure, not an empty day.** The board is only
@@ -136,8 +150,10 @@ with honest sample sizes, pin and calendar export, and a token-scoped PWA shell.
 
 | Variable | Meaning |
 |---|---|
-| `FRONTIER_COOKIE` | required; falls back to `.dev.vars` |
-| `CF_API_TOKEN`, `CF_ACCOUNT_ID`, `CF_KV_NAMESPACE_ID` | write to KV; absent ⇒ writes `state.json` |
+| `FRONTIER_COOKIE` | **optional**; falls back to `.dev.vars`, 0 pairs is fine |
+| `BOARD_INGEST_URL`, `BOARD_TOKEN` | recommended write path: POST to the Worker, which writes KV |
+| `CF_API_TOKEN`, `CF_ACCOUNT_ID`, `CF_KV_NAMESPACE_ID` | alternative direct-KV write path |
+| *(none of the above)* | writes `state.json` locally instead of uploading |
 | `HEADLESS=0` | run headed, parked offscreen (for a local scheduler) |
 | `NTFY_TOPIC` | optional phone push, no account needed |
 | `WARMUP_URL` | defaults to `https://booking.flyfrontier.com/` |

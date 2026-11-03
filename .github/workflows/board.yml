@@ -3,9 +3,17 @@ name: board-collect
 # DataDome fingerprints clients, so a Worker cannot fetch Frontier directly.
 # A real Chromium solves the challenge the same way a person does, and this is
 # the only process that ever talks to Frontier.
+#
+# CADENCE, measured 2026-11-03: one run is ~2m05s of wall clock, billed as 3
+# minutes. GitHub Free gives a PRIVATE repo 2,000 Actions minutes per month, so
+# */15 (96 runs/day => ~288 min/day) spends the allowance in roughly a week and
+# then stops — a silent outage of the thing this board exists for. Every 2 hours
+# is 12 runs/day (~1,080 min/month), which fits with room to spare.
+# To restore 15-minute freshness for free, make the repository public (standard
+# runners are then unmetered) and put back '*/15 * * * *'.
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '0 */2 * * *'
   workflow_dispatch:
 
 # Hard guarantee of the "exactly one agent touches Frontier" rule: a second run
@@ -25,25 +33,42 @@ jobs:
         with:
           node-version: '20'
 
-      # Without these the collector still sweeps Frontier, then discovers it has
-      # nowhere to write and exits 0 — a green run that did nothing, every 15
-      # minutes, forever. Fail in five seconds instead of two minutes.
-      - name: Refuse to sweep without somewhere to write
+      # A run that sweeps Frontier and only then discovers it cannot write is the
+      # worst case: 28 fare requests spent for nothing, every cadence, forever.
+      # This proves the write path with one cheap request and zero Frontier
+      # contact. Prefers the Worker ingest endpoint (no Cloudflare token needed);
+      # falls back to the Cloudflare KV API if that is what is configured.
+      - name: Prove the write path before touching Frontier
         env:
-          KV_ID: ${{ secrets.CF_KV_NAMESPACE_ID }}
+          INGEST_URL: ${{ vars.BOARD_INGEST_URL }}
+          BOARD_TOKEN: ${{ secrets.BOARD_TOKEN }}
           API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          KV_ID: ${{ secrets.CF_KV_NAMESPACE_ID }}
         run: |
-          missing=""
-          if [ -z "$KV_ID" ]; then missing="$missing CF_KV_NAMESPACE_ID"; fi
-          if [ -z "$API_TOKEN" ]; then missing="$missing CF_API_TOKEN"; fi
-          if [ -z "$ACCOUNT_ID" ]; then missing="$missing CF_ACCOUNT_ID"; fi
-          if [ -n "$missing" ]; then
-            echo "::error::Missing repository secrets:$missing — refusing to sweep Frontier for nothing."
-            echo "Set them in Settings > Secrets and variables > Actions, then re-enable this workflow."
+          set -u
+          if [ -n "${INGEST_URL:-}" ] && [ -n "${BOARD_TOKEN:-}" ]; then
+            code=$(curl -sS -o /tmp/preflight.json -w '%{http_code}' \
+              -X POST "${INGEST_URL}?dryRun=1" \
+              -H "Authorization: Bearer ${BOARD_TOKEN}" \
+              -H 'Content-Type: application/json' -d '{}' || echo 000)
+            label="worker ingest"
+          elif [ -n "${API_TOKEN:-}" ] && [ -n "${ACCOUNT_ID:-}" ] && [ -n "${KV_ID:-}" ]; then
+            code=$(curl -sS -o /tmp/preflight.json -w '%{http_code}' \
+              "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/storage/kv/namespaces/${KV_ID}/keys" \
+              -H "Authorization: Bearer ${API_TOKEN}" || echo 000)
+            label="cloudflare kv"
+          else
+            echo "::error::No write path configured. Set BOARD_TOKEN + the BOARD_INGEST_URL variable, or all three CF_* secrets. Refusing to sweep Frontier for nothing."
             exit 1
           fi
-          echo "credentials present: sweeping"
+
+          if [ "$code" != "200" ]; then
+            echo "::error::Write path ($label) rejected the credentials: HTTP $code. No Frontier request has been made."
+            head -c 500 /tmp/preflight.json || true
+            exit 1
+          fi
+          echo "write path verified ($label, HTTP 200): sweeping"
 
       - name: Install dependencies
         run: npm ci
@@ -54,6 +79,11 @@ jobs:
       - name: Collect RDU GoWild board
         run: node collector/collect.mjs
         env:
+          # Preferred: the Worker owns the KV write, so no Cloudflare token is
+          # held by the runner at all.
+          BOARD_INGEST_URL: ${{ vars.BOARD_INGEST_URL }}
+          BOARD_TOKEN: ${{ secrets.BOARD_TOKEN }}
+          # Legacy direct-KV path, used only when the ingest pair is absent.
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_KV_NAMESPACE_ID: ${{ secrets.CF_KV_NAMESPACE_ID }}

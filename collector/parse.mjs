@@ -106,9 +106,11 @@ export function shouldAbortSweep(result) {
 // erased; a date with at least one usable payload is fully replaced. This is the
 // routine path, not an edge case: the burst throttle commonly kills the second
 // half of a sweep.
-export function mergeSweeps(prevSweeps, sweeps, dates) {
+export function mergeSweeps(prevSweeps, sweeps, dates, opts = {}) {
   const prev = Array.isArray(prevSweeps) ? prevSweeps : [];
   const fresh = Array.isArray(sweeps) ? sweeps : [];
+  const expected = Math.max(0, Number(opts.expectedRoutes) || 0);
+  const carriedAt = Number(opts.now) || Date.now();
   const deadDates = (dates || []).filter((d) => !fresh.some((s) => s && s.date === d && s.ok));
 
   let merged = fresh.slice();
@@ -119,7 +121,30 @@ export function mergeSweeps(prevSweeps, sweeps, dates) {
     merged = merged.filter((s) => s.date !== d).concat(rows);
     kept.push({ date: d, rows: rows.length });
   }
-  return { sweeps: merged, deadDates, kept };
+
+  // A sweep that stopped early (one refusal ends the burst) leaves whole routes
+  // that were never asked. Dropping them would shrink the board silently — on
+  // 2026-11-03 a refusal at request 19 would have erased 8 of tomorrow's 14
+  // routes with no marker at all. Their previous result is carried forward and
+  // flagged, so the date is never presented as if every route had just been
+  // re-checked.
+  const partial = [];
+  if (expected > 0) {
+    for (const d of dates || []) {
+      const forDate = fresh.filter((s) => s && s.date === d);
+      if (!forDate.length || !forDate.some((s) => s.ok)) continue;
+      const asked = new Set(forDate.map((s) => s.dest));
+      if (asked.size >= expected) continue;
+      const carried = prev
+        .filter((s) => s && s.date === d && !asked.has(s.dest))
+        .map((s) => ({ ...s, carried: true, carriedAt }));
+      if (!carried.length) continue;
+      merged = merged.concat(carried);
+      partial.push({ date: d, attempted: asked.size, expected, missing: carried.length });
+    }
+  }
+
+  return { sweeps: merged, deadDates, kept, partial };
 }
 
 export function parseRoute(response, dateISO, dest, city) {

@@ -352,3 +352,46 @@ uploads only on PASS) and `tools/finish-pipeline.ps1` (enables, dispatches one
 run, waits, and compares the visitor-visible age before/after). `-DryRun` on the
 second is the cheapest health check: it reads the page and the workflow and
 changes nothing.
+
+---
+
+## 12:57–14:40 EST, 2026-11-03 — the write path was the outage
+
+The cron was re-enabled and the first two runs are the whole story.
+
+**Run 41640525601 failed with `collector failed: KV GET 401`** — after 19 of 28
+fare requests had already been spent. 401 (not 403) means Cloudflare rejected the
+credential outright, so the namespace and account were fine; the token was not.
+Two fixes, both in this commit:
+
+1. **The write path is now proved before Frontier is touched.** `collect.mjs`
+   resolves the transport and does one cheap call first (an ingest dry run, or the
+   KV read it needs anyway) and exits with a plain-English message if that fails.
+   The workflow does the same check as its own step, so a bad credential costs one
+   request instead of nineteen. `KV GET`/`KV PUT` 401 and 403 now say what to fix.
+2. **CI no longer needs a Cloudflare API token at all.** `POST /api/ingest` on the
+   Worker accepts the snapshot with `Authorization: Bearer <BOARD_TOKEN>` — the
+   token that already gates the page — and performs the KV write. `GET` returns the
+   raw state; `?dryRun=1` proves the path and writes nothing. The endpoint re-checks
+   the "never overwrite a good board with a failed sweep" invariant at the boundary
+   (409 if no sweep is `ok`), so a collector bug cannot erase the board.
+
+**The first refusal was also observed live, for the first time.** Run 41640525601
+stopped at `2026-11-04 DEN: no-journeys-key` after 19 of 28 requests. The abort
+worked, but `mergeSweeps` only protected a date with *zero* usable routes — so the
+5 routes it had asked about on 11-04 would have replaced all 14, silently deleting
+8 routes (DTW FLL IAH MCO MIA PHL SJU TPA) with no marker. `mergeSweeps` now takes
+`expectedRoutes` and carries the previous result for every route never asked,
+flagged `carried`, and the banner says how many rows came from the older sweep.
+
+**The $0 invariant had a timer on it.** A run is 2m05s of wall clock, billed as 3
+minutes. `*/15` = 96 runs/day ≈ 288 billed minutes/day against GitHub Free's 2,000
+minutes/month for a private repo: the allowance is gone in about a week and Actions
+then simply stops, which is a silent outage of the only thing this project does. The
+cron is now `0 */2 * * *` (12 runs/day ≈ 1,080 min/month). The way back to 15-minute
+freshness at $0 is a public repository, not a bigger allowance. `STALE_AFTER_MIN`
+moved 45 → 150 to match, so amber still means "a sweep was missed" instead of being
+permanently on.
+
+Run 41655488371 then completed: 28/28 ok, 151 flights, 0 blocked, `KV write complete.`,
+board `ageMinutes=0`, `stale=false`.
