@@ -92,6 +92,36 @@ export function classifyFailure(sweeps) {
   return 'error';
 }
 
+// Any refused route ends the sweep. Measured 2026-11-02: once Frontier starts
+// answering without a journeys array, every following request in the same burst
+// is refused too — 28 requests produced 14 refusals in a row. Continuing spends
+// the remaining budget and deepens the throttle for nothing, so one refusal is
+// treated as the end of the sweep rather than as a single unlucky route.
+export function shouldAbortSweep(result) {
+  return Boolean(result) && result.ok === false;
+}
+
+// Decide what gets written when only part of a sweep produced usable data.
+// A date where every route failed keeps its previous rows instead of being
+// erased; a date with at least one usable payload is fully replaced. This is the
+// routine path, not an edge case: the burst throttle commonly kills the second
+// half of a sweep.
+export function mergeSweeps(prevSweeps, sweeps, dates) {
+  const prev = Array.isArray(prevSweeps) ? prevSweeps : [];
+  const fresh = Array.isArray(sweeps) ? sweeps : [];
+  const deadDates = (dates || []).filter((d) => !fresh.some((s) => s && s.date === d && s.ok));
+
+  let merged = fresh.slice();
+  const kept = [];
+  for (const d of deadDates) {
+    const rows = prev.filter((s) => s && s.date === d);
+    if (!rows.length) continue;
+    merged = merged.filter((s) => s.date !== d).concat(rows);
+    kept.push({ date: d, rows: rows.length });
+  }
+  return { sweeps: merged, deadDates, kept };
+}
+
 export function parseRoute(response, dateISO, dest, city) {
   const { status, url, text } = response;
   const blocked = /\/Flight\/Redirect/.test(url || '') || status === 403 || status === 429;

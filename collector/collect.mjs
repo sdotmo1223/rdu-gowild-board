@@ -1,6 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import { ROUTES, ORIGIN, easternDate, frontierDateParam } from '../src/routes.js';
-import { parseRoute, classifyFailure } from './parse.mjs';
+import { parseRoute, classifyFailure, shouldAbortSweep, mergeSweeps } from './parse.mjs';
 import { appendTransitions, recordObservation, recordFirstSeen } from '../src/history.js';
 import { buildAlert, sendAlert } from '../src/alerts.mjs';
 import { recordSchedule } from '../src/schedule.mjs';
@@ -54,10 +54,11 @@ async function main() {
   const dates = Array.from({ length: dayCount }, (_, i) => easternDate(i));
   const { chromium } = await import('playwright');
 
-  // Measured 2026-11-02: headless Chromium is refused by DataDome on every route
-  // (no journeys array in any response), while a real headed browser is served
-  // normally. HEADLESS=0 is therefore the supported mode for a local scheduler,
-  // where the window can be parked offscreen.
+  // CORRECTED 2026-11-02: headless Chromium is NOT refused. An earlier conclusion
+  // blamed headless when the real cause was the warm-up URL — /Flight/Select
+  // redirects to /Flight/Redirect, after which fare calls bounce to www and 404.
+  // Headless and headed return identical payloads. HEADLESS=0 still exists for a
+  // scheduler that prefers an offscreen window, not because it is required.
   const headless = process.env.HEADLESS !== '0';
   const browser = await chromium.launch({
     headless,
@@ -73,8 +74,6 @@ async function main() {
     timezoneId: 'America/New_York',
     viewport: { width: 1366, height: 768 },
   });
-  // A Frontier session is required: without it InternalSelect is redirected to
-  // www, which serves a 404. The value is never logged, only the pair count.
   // Measured 2026-11-02: the session cookie is NOT required. Warming up on the
   // booking root gives a cookie-less headless browser the full fare payload
   // (200 / 1,090,472 B / journeys present). The cookie is still applied when one
@@ -90,9 +89,13 @@ async function main() {
   await sleep(3000);
 
   const sweeps = [];
+  const total = dates.length * ROUTES.length;
   let requests = 0;
+  let abortedAt = null;
 
-  for (const date of dates) {
+  // Labelled so a refusal can end both loops at once: there is no point asking
+  // the remaining routes once Frontier has started refusing the burst.
+  outer: for (const date of dates) {
     for (const route of ROUTES) {
       const path = `/Flight/InternalSelect?o1=${ORIGIN}&d1=${route.code}&dd1=${frontierDateParam(date)}&ADT=1&mon=true&promo=`;
       let response = null;
@@ -105,13 +108,21 @@ async function main() {
         requests++;
       } catch (err) {
         sweeps.push({ date, dest: route.code, ok: false, blocked: false, flights: [], reason: `fetch-failed: ${err.message}` });
-        await sleep(jitter());
-        continue;
+        abortedAt = { date, dest: route.code, reason: 'fetch-failed', attempts: sweeps.length };
+        break outer;
       }
 
       const parsed = parseRoute(response, date, route.code, route.city);
       sweeps.push({ date, dest: route.code, ...parsed });
       console.log(`${date} ${route.code}: ${parsed.reason} flights=${parsed.flights.length} blocked=${parsed.blocked}`);
+      if (shouldAbortSweep(parsed)) {
+        abortedAt = { date, dest: route.code, reason: parsed.reason, attempts: sweeps.length };
+        console.error(
+          `${route.code} was refused (${parsed.reason}); stopping after ${sweeps.length}/${total} requests. ` +
+            'Once one fare request is refused, the rest of the burst is refused too.',
+        );
+        break outer;
+      }
       await sleep(jitter());
     }
   }
@@ -148,9 +159,10 @@ async function main() {
       at: now,
       detail:
         kind === 'auth'
-          ? `${sweeps.length}/${sweeps.length} routes redirected to www and 404'd — the session cookie has expired`
-          : `${blockedCount}/${sweeps.length} routes hit the DataDome redirect, ` +
-            `${sweeps.length - okCount}/${sweeps.length} returned no journeys array`,
+          ? `${sweeps.length} of ${total} requests 404'd on www — the session cookie has expired or the warm-up URL regressed`
+          : `${sweeps.length}/${total} requests attempted: ${blockedCount} hit the DataDome redirect, ` +
+            `${sweeps.length - okCount} returned no journeys array` +
+            (abortedAt ? ` (stopped early at ${abortedAt.dest})` : ''),
     };
     console.error('No route returned usable data; preserving previous board.');
   } else {
@@ -158,24 +170,29 @@ async function main() {
     // same date. Keep the previous rows for it and say plainly that they are old.
     // Measured 2026-11-02: sustained sweeping gets soft-throttled partway through,
     // so "half the sweep died" is a routine outcome, not an edge case.
-    const prev = Array.isArray(state.sweeps) ? state.sweeps : [];
-    const deadDates = dates.filter((d) => !sweeps.some((s) => s.date === d && s.ok));
-    let merged = sweeps.slice();
-    for (const d of deadDates) {
-      const kept = prev.filter((s) => s.date === d);
-      if (kept.length) {
-        merged = merged.filter((s) => s.date !== d).concat(kept);
-        console.error(`date ${d}: no usable route this sweep; kept ${kept.length} previous results`);
-      }
+    const { sweeps: merged, deadDates, kept } = mergeSweeps(state.sweeps, sweeps, dates);
+    for (const k of kept) {
+      console.error(`date ${k.date}: no usable route this sweep; kept ${k.rows} previous results`);
     }
 
-    state.lastError = deadDates.length
-      ? {
-          kind: 'partial',
-          at: now,
-          detail: `${deadDates.length} of ${dates.length} date(s) returned nothing usable; showing the previous snapshot for those dates`,
-        }
-      : null;
+    state.lastError =
+      deadDates.length || abortedAt
+        ? {
+            kind: 'partial',
+            at: now,
+            detail: [
+              deadDates.length
+                ? `${deadDates.length} of ${dates.length} date(s) returned nothing usable; kept ${kept.reduce((a, k) => a + k.rows, 0)} previous rows.`
+                : '',
+              abortedAt
+                ? `Sweep stopped at ${abortedAt.dest} after ${abortedAt.attempts}/${total} requests (${abortedAt.reason}).`
+                : '',
+            ]
+              .filter(Boolean)
+              .join(' '),
+          }
+        : null;
+    state.aborted = abortedAt;
     state.updatedAt = now;
     state.sweeps = merged;
 
@@ -213,7 +230,10 @@ async function main() {
     }
   }
 
-  console.log(`sweeps=${sweeps.length} requests=${requests} flights=${allFlights.length} blocked=${blockedCount} history=${state.history.length}`);
+  console.log(
+    `sweeps=${sweeps.length}/${total} requests=${requests} flights=${allFlights.length} blocked=${blockedCount} ` +
+      `history=${state.history.length} aborted=${abortedAt ? abortedAt.reason : 'no'}`,
+  );
 
   if (!env) {
     // No Cloudflare credentials: emit the snapshot locally so the real renderer

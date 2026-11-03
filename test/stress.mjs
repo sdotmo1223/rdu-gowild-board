@@ -9,6 +9,7 @@ import { frequencyTable } from '../src/frequency.js';
 import { bookabilityHeatmap } from '../src/heatmap.mjs';
 import { releaseTiming, departureUtcMs, etOffsetHours } from '../src/timing.mjs';
 import { recordSchedule, weeklyPattern, weekKey } from '../src/schedule.mjs';
+import { mergeSweeps, shouldAbortSweep } from '../collector/parse.mjs';
 import { buildAlert } from '../src/alerts.mjs';
 import { normalizeSeats, parseRoute, extractJourneys, classifyFailure } from '../collector/parse.mjs';
 import {
@@ -482,6 +483,34 @@ check('week over week decides stable vs rotating', () => {
   assert.equal(mco.cells[2].of, 0, 'an unswept Tuesday has no denominator');
   assert.equal(weekKey('2026-11-02'), '2026-11-02', 'a Monday starts its own week');
   assert.equal(weekKey('2026-11-08'), '2026-11-02', 'Sunday belongs to the preceding Monday');
+});
+
+check('one refusal ends the sweep instead of spending the rest of the budget', () => {
+  assert.equal(shouldAbortSweep({ ok: false, reason: 'no-journeys-key' }), true);
+  assert.equal(shouldAbortSweep({ ok: false, reason: 'datadome-redirect' }), true);
+  assert.equal(shouldAbortSweep({ ok: false, reason: 'not-found' }), true);
+  assert.equal(shouldAbortSweep({ ok: false, reason: 'fetch-failed: boom' }), true);
+  assert.equal(shouldAbortSweep({ ok: true, reason: 'no-flights', flights: [] }), false, 'a real no-flight day is not a refusal');
+  assert.equal(shouldAbortSweep({ ok: true, reason: 'ok', flights: [1] }), false);
+});
+
+check('a date that failed completely keeps its previous rows instead of being erased', () => {
+  const prev = [
+    { date: '2026-11-02', dest: 'MCO', ok: true, flights: [{ goWild: true, allin: 15 }] },
+    { date: '2026-11-03', dest: 'MCO', ok: true, flights: [{ goWild: true, allin: 25 }] },
+  ];
+  const fresh = [
+    { date: '2026-11-02', dest: 'MCO', ok: true, flights: [] },
+    { date: '2026-11-03', dest: 'MCO', ok: false, blocked: false, flights: [], reason: 'no-journeys-key' },
+  ];
+  const { sweeps, deadDates, kept } = mergeSweeps(prev, fresh, ['2026-11-02', '2026-11-03']);
+  assert.equal(deadDates.length, 1);
+  assert.equal(deadDates[0], '2026-11-03');
+  const day3 = sweeps.filter((s) => s.date === '2026-11-03');
+  assert.equal(day3.length, 1, 'the previous row survives');
+  assert.equal(day3[0].flights[0].allin, 25, 'and it is the real earlier fare, not an empty result');
+  assert.equal(sweeps.filter((s) => s.date === '2026-11-02').length, 1, 'the healthy date is replaced, not duplicated');
+  assert.equal(kept.reduce((a, k) => a + k.rows, 0), 1);
 });
 
 console.log(`\nSTRESS: ${passed} passed, ${failed} failed`);
