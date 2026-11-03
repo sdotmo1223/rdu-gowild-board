@@ -575,3 +575,64 @@ Two consequences, both already handled by the design:
 Also corrected here: `PLAN.md` described the repo as private. It is public, which
 is what the $0 invariant requires (2,000 free Actions minutes/month is a
 private-repo limit; public repos are not metered that way).
+
+---
+
+## A second origin: JFK is not available, LGA is
+
+The request was "the same board for JFK". Checked before building, which was the
+right order:
+
+- **Frontier left JFK on 2026-10-05.** Last route out was JFK-ATL. Trade press
+  (TPG 2026-09-04, Simple Flying 2026-09-05 and 2026-10-30), JFK's own airline
+  roster and Frontier's route map all agree: Frontier serves New York via **LGA**
+  and **EWR** only. A JFK board would have been permanently and honestly empty.
+- Frontier at **LGA**: ATL, CLT, CLE, DEN, DFW, MCO, MIA, RDU, seasonal SJU, plus
+  DTW from 2026-11-20 (not added before its first day).
+- Frontier at **EWR**: ATL, MDW, DFW, MCO, SJU.
+
+### How it was built
+
+One Worker, one KV namespace, one secret, one concurrency group.
+
+- `src/routes.js` now exports `PROFILES` (`rdu`, `lga`) and resolves
+  `PROFILE`/`ORIGIN`/`ROUTES` from `BOARD_PROFILE`.
+- The renderer takes `opts.origin`. `STATE_COPY` is built at module load, before
+  any call knows the origin, so origin-bearing strings carry a `{ORIGIN}` token
+  that a single `fillOrigin()` pass replaces at the end. Rendering is otherwise
+  identical code, which is the point: two origins must not be two renderers.
+- `src/index.js` keeps one KV key per profile (`state`, `state:lga`) and serves
+  exactly one profile without a token, named by the `PUBLIC_PROFILE` var. The
+  token-gated RDU board is untouched: a wrong token still 404s.
+- `collector/collect.mjs` appends `?profile=<name>` to its own ingest URL, so a
+  second origin needs **no new secret and no new endpoint** — CI already holds
+  `BOARD_TOKEN`.
+- `.github/workflows/lga.yml` runs the same collector with `BOARD_PROFILE=lga`
+  and shares the `gowild-collector` concurrency group, so GitHub serialises the
+  two sweeps. One process touches Frontier at a time, still.
+
+### Evidence from the first LGA run (41678797207)
+
+```
+write path verified (HTTP 200): sweeping LGA
+sweep plan: 4/9 routes x 2 date(s) = 8 requests (shard 1)
+fares: tracked=15 new=15
+sweeps=8/8 requests=8 flights=18 blocked=0 aborted=no
+ingest write complete: 8871 bytes via the Worker
+```
+
+8 requests, not 18: the route shard halves the work per tick, exactly as it does
+for RDU. `/lga` then served HTTP 200 with the title `LGA GoWild`.
+
+### Tooling gotcha
+
+`gh workflow run gowild-lga.yml` returned 404 ("workflow not found on the default
+branch") while `gh workflow list` showed it active. Dispatching by **numeric id**
+works:
+
+```
+gh api -X POST repos/<owner>/<repo>/actions/workflows/<id>/dispatches -f ref=main
+```
+
+Use the id, not the filename, when a freshly pushed workflow is not yet resolvable
+by path.
