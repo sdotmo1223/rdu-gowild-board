@@ -89,6 +89,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `tools/render-state.mjs` | render `board.html` from a real collector snapshot |
 | `tools/seed-schedule.mjs` | rebuild `state.json` (incl. schedule) from `.sweep/` captures |
 | `PLAN.md` | the current ordered plan and its acceptance criteria |
+| `REVIEW.md` | totality review: scorecard, clash catalogue, bottlenecks, ordered fixes, exam standard |
 | `tools/render-local.mjs` | render from interactive `.sweep/` captures |
 | `test/acceptance.mjs` | 25 spec-level checks |
 | `test/profiles.mjs` | 9 multi-origin checks: profile resolution, unserved-vs-refused classification, per-origin rendering |
@@ -99,7 +100,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 ## Commands
 
 ```bash
-npm test                     # acceptance: 25 checks
+npm test                     # acceptance 25 + multi-origin 9; both must pass
 npm run stress               # adversarial: 48 checks
 node test/profiles.mjs       # multi-origin: 9 checks
 node --check <file>          # syntax gate, used on every file
@@ -133,7 +134,9 @@ npx wrangler deploy
 | `WARMUP_URL` | defaults to `https://booking.flyfrontier.com/` — do not change blindly |
 | `STATE_OUT`, `STATE_IN` | snapshot paths |
 | `SWEEP_DAYS` | dates per sweep, default 2. Do not raise it in the normal cadence: 7 routes × N dates is the burst, and one refusal aborts the sweep. |
-| `FULL_SWEEP=1` | ask all 14 routes instead of the rotating half (deliberate backfill or probe). |
+| `FULL_SWEEP=1` | ask every route in the profile instead of the rotating half (deliberate backfill or probe). The per-profile budget no longer halves it; the burst is capped at `FORCED_BUDGET_CEILING` (30). |
+| `SWEEP_ONLY=ATL,MCO` | ask exactly these routes, ignoring shard and budget. This is the one-round-trip diagnostic: 2 routes × 2 dates = 4 requests in ~20 s, no CI queue. |
+| `SWEEP_MAX_REQUESTS` | per-profile request budget for a normal tick (14 rdu / 10 lga / 16 phl). Requests, not routes: `budget / SWEEP_DAYS` routes per date, taken from a clock-driven offset so the tail of a shard is not starved. |
 | `SWEEP_ALL_DATES=1` | keep asking about today after its last departure instead of carrying it. |
 
 ## The throttle (updated 2026-11-03)
