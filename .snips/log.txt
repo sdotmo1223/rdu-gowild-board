@@ -1,9 +1,0 @@
-  console.log(
-    `sweep plan: ${plannedRoutes.length}/${routePool.length} routes x ${dates.length} date(s) = ${
-      dates.length * plannedRoutes.length
-    } requests (shard ${shard === null ? 'full' : shard}, budget ${budget}${
-      skipToday ? '; today skipped, departures finished' : ''
-    }${onlyCodes.length ? `; SWEEP_ONLY=${onlyCodes.join(',')}` : ''}${
-      quarantined.length && !forced ? `; ${quarantined.length} retired as not-sold` : ''
-    })`,
-  );

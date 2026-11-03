@@ -1,6 +1,0 @@
-  } else if (d.status === 'nogowild' && view && view.zero && Number(view.zero.count) >= 3 && view.zero.since) {
-    const hrs = Math.max(1, Math.round((Date.now() - view.zero.since) / 3600000));
-    body = `<div class="state warn">${d.total} departure${d.total === 1 ? '' : 's'}, but Frontier released no GoWild seats. <strong>No GoWild from ${esc(PAGE_ORIGIN)} in ${view.zero.count} sweeps over ${hrs}h</strong> &mdash; that reads as a station-level decision, not a quiet day.</div>`;
-  } else {
-    body = `<div class="state warn">${esc(STATE_COPY.nogowild(d))}</div>`;
-  }
