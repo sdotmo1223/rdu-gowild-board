@@ -8,7 +8,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "collect": "node collector/collect.mjs",
-    "test": "node test/acceptance.mjs && node test/profiles.mjs",
+    "test": "node test/all.mjs",
     "stress": "node test/stress.mjs",
     "check": "node --check src/index.js && node --check src/board.js && node --check src/render.js && node --check collector/collect.mjs"
   },
