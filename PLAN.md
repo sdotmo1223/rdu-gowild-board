@@ -44,11 +44,10 @@ Anything that needs a decision from you is **not** in this phase.
 ## Phase 1 — the 5-minute unblock (you)
 
 - [ ] Create the GitHub repo and push:
-      Create the empty repo at https://github.com/new (name: rdu-gowild-board, no README),
-      then run these two lines separately — PowerShell 5.1 rejects `&&`:
-
-      `git remote add origin https://github.com/sdotmo1223/rdu-gowild-board.git`
-      `git push -u origin main`
+      DONE 2026-11-03: repo exists (private), origin -> https://github.com/sdotmo1223/rdu-gowild-board.git,
+      6 commits on main. The scheduled workflow is **disabled_manually** on purpose:
+      it has no secrets yet, so enabling it would sweep Frontier every 15 minutes and
+      write nothing. Enable it only after phase 2 sets the secrets.
 - [ ] `npx wrangler login`
 - [ ] `npx wrangler kv namespace create BOARD` → paste the id into `wrangler.toml`
 - [ ] `npx wrangler secret put BOARD_TOKEN` (any long random string)
