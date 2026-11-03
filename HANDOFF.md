@@ -315,3 +315,40 @@ its place.
 **Lesson:** a validator that rewrites its input can turn a good secret into a bad
 one while blaming the user. Parse secrets verbatim; the only safe transformation
 is whitespace trimming.
+
+---
+
+## The whole chain works (2026-11-03 13:37Z)
+
+Run [41645625102](https://github.com/sdotmo1223/rdu-gowild-board/actions/runs/41645625102)
+finished `success` in 150 s and the board changed under it. This is the first time
+every link has worked at once:
+
+    GitHub runner -> Frontier (28/28 ok) -> collector -> KV -> Worker -> HTML
+
+Measured immediately after, three independent ways:
+
+| Source | Evidence |
+|---|---|
+| KV (`wrangler kv key get state`) | `generatedAt 2026-11-03T13:37:45Z`, 28 sweeps, 28 ok, 0 blocked, 175 flights, `lastError: none` |
+| Live page (`finish-pipeline.ps1 -DryRun`) | `updated 5 min ago`, 65 rows, 72,289 B |
+| Nine route checks (`verify-live.ps1`) | 9/9 pass, `RESULT: 0 failed check(s)` |
+
+No Frontier refusal in this burst: 28/28, unlike the 19-request stop an hour
+earlier — further evidence the refusal is transient rather than a budget.
+
+Row and flight counts moved between sweeps (186 flights / 74 rows at 09:15Z vs
+175 / 65 at 13:37Z). That is GoWild availability changing, not a defect; the page
+labels every price "estimated all-in" and shows its own age.
+
+**The token detour, in one line:** the credential was never the problem. A
+validator written for Cloudflare's legacy 40-char tokens sliced four characters
+off a 53-char `cfut_` token, and Cloudflare's `6003 invalid request headers`
+read as a permissions error. Two credentials were exposed in chat before that
+was understood; both were deleted at the dashboard.
+
+**Tooling left behind:** `tools/verify-cf-token.ps1` (verifies without printing,
+uploads only on PASS) and `tools/finish-pipeline.ps1` (enables, dispatches one
+run, waits, and compares the visitor-visible age before/after). `-DryRun` on the
+second is the cheapest health check: it reads the page and the workflow and
+changes nothing.

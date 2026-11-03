@@ -127,3 +127,14 @@ five reports of the same blocked page.
 
 Reproduce with `powershell -NoProfile -ExecutionPolicy Bypass -File tools/verify-live.ps1`
 (curl and Node both fail TLS on this host; use .NET).
+
+## End-to-end proof (2026-11-03 13:37Z)
+
+| Link | Evidence |
+|---|---|
+| CI -> Frontier | run `41645625102`, 28/28 routes ok, 175 flights, 0 blocked |
+| Collector -> KV | `generatedAt 2026-11-03T13:37:45.647Z`, `lastError: none` |
+| KV -> Worker | page `updated 5 min ago` at check time |
+| Worker -> HTML | 72,289 B, 65 rows, 9/9 route checks pass |
+| Cron | `board-collect` active, 15-minute schedule |
+| Total cost | $0 |
