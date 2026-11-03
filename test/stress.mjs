@@ -20,6 +20,7 @@ import {
   easternDate,
   frontierDateParam,
   isBlackout,
+  shardRoutes,
 } from '../src/routes.js';
 import { recordFares, fareMechanics } from '../src/pricing.mjs';
 
@@ -629,6 +630,115 @@ check('a truncated sweep keeps the routes it never asked about', () => {
   assert.equal(done.partial.length, 0, 'a complete sweep carries nothing');
   assert.equal(done.sweeps.filter((s) => s.carried).length, 0);
   assert.equal(mergeSweeps(prev, [], ['2026-11-04']).kept.length, 1, 'the old signature still works');
+});
+
+// Halving the burst is only safe if the other half is carried and labelled. A
+// planned rotation must not look like a broken sweep, or the banner would fire
+// on every single tick and stop meaning anything — and on a 15-minute cadence
+// nobody would read it.
+check('a rotating half-sweep carries the other half without crying partial', () => {
+  const prev = ROUTES.map((r) => ({
+    date: '2026-11-04',
+    dest: r.code,
+    ok: true,
+    blocked: false,
+    flights: [{ goWild: true, allin: 15 }],
+  }));
+  const half = shardRoutes(ROUTES, 0);
+  const codes = half.map((r) => r.code);
+  const fresh = half.map((r) => ({ date: '2026-11-04', dest: r.code, ok: true, blocked: false, flights: [] }));
+
+  const out = mergeSweeps(prev, fresh, ['2026-11-04'], { expectedRoutes: codes.length, plannedDests: codes, now: 5000 });
+  const forDate = out.sweeps.filter((s) => s.date === '2026-11-04');
+  assert.equal(forDate.length, 14, 'no route disappears from the board');
+  assert.equal(out.partial.length, 0, 'a planned half is not a partial sweep');
+  const carried = forDate.filter((s) => s.carried);
+  assert.equal(carried.length, 7);
+  assert.ok(carried.every((s) => s.carriedReason === 'rotated'), 'labelled as rotation, not as a failure');
+  assert.ok(carried.every((s) => s.carriedAt === 5000), 'and stamped so the page can show its age');
+  assert.equal(carried.filter((s) => s.flights.length === 1).length, 7, 'the real prior fares survive');
+
+  // A refusal inside the half that was asked is still a partial sweep.
+  const aborted = mergeSweeps(prev, fresh.slice(0, 4), ['2026-11-04'], {
+    expectedRoutes: codes.length,
+    plannedDests: codes,
+    now: 6000,
+  });
+  assert.equal(aborted.partial.length, 1);
+  assert.equal(aborted.partial[0].attempted, 4);
+  assert.equal(aborted.partial[0].expected, 7);
+  assert.equal(aborted.partial[0].missing, 3, 'only the routes it failed to ask are missing');
+  assert.equal(aborted.partial[0].rotated, 7);
+  assert.equal(aborted.sweeps.filter((s) => s.date === '2026-11-04').length, 14, 'and nothing is lost there either');
+});
+
+// After the last departure the day is over, not broken. Calling it a dead date
+// would raise a warning banner every night for a sweep that did nothing wrong.
+check('a date whose departures have finished is carried, never reported as dead', () => {
+  const prev = [
+    ...ROUTES.map((r) => ({ date: '2026-11-03', dest: r.code, ok: true, blocked: false, flights: [{ goWild: true, allin: 15 }] })),
+    ...ROUTES.map((r) => ({ date: '2026-11-04', dest: r.code, ok: true, blocked: false, flights: [] })),
+  ];
+  const half = shardRoutes(ROUTES, 1).map((r) => r.code);
+  const tomorrow = half.map((r) => ({ date: '2026-11-04', dest: r, ok: true, blocked: false, flights: [] }));
+  const out = mergeSweeps(prev, tomorrow, ['2026-11-04'], {
+    expectedRoutes: half.length,
+    plannedDests: half,
+    skippedDates: ['2026-11-03'],
+    now: 7000,
+  });
+  assert.equal(out.deadDates.length, 0, 'a deliberate skip is not a failure');
+  assert.equal(out.kept.length, 0);
+  assert.deepEqual(out.skipped.map((s) => s.date), ['2026-11-03']);
+  const today = out.sweeps.filter((s) => s.date === '2026-11-03');
+  assert.equal(today.length, 14, 'today still renders instead of vanishing from the board');
+  assert.ok(today.every((s) => s.carried && s.carriedReason === 'day-over'));
+  assert.equal(out.partial.length, 0, 'and it is not a partial sweep');
+});
+
+// The whole point of the flag: a carried fare must never look freshly checked.
+check('carried rows show their age instead of implying a fresh check', () => {
+  const carriedAt = Date.now() - 50 * 60000;
+  const fresh = shardRoutes(ROUTES, 0).map((r) => ({ date: '2026-11-04', dest: r.code, ok: true, blocked: false, flights: [] }));
+  const stale = shardRoutes(ROUTES, 1).map((r) => ({
+    date: '2026-11-04',
+    dest: r.code,
+    ok: true,
+    blocked: false,
+    flights: [],
+    carried: true,
+    carriedAt,
+    carriedReason: 'rotated',
+  }));
+  const state = {
+    sweeps: fresh.concat(stale),
+    updatedAt: Date.now(),
+    routeCount: 14,
+    lastSweep: { routes: 7, total: 14, shard: 0 },
+  };
+  const view = buildBoard(state);
+  const d = view.dates[0];
+  assert.equal(d.freshRoutes, 7);
+  assert.equal(d.carriedRoutes, 7);
+  assert.equal(d.carriedAt, carriedAt);
+  const html = renderPage(view, state, [], Date.now());
+  assert.match(html, /7\/14 routes re-checked/);
+  assert.match(html, /7 carried from \d\d:\d\d ET/);
+  assert.match(html, /Half-sweep mode: 7 of 14 routes per run/);
+  assert.doesNotMatch(html, /Partial sweep/, 'rotation is not an error');
+});
+
+// A route that was never asked must not be recorded as "not bookable": that
+// would erase a real observation from twenty minutes earlier.
+check('a route that was not asked is never given a verdict', () => {
+  const state = { observed: {}, days: {}, seenDests: { MCO: 1, CUN: 1 } };
+  recordObservation(state, '2026-11-04', [{ date: '2026-11-04', dest: 'MCO', goWild: true, allin: 15 }], { asked: ['MCO'] });
+  assert.equal(state.days['MCO|2026-11-04'], 1);
+  assert.equal(state.days['CUN|2026-11-04'], undefined, 'CUN was the other half; it gets no verdict');
+
+  const full = { observed: {}, days: {}, seenDests: { MCO: 1, CUN: 1 } };
+  recordObservation(full, '2026-11-04', [{ date: '2026-11-04', dest: 'MCO', goWild: true, allin: 15 }]);
+  assert.equal(full.days['CUN|2026-11-04'], 0, 'asked and absent is a real 0');
 });
 
 async function checkAsync(name, fn) {

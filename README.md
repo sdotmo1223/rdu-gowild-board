@@ -103,7 +103,9 @@ npm test                 # offline acceptance checks
 | No snapshot ever written | red "No data yet — not 'no flights'" banner |
 | Data > 45 min old | amber stale banner, amber timestamp |
 | All routes blocked | red bot-protection banner, previous board preserved |
-| Some routes failed | per-date "`n` routes scanned · `n` failed" |
+| Some routes failed | per-date "`n`/14 routes re-checked · `n` failed" |
+| Half the routes carried (rotation) | per-date "7/14 routes re-checked · 7 carried from HH:MM ET" |
+| Departures finished for the day | "14 routes carried from 23:30 ET · departures for this date have finished" |
 | Blackout date | `Peak Day Charge $79+` |
 | GoWild all above $50 | "`n` departures, all above $50.00" |
 | No GoWild seats released | "`n` departures, but no GoWild seats" |
@@ -119,7 +121,8 @@ own nonstop table. The widely repeated "32 destinations" is an ABC11 article fro
 ## Constraints honoured
 
 - **$0**: Workers Free + KV Free + GitHub Actions free minutes. No card, no R2, no paid tier.
-- **Politeness**: strictly sequential, 2–5 s randomized, 15-minute cadence, one process
+- **Politeness**: strictly sequential, 2–5 s randomized, half the routes per tick
+  (14 requests per two-date sweep), 15-minute cadence, one process
   ever (enforced by a GitHub Actions `concurrency` group).
 - **Read-only**: no checkout, payment, or booking path is ever requested.
 - **No stored password**: there is no login at all — only a session cookie you paste once.

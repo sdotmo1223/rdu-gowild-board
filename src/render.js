@@ -32,6 +32,24 @@ function shortDay(iso) {
   return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
+// Local clock label for a carried-row timestamp. Its whole purpose is that the
+// reader can compare it against the board's own "updated N min ago" and see that
+// this route was not re-checked just now.
+function hhmm(ts) {
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).format(new Date(n));
+  } catch {
+    return '';
+  }
+}
+
 function ago(min) {
   if (min == null) return 'never updated';
   if (min < 1) return 'updated just now';
@@ -78,6 +96,10 @@ const STATE_COPY = {
 
 function dateSection(d) {
   const label = d.blackout || d.peak ? `<span class="badge peak">${esc(PEAK_LABEL)}</span>` : '';
+  const freshN = d.freshRoutes == null ? d.routesScanned : d.freshRoutes;
+  const carriedNote = d.carriedRoutes
+    ? ` &middot; ${d.carriedRoutes} carried${d.carriedAt ? ` from ${esc(hhmm(d.carriedAt))} ET` : ''}`
+    : '';
   let body;
 
   if (d.status === 'ok') {
@@ -112,7 +134,11 @@ function dateSection(d) {
   return `<section class="date">
     <h2>${esc(shortDay(d.date))} ${label}</h2>
     ${body}
-    <p class="meta">${d.routesScanned} routes scanned${d.failedRoutes ? ` &middot; ${d.failedRoutes} failed` : ''}${d.blockedRoutes ? ` &middot; ${d.blockedRoutes} blocked` : ''}</p>
+    <p class="meta">${
+      d.carriedReason === 'day-over' && !freshN
+        ? `${d.routesScanned} routes carried${d.carriedAt ? ` from ${esc(hhmm(d.carriedAt))} ET` : ''} &middot; departures for this date have finished`
+        : `${freshN}/${d.routesScanned} routes re-checked${d.failedRoutes ? ` &middot; ${d.failedRoutes} failed` : ''}${d.blockedRoutes ? ` &middot; ${d.blockedRoutes} blocked` : ''}${carriedNote}`
+    }</p>
   </section>`;
 }
 
@@ -391,6 +417,7 @@ ${pricingHtml(state)}
   Prices are <strong>estimated all-in</strong>: Frontier returns a single GoWild fare with no separate tax or fee
   breakdown, so the total cannot be independently verified.<br>
   Showing all-in &le; $${MAX_ALL_IN.toFixed(2)} &middot; ${view.routeCount || 14} routes &middot; ${esc(PEAK_LABEL)} on blackout dates.<br>
+  ${view.sweep && view.sweep.routes && view.sweep.total && view.sweep.routes < view.sweep.total ? `Half-sweep mode: ${view.sweep.routes} of ${view.sweep.total} routes per run, so every route is re-checked within 30 minutes.<br>` : ''}
   Read-only. Never touches booking or payment.
 </footer>
 <script>

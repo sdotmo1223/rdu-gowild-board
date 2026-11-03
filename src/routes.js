@@ -70,3 +70,46 @@ export function cityFor(code) {
   const hit = ROUTES.find((r) => r.code === code);
   return hit ? hit.city : code;
 }
+
+// --- Sweep budgeting --------------------------------------------------------
+// One request per route per date is the entire cost of a sweep, and the measured
+// soft throttle starts well inside a 28-request burst (refusals seen at 4/28 and
+// 19/28 on 2026-11-03). A refusal aborts the sweep, so a burst that is too large
+// buys LESS data than a smaller one: the second half is spent being told no.
+// Two shards of seven give the same coverage — every route re-checked at least
+// every 30 minutes — for half the burst.
+export const SHARD_SLOT_MS = 15 * 60 * 1000;
+
+// Alternates 0,1,0,1 on consecutive 15-minute slots, and is derived from the
+// clock rather than from stored state, so a missed tick cannot desynchronise it.
+export function routeShard(now = Date.now()) {
+  return Math.floor(now / SHARD_SLOT_MS) % 2;
+}
+
+// shard = null returns every route, for a deliberate full sweep (FULL_SWEEP=1).
+export function shardRoutes(routes, shard) {
+  const list = Array.isArray(routes) ? routes : [];
+  if (shard === null || shard === undefined) return list.slice();
+  const want = ((Number(shard) % 2) + 2) % 2;
+  return list.filter((_, i) => i % 2 === want);
+}
+
+export function easternHour(now = Date.now()) {
+  return Number(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      hour: '2-digit',
+      hourCycle: 'h23',
+    }).format(new Date(now)),
+  );
+}
+
+// After the last RDU departure there is nothing left to learn about today: the
+// schedule has flown. Asking again spends half of the next sweep's budget on a
+// day that cannot change. Resets at local midnight, because a new day is live
+// again from its first departure.
+export const LAST_DEPARTURE_HOUR_ET = 23;
+
+export function departuresFinished(now = Date.now()) {
+  return easternHour(now) >= LAST_DEPARTURE_HOUR_ET;
+}

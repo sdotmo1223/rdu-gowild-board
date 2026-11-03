@@ -113,3 +113,72 @@ Ranked by value per unit of risk:
 - Never add retries. A retry is a second request, and the throttle is per burst.
 - Never delete `state.firstSeen` or `state.schedule` to "clean up" — both are the
   only non-reproducible data in the system.
+
+---
+
+## The mechanism questions, and the experiments that answer them
+
+Added 2026-11-03. Frontier documents the *structure* of GoWild (a $0.01 fare plus
+taxes; seats capacity controlled per flight) and documents nothing about the
+*allocation*. These are the experiments that convert the unknowns into either a
+measurement or a stated limit. Every one of them is ranked by requests spent,
+because requests are the scarce resource.
+
+### Zero extra requests — pure analysis of what we already store
+
+1. **Is the fare spread just tax arithmetic?** Record `stops` per instance and
+   tabulate all-in by segment count and domestic/international. If nonstop sits
+   near $15-16, a connection near $25-31, and SJU/CUN near $94-103, then the whole
+   spread is per-segment taxes and no pricing algorithm is involved at all. This
+   is the single most decisive test we can run and it costs nothing.
+   *Acceptance:* medians with denominators per bucket; a plain statement either
+   way, never a bare number.
+
+2. **Does the standard fare collapse near departure, or stay flat?** We already
+   store `stdMin` per instance. Plot it against lead hours. A collapsing standard
+   fare means Frontier is dumping inventory; a flat one means GoWild is a separate
+   channel, not a discount ladder. *Acceptance:* slope over at least 3 lead-hour
+   buckets, or an explicit "not enough spread yet".
+
+3. **Designated flight, or any under-sold flight?** For every flight number seen
+   on 3+ date-instances, tabulate GoWild yes/no. Perfectly consistent per flight
+   number = designated. The same flight alternating = load-based.
+   *Acceptance:* per-flight verdicts only at `MIN_SAMPLES`; below that, nothing.
+
+4. **Does a GoWild seat run out?** `goWildFareSeatsRemaining` occasionally reads
+   "3 Seats Left!". Record those strings. A flight showing seats and later none is
+   depletion, and that is Frontier's "first-come, first-served" made visible.
+   *Acceptance:* a seats-over-time log per instance.
+
+5. **Is the peak-day fare really the Peak Day Charge?** Our `BLACKOUT_DATES` plus
+   the observed inflated GoWild fare (once $317.96) should line up with Frontier's
+   published $79-159 surcharge. Next blackout: 2026-11-24/25. No extra requests.
+   *Acceptance:* one recorded blackout observation comparing the inflated fare to
+   the published range, or an explicit "does not line up".
+
+### One deliberate extra burst
+
+6. **When exactly does a flight enter the window?** Sweep the same routes at
+   ~23:55 ET and again at ~00:05 ET. That is the only way to tell "released at
+   midnight in the departure city" from "released whenever Frontier chooses".
+   Cost: 14 requests, once. *Acceptance:* first-observed GoWild time distribution,
+   showing whether it clusters in the 00:00-01:00 hour.
+
+### Needs the reverse lane
+
+7. **Round trip.** Reverse-direction sweeps (`ATL->RDU`) tagged `dir:'return'`,
+   excluded from the board, history and schedule, paired with the outbound leg at
+   +48 h. Cost: +2 requests per sweep for ATL alone.
+
+### The distinction that decides how we read everything else
+
+8. **Window vs exclusion.** An instance observed before its day-before window has
+   opened is *not offered yet*; an instance inside the window with no GoWild is
+   *refused by capacity control*. Only the second is a Frontier decision. Until
+   this split exists, part of our "no GoWild" count is just our own sweep timing.
+   Recorded per instance from timestamps we already have, so it costs nothing.
+   *Acceptance:* every instance carries before/in-window; the hour table reports
+   the refused rate only over in-window sightings.
+
+**Order of work:** 8 first (it changes the meaning of every other number), then 1
+and 2 (decisive, free), then 4 and 5 as they occur naturally, then 6, then 7.

@@ -161,7 +161,7 @@ at a 15-minute cadence is under a day of uptime once the scheduler runs.
 ```bash
 npm test; npm run stress          # establish a baseline (PowerShell: `;` not `&&`)
 node tools/headless-probe.mjs       # 1 request, confirms Frontier still answers
-node collector/collect.mjs          # 28 requests, writes state.json
+node collector/collect.mjs          # 14 requests, writes state.json
 node tools/render-state.mjs         # board.html from real data
 ```
 
@@ -518,3 +518,41 @@ are community folklore, and the one credible first-hand account says inventory
   cluster at 00:00-01:00 rather than showing a price change. The tracker should
   eventually separate "not yet in the window" from "in the window but excluded",
   because only the second is a capacity-control decision.
+
+## Efficiency pass: the burst was the limit, not the cadence (2026-11-03)
+
+Refusals had now been seen at 4/28 and 19/28 requests in otherwise identical bursts.
+That is the tell: one refusal ends the sweep, so too large a burst buys *less* data.
+Three changes, all verified by replaying the next tick through the real
+merge/board/render path against the live KV snapshot (no Frontier request):
+
+- `src/routes.js`: `routeShard()` (0/1 on 15-minute slots), `shardRoutes()` (two
+  disjoint halves of 7), `easternHour()`, `departuresFinished()`.
+- `collector/collect.mjs`: one half per tick (14 requests for two dates), today
+  skipped after 23:00 ET (7 requests), `state.lastSweep` recorded.
+- `collector/parse.mjs`: `mergeSweeps` now separates `rotated` from `aborted` carry,
+  carries skipped dates as `day-over`, and calls a sweep partial only when a route it
+  *intended* to ask was refused.
+- `src/board.js` / `src/render.js`: per-date `freshRoutes`, `carriedRoutes`,
+  `carriedAt`, `carriedReason`, the carried-age meta line and the half-sweep footer.
+- `src/history.js`: `recordObservation(..., { asked })` so an unasked route is never
+  recorded as "not bookable".
+- CI: npm cache on `setup-node` plus `actions/cache` for `~/.cache/ms-playwright`.
+
+**Wrong turn worth logging:** the first edit to the partial-sweep log block left a
+stray `);`. `node --check` caught it while `npm test` and `npm run stress` both stayed
+green — neither suite imports the collector, so no test could have seen it. For
+`collector/collect.mjs`, `node --check` / `npm run check` is the only gate there is.
+
+### The abort path has now fired in production
+
+`PLAN.md` carried an open item: abort-on-refusal was proven by test only, never
+observed live. It has now fired:
+
+> `partial` — "Sweep stopped at DTW after 21/28 requests (no-journeys-key).
+> 2026-11-04 only reached 7/14 routes; 7 rows carried from the previous sweep."
+
+So the refusal is real and intermittent (2026-11-03 gave 28/28 clean twice, then
+21/28), the stop fires on the first refused route, and the carried-row path kept
+the previous day's data instead of blanking it. That is the invariant working as
+designed: a refused sweep degrades to a stated age, never to an empty grid.

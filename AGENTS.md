@@ -26,7 +26,9 @@ works, it costs $0, and silent failure is impossible.**
 4. **Politeness is not negotiable.** Strictly sequential, 2–5 s randomized delay,
    15-minute cadence, exactly one process touching Frontier. Do not parallelize
    route fetches, do not add retries that multiply requests, do not "warm up"
-   extra routes. (15 minutes is only affordable because the repo is public:
+   extra routes. Half the routes per tick (7 of 14, alternating on the clock) is
+   the burst budget: a refusal aborts the sweep, so 28 requests every 15 minutes
+   can return less than 14. (15 minutes is only affordable because the repo is public:
    GitHub Free meters 2,000 Actions minutes/month on private repos, which a
    15-minute Playwright cron exhausts in about a week. Keep it public.)
 5. **Read-only.** Never request checkout, payment, or booking paths.
@@ -67,7 +69,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 
 | Path | Responsibility |
 |---|---|
-| `src/routes.js` | 14 routes, `BLACKOUT_DATES`, `PEAK_LABEL`, `MAX_ALL_IN`, `MAX_STOPS`, `MAX_DURATION_MIN`, `easternDate()`, `frontierDateParam()` |
+| `src/routes.js` | 14 routes, `BLACKOUT_DATES`, `PEAK_LABEL`, `MAX_ALL_IN`, `MAX_STOPS`, `MAX_DURATION_MIN`, `easternDate()`, `frontierDateParam()`; the sweep budget: `routeShard()`, `shardRoutes()`, `easternHour()`, `departuresFinished()` |
 | `src/board.js` | `buildBoard()` — per-date status machine, nonstop-first sort, fold-vs-show, defensive against malformed state |
 | `src/render.js` | `renderPage()` — the entire HTML, all banners, heatmap, timing, pin/ICS/PWA client script |
 | `src/history.js` | digest, transitions, `recordObservation()`, `recordFirstSeen()` |
@@ -102,7 +104,7 @@ node tools/headless-probe.mjs              # 1 request, proves the pipeline
 IGNORE_COOKIE=1 node tools/headless-probe.mjs
 HEADLESS=0 node tools/headless-probe.mjs   # headed, parked offscreen
 
-node collector/collect.mjs   # 28 requests, ~2 min, writes state.json without CF envs
+node collector/collect.mjs   # 14 requests (7 routes x 2 dates), ~1 min, writes state.json without CF envs
 node tools/render-state.mjs  # renders board.html from state.json
 ```
 
@@ -126,7 +128,9 @@ npx wrangler deploy
 | `NTFY_TOPIC` | optional phone push, no account needed |
 | `WARMUP_URL` | defaults to `https://booking.flyfrontier.com/` — do not change blindly |
 | `STATE_OUT`, `STATE_IN` | snapshot paths |
-| `SWEEP_DAYS` | dates per sweep, default 2. Do not raise it in the normal cadence: 14 routes × N dates is a burst, and the measured soft throttle starts around the 15th request. |
+| `SWEEP_DAYS` | dates per sweep, default 2. Do not raise it in the normal cadence: 7 routes × N dates is the burst, and one refusal aborts the sweep. |
+| `FULL_SWEEP=1` | ask all 14 routes instead of the rotating half (deliberate backfill or probe). |
+| `SWEEP_ALL_DATES=1` | keep asking about today after its last departure instead of carrying it. |
 
 ## The throttle (updated 2026-11-03)
 
@@ -148,6 +152,14 @@ Rules that hold under either reading:
 - The collector **aborts on the first refusal** (`shouldAbortSweep`) and keeps the
   previous rows for any date that returned nothing usable (`mergeSweeps`). It is a
   safety net, not a licence to raise `SWEEP_DAYS`.
+
+- **The burst is capped, not the cadence.** 7 routes per tick
+  (`routeShard`/`shardRoutes`), so a two-date sweep is **14 requests** and every
+  route is still re-checked every 30 minutes. `FULL_SWEEP=1` asks all 14. After
+  23:00 ET the collector stops asking about today (`departuresFinished`) and
+  carries those rows; the page states their age (`7/14 routes re-checked ·
+  7 carried from 22:45 ET`). A carried row is never recorded as a fresh
+  observation or a fresh schedule sample.
 
 ---
 

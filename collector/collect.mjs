@@ -1,5 +1,13 @@
 import { writeFileSync } from 'node:fs';
-import { ROUTES, ORIGIN, easternDate, frontierDateParam } from '../src/routes.js';
+import {
+  ROUTES,
+  ORIGIN,
+  easternDate,
+  frontierDateParam,
+  routeShard,
+  shardRoutes,
+  departuresFinished,
+} from '../src/routes.js';
 import { parseRoute, classifyFailure, shouldAbortSweep, mergeSweeps } from './parse.mjs';
 import { appendTransitions, recordObservation, recordFirstSeen } from '../src/history.js';
 import { buildAlert, sendAlert } from '../src/alerts.mjs';
@@ -92,9 +100,9 @@ async function ingestFetch(env, url, { method = 'GET', body } = {}) {
 
 async function main() {
   // Two dates by default. SWEEP_DAYS raises the window for a deliberate backfill
-  // (e.g. SWEEP_DAYS=4 once), but each extra day costs 14 more requests and the
-  // measured soft throttle starts around the fifteenth request in a burst, so
-  // raising it in the normal 15-minute cadence is a bad trade.
+  // (e.g. SWEEP_DAYS=4 once), but each extra day costs 7 more requests and the
+  // measured soft throttle starts well inside a two-date burst, so raising it in
+  // the normal 15-minute cadence is a bad trade.
   // Resolve and PROVE the write path before Frontier is touched. On 2026-11-03 a
   // rejected token was only discovered after 19 fare requests had been spent,
   // which is exactly the waste invariant 4 forbids.
@@ -121,8 +129,34 @@ async function main() {
   }
 
   const dayCount = Math.max(1, Math.min(7, Number(process.env.SWEEP_DAYS) || 2));
-  const dates = Array.from({ length: dayCount }, (_, i) => easternDate(i));
+  const startedAt = Date.now();
+  const prevSweeps = previous && Array.isArray(previous.sweeps) ? previous.sweeps : [];
+  const todayISO = easternDate(0, startedAt);
+
+  // Once the last departure has gone there is nothing left to learn about today.
+  // Asking again would spend half of this sweep's budget on a schedule that has
+  // already flown. It is skipped ONLY when the previous snapshot actually holds
+  // today: with nothing to carry forward, the date would disappear from the
+  // board entirely, and a vanished date is the one state the page must never show.
+  const todayHasRows = prevSweeps.some((s) => s && s.date === todayISO);
+  const skipToday = process.env.SWEEP_ALL_DATES !== '1' && departuresFinished(startedAt) && todayHasRows;
+  const dates = Array.from({ length: dayCount }, (_, i) => easternDate((skipToday ? 1 : 0) + i, startedAt));
+  const skippedDates = skipToday ? [todayISO] : [];
+
+  // Half the routes per tick, alternating on the clock. 14 routes x 2 dates is a
+  // 28-request burst every 15 minutes and the measured refusals land at 4/28 and
+  // 19/28, so a burst that big spends requests being told no. Two shards of seven
+  // give the same coverage every 30 minutes for half the burst. FULL_SWEEP=1 asks
+  // all 14 for a deliberate backfill.
+  const shard = process.env.FULL_SWEEP === '1' ? null : routeShard(startedAt);
+  const plannedRoutes = shardRoutes(ROUTES, shard);
   const { chromium } = await import('playwright');
+
+  console.log(
+    `sweep plan: ${plannedRoutes.length}/${ROUTES.length} routes x ${dates.length} date(s) = ${
+      dates.length * plannedRoutes.length
+    } requests (shard ${shard === null ? 'full' : shard}${skipToday ? '; today skipped, departures finished' : ''})`,
+  );
 
   // CORRECTED 2026-11-02: headless Chromium is NOT refused. An earlier conclusion
   // blamed headless when the real cause was the warm-up URL — /Flight/Select
@@ -159,14 +193,14 @@ async function main() {
   await sleep(3000);
 
   const sweeps = [];
-  const total = dates.length * ROUTES.length;
+  const total = dates.length * plannedRoutes.length;
   let requests = 0;
   let abortedAt = null;
 
   // Labelled so a refusal can end both loops at once: there is no point asking
   // the remaining routes once Frontier has started refusing the burst.
   outer: for (const date of dates) {
-    for (const route of ROUTES) {
+    for (const route of plannedRoutes) {
       const path = `/Flight/InternalSelect?o1=${ORIGIN}&d1=${route.code}&dd1=${frontierDateParam(date)}&ADT=1&mon=true&promo=`;
       let response = null;
       try {
@@ -238,17 +272,27 @@ async function main() {
     // same date. Keep the previous rows for it and say plainly that they are old.
     // Measured 2026-11-02: sustained sweeping gets soft-throttled partway through,
     // so "half the sweep died" is a routine outcome, not an edge case.
-    const { sweeps: merged, deadDates, kept, partial } = mergeSweeps(state.sweeps, sweeps, dates, {
-      expectedRoutes: ROUTES.length,
+    const { sweeps: merged, deadDates, kept, partial, skipped } = mergeSweeps(state.sweeps, sweeps, dates, {
+      expectedRoutes: plannedRoutes.length,
+      plannedDests: plannedRoutes.map((r) => r.code),
+      skippedDates,
       now,
     });
+    for (const s of skipped) {
+      console.log(`date ${s.date}: departures finished; kept ${s.rows} rows and stopped asking about it`);
+    }
     for (const k of kept) {
       console.error(`date ${k.date}: no usable route this sweep; kept ${k.rows} previous results`);
     }
     for (const p of partial) {
       console.error(
-        `date ${p.date}: sweep stopped after ${p.attempted}/${p.expected} routes; ` +
+        `date ${p.date}: sweep stopped after ${p.attempted}/${p.expected} planned routes; ` +
           `kept ${p.missing} previous results for routes never asked`,
+      );
+    }
+    for (const p of partial.filter((x) => x.rotated)) {
+      console.log(
+        `date ${p.date}: ${p.rotated} routes are the other half of the rotation and were not asked this tick`,
       );
     }
 
@@ -268,7 +312,7 @@ async function main() {
                 ? partial
                     .map(
                       (p) =>
-                        `${p.date} only reached ${p.attempted}/${p.expected} routes; ${p.missing} rows carried from the previous sweep`,
+                        `${p.date} only reached ${p.attempted}/${p.expected} planned routes; ${p.missing} rows carried from the previous sweep`,
                     )
                     .join('; ') + '.'
                 : '',
@@ -280,6 +324,15 @@ async function main() {
     state.aborted = abortedAt;
     state.updatedAt = now;
     state.sweeps = merged;
+    // Recorded so the page can say plainly that it is sweeping half the routes
+    // per run, and so a later reader can tell a rotation from a shortfall.
+    state.lastSweep = {
+      at: now,
+      shard: shard === null ? null : shard,
+      routes: plannedRoutes.length,
+      total: ROUTES.length,
+      skippedToday: skipToday,
+    };
 
     // Free schedule data: record what each route did on each swept date. No extra
     // requests, and it is what makes a week-over-week rotation verdict possible.
@@ -317,12 +370,16 @@ async function main() {
         .flatMap((s) => (Array.isArray(s.flights) ? s.flights : []))
         .filter((f) => f && f.goWild && f.allin !== null && f.allin <= 50);
     for (const date of dates) {
-      const answered = askedThisSweep.some((s) => s.date === date && s.ok);
-      if (!answered) {
+      const answered = askedThisSweep.filter((s) => s.date === date && s.ok);
+      if (!answered.length) {
         console.error(`date ${date}: no route answered this sweep; not recording an observation`);
         continue;
       }
-      recordObservation(state, date, flightsFor(date));
+      // Only routes that were asked AND answered can be recorded as "not
+      // bookable" for this date. In half-sweep mode the other seven were
+      // deliberately skipped, and writing a 0 for them here would erase a real 1
+      // recorded twenty minutes earlier.
+      recordObservation(state, date, flightsFor(date), { asked: answered.map((s) => s.dest) });
     }
   }
 

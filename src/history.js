@@ -68,14 +68,22 @@ export function recordFirstSeen(state, rows, ts) {
 }
 
 // Record what we observed this sweep, so frequency can use honest denominators.
-export function recordObservation(state, dateISO, rows) {
+// `opts.asked` is the set of routes this sweep actually asked AND got an answer
+// for. A route in neither set (the other half of a rotating sweep) must not be
+// written as 0 — that would erase a real 1 recorded twenty minutes earlier and
+// credit the route with a verdict nobody sought. Omitting `asked` keeps the old
+// whole-list behaviour, which is correct for a complete sweep.
+export function recordObservation(state, dateISO, rows, opts = {}) {
   state.observed = state.observed || {};
   state.days = state.days || {};
   state.observed[dateISO] = 1;
 
+  const asked = Array.isArray(opts.asked) && opts.asked.length ? new Set(opts.asked.map(String)) : null;
   const openDests = new Set(rows.map((r) => r.dest));
   for (const route of Object.keys(state.seenDests || {})) {
-    if (!openDests.has(route)) state.days[`${route}|${dateISO}`] = 0;
+    if (openDests.has(route)) continue;
+    if (asked && !asked.has(route)) continue;
+    state.days[`${route}|${dateISO}`] = 0;
   }
   for (const dest of openDests) {
     state.days[`${dest}|${dateISO}`] = 1;

@@ -169,3 +169,44 @@ Ingest boundary, verified against the deployed Worker:
 | Flight number in payload | **present** | 81 of 140 flights carry one |
 | Flips observed | 0 on the first recorder sweep | expected: all were already GoWild at first sight |
 | Live render | version `d029541b`, section present, 44 rows, no `$NaN`/`>undefined<` | verified over HTTPS |
+
+## Efficiency pass, 2026-11-03 (replayed against the live snapshot)
+
+**The burst was the limiter, not the cadence.** A refusal aborts the sweep
+(`shouldAbortSweep`), and refusals had now been observed at 4/28 and 19/28 requests
+in otherwise identical bursts — so a 28-request burst every 15 minutes can return
+*less* data than a 14-request one. Measured by replaying the next tick through the
+real `mergeSweeps` -> `buildBoard` -> `renderPage` path against the live KV snapshot
+(`sweeps=28`, dates `2026-11-03` + `2026-11-04`). **No Frontier request was made.**
+
+| Tick | Requests | Sweeps kept | Partial | Carried | Page |
+|---|---|---|---|---|---|
+| 10:30 ET, both dates, shard 0 | 14 | 28 | 0 | 14 | 58,063 B, 0 forbidden strings, client script parses |
+| 23:30 ET, tomorrow only, shard 0 | 7 | 28 | 0 | 21 | 58,064 B, 0 forbidden strings, client script parses |
+
+1. **Half-sweep rotation.** `routeShard()` alternates 0/1 on 15-minute slots and
+   `shardRoutes()` splits the 14 routes into two disjoint halves of 7, so a two-date
+   sweep is 14 requests and every route is re-checked within 30 minutes. The half
+   not asked is carried as `carriedReason: 'rotated'` and never counts as a partial
+   sweep — a banner that fires every tick is a banner nobody reads. An abort inside
+   the asked half still reports a genuine partial sweep.
+2. **Overnight skip.** After 23:00 Eastern (`departuresFinished`, ET-pinned) the
+   collector asks only about tomorrow: 7 requests instead of 14, for a day whose
+   schedule has already flown. Only when the previous snapshot actually holds today,
+   because a date with nothing to carry would vanish from the board — and a vanished
+   date is the one state the page must never show.
+3. **Carried age on the page.** Each date now renders
+   `7/14 routes re-checked · 7 carried from 22:45 ET`; a finished day renders
+   `14 routes carried from 23:30 ET · departures for this date have finished`.
+   Before this, carried rows looked exactly as fresh as the board timestamp.
+
+**Defect found while doing it.** `recordObservation` wrote `days[route|date] = 0` for
+*every* known route absent from the sweep's rows. Under rotation that would have
+zeroed the half nobody asked, erasing a real `1` recorded twenty minutes earlier. It
+now takes `opts.asked` and records a verdict only for routes that were asked and
+answered; omitting the option keeps the old whole-list behaviour.
+
+**Residual risk, stated rather than hidden:** the shard is derived from the clock
+slot, so two runs landing inside the same 15-minute slot (a delayed runner) repeat a
+half and postpone the other by one tick — a worst case of a 45-minute gap for that
+half, self-correcting on the next slot. GitHub's schedule delay is the only cause.

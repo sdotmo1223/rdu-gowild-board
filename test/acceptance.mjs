@@ -5,7 +5,15 @@ import { buildBoard, STALE_AFTER_MIN } from '../src/board.js';
 import { appendTransitions } from '../src/history.js';
 import { renderPage } from '../src/render.js';
 import { frequencyTable, headlineFrequency } from '../src/frequency.js';
-import { ROUTES, MAX_ALL_IN, PEAK_LABEL } from '../src/routes.js';
+import {
+  ROUTES,
+  MAX_ALL_IN,
+  PEAK_LABEL,
+  SHARD_SLOT_MS,
+  routeShard,
+  shardRoutes,
+  departuresFinished,
+} from '../src/routes.js';
 import { recordFares, fareMechanics, departureMs } from '../src/pricing.mjs';
 
 let passed = 0;
@@ -313,6 +321,31 @@ check('zero seats renders as sold out, not unknown', () => {
   assert.equal(normalizeSeats('0 Seats Left!'), 0);
   const view = { dates: [{ date: '2026-11-03', blackout: false, peak: false, peakLabel: '', status: 'ok', total: 1, goWild: 1, above: 0, folded: [], blockedRoutes: 0, failedRoutes: 0, routesScanned: 14, rows: [{ city: 'Orlando', dest: 'MCO', dep: '2026-11-03 10:12:00', arr: '2026-11-03 12:09:00', stops: 'Nonstop', nonstop: true, dur: '1 hrs 57 min', seats: 0, allin: 15.41 }] }], rows: [], ageMin: 1, stale: false, error: null, routeCount: 14 };
   assert.ok(renderPage(view, {}, [], Date.now()).includes('sold out'));
+});
+
+// --- Sweep budgeting -------------------------------------------------------
+// The burst is the limit, not the cadence: a refusal aborts the sweep, so 28
+// requests every 15 minutes can yield less than 14. These pin the halves.
+
+check('the sweep is split into two rotating halves of seven', () => {
+  const a = shardRoutes(ROUTES, 0);
+  const b = shardRoutes(ROUTES, 1);
+  assert.equal(a.length, 7);
+  assert.equal(b.length, 7);
+  assert.equal(new Set([...a, ...b].map((r) => r.code)).size, 14, 'both halves together are the whole list');
+  assert.equal(shardRoutes(ROUTES, null).length, 14, 'FULL_SWEEP still asks everything');
+  assert.ok(!a.some((r) => b.includes(r)), 'the halves never overlap');
+  const t = Date.UTC(2026, 10, 3, 14, 0, 0);
+  assert.notEqual(routeShard(t), routeShard(t + SHARD_SLOT_MS), 'consecutive 15-minute ticks use different halves');
+  assert.equal(routeShard(t), routeShard(t + 2 * SHARD_SLOT_MS), 'and it alternates back, so coverage is 30 minutes');
+  assert.deepEqual(shardRoutes(ROUTES, 0).map((r) => r.code), a.map((r) => r.code), 'stable, not random');
+});
+
+// Nov 3 2026 is EST (-5): 04:00Z is 23:00 the previous evening in New York.
+check('eastern hour, not UTC, decides that the day is over', () => {
+  assert.equal(departuresFinished(Date.UTC(2026, 10, 3, 3, 59)), false, '22:59 ET is still live');
+  assert.equal(departuresFinished(Date.UTC(2026, 10, 3, 4, 0)), true, '23:00 ET is finished');
+  assert.equal(departuresFinished(Date.UTC(2026, 10, 3, 5, 0)), false, '00:00 ET is a new day, not a finished one');
 });
 
 console.log(`\n${passed} checks passed${process.exitCode ? ' (with failures)' : ''}`);

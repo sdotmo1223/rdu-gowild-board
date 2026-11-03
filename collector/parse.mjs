@@ -125,42 +125,77 @@ export function shouldAbortSweep(result) {
 export function mergeSweeps(prevSweeps, sweeps, dates, opts = {}) {
   const prev = Array.isArray(prevSweeps) ? prevSweeps : [];
   const fresh = Array.isArray(sweeps) ? sweeps : [];
-  const expected = Math.max(0, Number(opts.expectedRoutes) || 0);
+  // `plannedDests` is the route list this sweep intended to ask. Without it the
+  // old behaviour applies (expectedRoutes == the whole route list).
+  const planned = Array.isArray(opts.plannedDests) && opts.plannedDests.length ? opts.plannedDests.map(String) : null;
+  const expected = planned ? planned.length : Math.max(0, Number(opts.expectedRoutes) || 0);
   const carriedAt = Number(opts.now) || Date.now();
-  const deadDates = (dates || []).filter((d) => !fresh.some((s) => s && s.date === d && s.ok));
+  const skippedDates = (opts.skippedDates || []).map(String);
+  const dateList = (dates || []).map(String);
+  const deadDates = dateList.filter(
+    (d) => !skippedDates.includes(d) && !fresh.some((s) => s && s.date === d && s.ok),
+  );
 
   let merged = fresh.slice();
+
+  // Dates deliberately not asked (their departures have flown) keep their rows,
+  // stamped, so the page can say how old they are. These are explicitly NOT dead
+  // dates: nothing failed. Dropping them instead would remove the date from the
+  // board entirely, which is the one state the page must never show.
+  const skipped = [];
+  for (const d of skippedDates) {
+    const rows = prev.filter((s) => s && s.date === d);
+    if (!rows.length) continue;
+    merged = merged
+      .filter((s) => s.date !== d)
+      .concat(rows.map((s) => ({ ...s, carried: true, carriedAt, carriedReason: 'day-over' })));
+    skipped.push({ date: d, rows: rows.length });
+  }
+
   const kept = [];
   for (const d of deadDates) {
     const rows = prev.filter((s) => s && s.date === d);
     if (!rows.length) continue;
-    merged = merged.filter((s) => s.date !== d).concat(rows);
+    merged = merged
+      .filter((s) => s.date !== d)
+      .concat(rows.map((s) => ({ ...s, carried: true, carriedAt, carriedReason: 'dead' })));
     kept.push({ date: d, rows: rows.length });
   }
 
-  // A sweep that stopped early (one refusal ends the burst) leaves whole routes
-  // that were never asked. Dropping them would shrink the board silently — on
-  // 2026-11-03 a refusal at request 19 would have erased 8 of tomorrow's 14
-  // routes with no marker at all. Their previous result is carried forward and
-  // flagged, so the date is never presented as if every route had just been
-  // re-checked.
+  // A sweep asks only part of the route list (half of it, rotating). Dropping
+  // the routes it never asked would shrink the board silently — on 2026-11-03 a
+  // refusal at request 19 would have erased 8 of tomorrow's 14 routes with no
+  // marker at all. They are carried forward and flagged, and the flag says WHY:
+  //   rotated - the other half of the route list; normal, expected, every tick
+  //   aborted - the burst was refused part way through; worth a warning
+  // Only 'aborted' produces a partial sweep, or the banner would fire every
+  // single tick and stop meaning anything.
   const partial = [];
-  if (expected > 0) {
-    for (const d of dates || []) {
-      const forDate = fresh.filter((s) => s && s.date === d);
-      if (!forDate.length || !forDate.some((s) => s.ok)) continue;
-      const asked = new Set(forDate.map((s) => s.dest));
-      if (asked.size >= expected) continue;
-      const carried = prev
-        .filter((s) => s && s.date === d && !asked.has(s.dest))
-        .map((s) => ({ ...s, carried: true, carriedAt }));
-      if (!carried.length) continue;
-      merged = merged.concat(carried);
-      partial.push({ date: d, attempted: asked.size, expected, missing: carried.length });
+  for (const d of dateList) {
+    if (skippedDates.includes(d)) continue;
+    const forDate = fresh.filter((s) => s && s.date === d);
+    if (!forDate.length || !forDate.some((s) => s.ok)) continue;
+    const asked = new Set(forDate.map((s) => s.dest));
+    const unasked = prev.filter((s) => s && s.date === d && !asked.has(s.dest));
+    if (!unasked.length) continue;
+    const carried = unasked.map((s) => ({
+      ...s,
+      carried: true,
+      carriedAt,
+      carriedReason: planned && !planned.includes(s.dest) ? 'rotated' : 'aborted',
+    }));
+    merged = merged.concat(carried);
+    const rotated = carried.filter((s) => s.carriedReason === 'rotated').length;
+    const aborted = carried.length - rotated;
+    const attempted = planned
+      ? planned.filter((c) => asked.has(c)).length
+      : Math.min(asked.size, expected || asked.size);
+    if (aborted > 0 && expected > 0 && attempted < expected) {
+      partial.push({ date: d, attempted, expected, missing: aborted, rotated });
     }
   }
 
-  return { sweeps: merged, deadDates, kept, partial };
+  return { sweeps: merged, deadDates, kept, partial, skipped };
 }
 
 export function parseRoute(response, dateISO, dest, city) {

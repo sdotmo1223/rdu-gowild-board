@@ -31,6 +31,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          # npm cache keyed on the lockfile: the dependencies never change between
+          # runs, so re-downloading them every 15 minutes is pure latency.
+          cache: 'npm'
 
       # A run that sweeps Frontier and only then discovers it cannot write is the
       # worst case: 28 fare requests spent for nothing, every cadence, forever.
@@ -71,6 +74,15 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # The Chromium download is ~120 MB and identical between runs; it is the
+      # slowest part of this job. Keyed on the lockfile, so a Playwright bump
+      # still fetches the matching build instead of reusing a stale one.
+      - name: Cache Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install Chromium
         run: npx playwright install --with-deps chromium

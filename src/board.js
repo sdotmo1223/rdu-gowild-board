@@ -52,6 +52,21 @@ export function buildBoard(state, now = Date.now()) {
     // quiet ones is not the same thing.
     const blocked = forDate.length > 0 && forDate.every((s) => s.blocked);
     const failed = forDate.filter((s) => !s.ok);
+    // A rotating sweep re-checks half the routes per tick and carries the rest.
+    // Carried rows are real fares, but their age is not the board's age, so the
+    // page has to be able to say so instead of implying a fresh check.
+    const carriedRows = forDate.filter((s) => s.carried);
+    const carriedStamps = carriedRows
+      .map((s) => Number(s.carriedAt))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    const carriedAt = carriedStamps.length ? Math.min(...carriedStamps) : null;
+    const carriedReason = carriedRows.length
+      ? carriedRows.some((s) => s.carriedReason === 'day-over')
+        ? 'day-over'
+        : carriedRows.some((s) => s.carriedReason === 'rotated')
+          ? 'rotated'
+          : 'aborted'
+      : null;
     const flights = forDate
       .flatMap((s) => (Array.isArray(s.flights) ? s.flights : []))
       .filter((f) => f && typeof f === 'object');
@@ -87,6 +102,10 @@ export function buildBoard(state, now = Date.now()) {
       blockedRoutes: forDate.filter((s) => s.blocked).length,
       failedRoutes: failed.length,
       routesScanned: forDate.length,
+      freshRoutes: forDate.length - carriedRows.length,
+      carriedRoutes: carriedRows.length,
+      carriedAt,
+      carriedReason,
       rows: qualified,
     });
     rows.push(...qualified);
@@ -103,5 +122,6 @@ export function buildBoard(state, now = Date.now()) {
     stale: ageMin === null || ageMin > STALE_AFTER_MIN,
     error: src.lastError || null,
     routeCount: src.routeCount || 0,
+    sweep: src.lastSweep && typeof src.lastSweep === 'object' ? src.lastSweep : null,
   };
 }
