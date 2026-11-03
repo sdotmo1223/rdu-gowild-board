@@ -159,7 +159,7 @@ at a 15-minute cadence is under a day of uptime once the scheduler runs.
 ## 10. First five minutes for a new agent
 
 ```bash
-npm test && npm run stress          # establish a baseline
+npm test; npm run stress          # establish a baseline (PowerShell: `;` not `&&`)
 node tools/headless-probe.mjs       # 1 request, confirms Frontier still answers
 node collector/collect.mjs          # 28 requests, writes state.json
 node tools/render-state.mjs         # board.html from real data
