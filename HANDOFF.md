@@ -462,3 +462,59 @@ without a `wrangler deploy`. KV was correct the whole time and the page simply
 served the old bundle. After deploying, version `d029541b`, the section appeared
 with `44 itineraries tracked` and no placeholder leaks. Changing the collector
 needs no deploy; changing the render path does.
+
+---
+
+## What the public record says — and where my reading was wrong
+
+Researched 2026-11-03. Frontier documents more than I assumed, and two things I
+told the user need correcting.
+
+### Documented by Frontier
+
+| Claim | Wording | Source |
+|---|---|---|
+| The fare is a penny, not a market price | "the ability to book a ticket at an airfare of **$0.01**", "only $0.01 in airfare per flight segment (plus taxes, fees and charges)" | T&C §14; 2026 releases |
+| The real number is tax | "Current government and airport taxes, fees and charges **start at approximately $15.40** per person, per flight for domestic travel" | GoWild page FAQ |
+| Availability is rationed per flight | "not all Frontier flights will be available", "**seats are capacity controlled, limited in quantity** and are offered on a first-come, first-served basis", "last seat availability is not guaranteed" | T&C §14; 2023/2025/2026 releases |
+| Booking window | domestic: **the day before departure**; international: 10 days | T&C §14 |
+| Blackout dates carry a paid override | "**Peak Day Charge from $79 to $159**"; early booking outside the window costs $29–$89 | 2026-08-04 release |
+
+`PEAK_LABEL` ("Peak Day Charge $79+") turns out to be Frontier's own term, not
+our invention. Good.
+
+### Correction 1: "GoWild runs at ~14% of the standard fare" is an artefact
+
+That ratio is not a discount Frontier computes. The GoWild price is a penny plus
+taxes; the standard fare is a separate, higher price for the same seat. Two prices
+for two products, and their ratio is arithmetic that happened to land near 14%.
+
+The telling number: **the cheapest all-in this board has seen is $15.41, and
+Frontier's own terms say domestic taxes start at approximately $15.40.** $0.01 +
+$15.40 = $15.41. That is a direct match, and it means `goWildFare` is the
+all-in tax-inclusive price, not a discounted fare.
+
+The UI now says this instead of implying a pricing formula.
+
+### Correction 2: what varies between flights is *availability*, not the fare
+
+The section title "How the GoWild fare behaves" implied a moving fare. Frontier's
+own wording is that seats are **capacity controlled per flight**, with no
+published count. So the interesting variable is the yes/no per flight per date —
+which the tracker already records as `gw` vs `n` per instance.
+
+### What only our tracker can answer
+
+Frontier has never published a release time, a seat count, or any rule tying
+availability to time of day. Third-party claims ("~5 seats", "drops at midnight")
+are community folklore, and the one credible first-hand account says inventory
+"can even change hour by hour". So:
+
+- **time-of-day availability** — our hour table is the only evidence that will
+  exist. Keep the denominators attached.
+- **flight-specific designations** — now testable by flight number.
+- **whether the release is a schedule event** — likely: a flight enters the
+  day-before window at midnight local, which would make "first seen GoWild"
+  cluster at 00:00-01:00 rather than showing a price change. The tracker should
+  eventually separate "not yet in the window" from "in the window but excluded",
+  because only the second is a capacity-control decision.

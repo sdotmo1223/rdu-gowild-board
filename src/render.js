@@ -256,7 +256,7 @@ function pricingHtml(state) {
     <p class="note">Which departure hours ever carry a GoWild fare, and the lowest one seen at that hour.</p>` : ''}
     ${idRows ? `<div class="heat"><table><thead><tr><th>flight</th><th>GoWild</th><th>pattern</th></tr></thead><tbody>${idRows}</tbody></table></div>
     <p class="note">${idNote} A column that reads "every sighting" points at particular flights being designated; a mixed column points at a load-based rule. ${m.identities.length} flight pattern${m.identities.length === 1 ? '' : 's'} have reached ${FARE_MIN}+ sightings.</p>` : `<p class="note">No flight has ${FARE_MIN} or more sightings yet, so whether GoWild follows specific flights or any under-sold flight is still open.</p>`}
-    <p class="note">Measured, not published: Frontier documents none of this. ${ratio !== null ? `GoWild fares have run at about ${Math.round(ratio * 100)}% of the standard fare (${m.std.ratioSamples} comparisons). ` : ''}${flipNote}</p>
+    <p class="note">Frontier publishes the structure: a GoWild ticket costs a <strong>$0.01 fare per segment plus taxes, fees and charges</strong>, which its own terms put at "approximately $15.40" per domestic flight${m.gwFare.min !== null ? ` \u2014 the cheapest this board has seen is $${m.gwFare.min.toFixed(2)}` : ''}. The GoWild number is therefore mostly tax, not a discount${ratio !== null ? `, and its ~${Math.round(ratio * 100)}% ratio against the standard fare over ${m.std.ratioSamples} comparisons is a by-product of two different prices rather than a rate Frontier applies` : ''}. ${flipNote}</p>
   </details>`;
 }
 

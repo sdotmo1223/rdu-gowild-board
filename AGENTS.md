@@ -56,6 +56,9 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | GoWild disabled is `goWildFare: -1` | filter on `> 0` |
 | `goWildFareSeatsRemaining` is `null` or `"3 Seats Left!"` — never a number | `normalizeSeats()`; `0` must survive as "sold out" |
 | `duration` can be `"1 day(s) 5 hrs 26 min"` | parse with `durationMinutes()` |
+| GoWild is **$0.01 fare per segment + taxes/fees**, not a dynamic discount | Frontier T&C §14 and every 2026 release say "only $0.01 in airfare per flight segment (plus taxes, fees and charges)"; Frontier puts domestic taxes at "approximately $15.40". Our cheapest observed all-in is **$15.41**. A ratio against `standardFare` is a by-product, never a rate Frontier applies. |
+| GoWild availability is **capacity controlled per flight** | Frontier: "not all Frontier flights will be available", "seats are capacity controlled, limited in quantity... first-come, first-served", "last seat availability is not guaranteed". No seat count per flight is published. |
+| Time-of-day GoWild availability is **undocumented** | No Frontier statement and no credible third-party analysis. Our hour table is the only evidence we will have, so it stays labelled with its denominators. |
 | Route count is **14** | FlightConnections 2026-11-02 + RDU's own table. The "32 destinations" figure is ABC11 **2019-05-01**. BUF is announced, not operating. |
 
 ---

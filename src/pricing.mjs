@@ -197,6 +197,10 @@ export function fareMechanics(state) {
 
   // The "is it a discount ladder off the standard fare" question: compare the
   // standard fare on instances that went GoWild with those that did not.
+  // The GoWild number itself barely moves: Frontier's published structure is a
+  // $0.01 fare per segment plus taxes/fees, so the dollar amount is mostly tax.
+  // Reporting its range is the honest way to show that.
+  const gwFares = withGoWild.map((r) => r.rec.gwMin).filter((n) => typeof n === 'number');
   const stdGw = withGoWild.map((r) => r.rec.stdMin).filter((n) => typeof n === 'number');
   const stdNo = rows.filter((r) => !Number(r.rec.gw)).map((r) => r.rec.stdMin).filter((n) => typeof n === 'number');
   const ratios = withGoWild
@@ -219,6 +223,12 @@ export function fareMechanics(state) {
     identityKnown,
     byHour,
     byWeekday,
+    gwFare: {
+      min: gwFares.length ? Math.min(...gwFares) : null,
+      max: gwFares.length ? Math.max(...gwFares) : null,
+      median: median(gwFares),
+      samples: gwFares.length,
+    },
     std: {
       gwMedian: median(stdGw),
       noGwMedian: median(stdNo),
