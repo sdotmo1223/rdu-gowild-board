@@ -1,0 +1,14 @@
+name = "rdu-gowild-board"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+
+# The board state is written by the headless-browser collector (see collector/).
+# Create the namespace with:  npx wrangler kv namespace create BOARD
+# then paste the returned id here.
+[[kv_namespaces]]
+binding = "BOARD"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+# BOARD_TOKEN is NOT set here. It is a secret:
+#   npx wrangler secret put BOARD_TOKEN      (production)
+#   BOARD_TOKEN=... in .dev.vars             (local)

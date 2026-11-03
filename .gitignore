@@ -1,0 +1,21 @@
+# Secrets — never commit. The Frontier session cookie lives here and nowhere else.
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+
+# Wrangler / build artifacts
+.wrangler/
+node_modules/
+dist/
+*.log
+
+# Local capture artifacts (real swept fares, rendered preview)
+.sweep/
+board.html
+state.json
+collector/last-state.json
+
+# App-managed directories and local thread data
+.freebuff/
+threads/
