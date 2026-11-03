@@ -671,3 +671,30 @@ Two independent conclusions:
    LGA-MCO flights with 0 GoWild, matching what `/lga` shows. Whether LGA is
    capacity-controlled hard (plausible: slot-constrained trunk routes) or simply
    has no GoWild seats today is now an open measurement, not a mystery.
+
+### LGA, complete sample (2026-11-03 17:14Z, run 41681976135)
+
+```
+sweep plan: 9/9 routes x 2 date(s) = 18 requests (shard full)
+sweeps=18/18 requests=18 flights=31 blocked=0 aborted=no
+fares: tracked=28 new=13
+```
+
+31 real flights across all nine LGA routes and both dates, **0 carrying a GoWild
+fare**, while RDU on the same code and the same afternoon sits near two thirds.
+That is not a parsing difference: the LGA-MCO route probe independently returned
+2 flights and 0 GoWild.
+
+Two candidate explanations, both testable and neither yet settled:
+
+1. **LGA is capacity-controlled out of GoWild.** Frontier says seats are
+   "capacity controlled, limited in quantity" and that "not all flights will be
+   available"; a slot-constrained, high-demand station is exactly where they would
+   withhold them.
+2. **Wrong window.** Both dates were inside the day-before window at 13:14 ET, so
+   the window explanation is weak — but a flight's seats can be taken within
+   minutes of release, and our cadence is ~15 minutes.
+
+The distinction matters because only (1) is a Frontier policy decision. Plan item
+8 (window vs exclusion) is what separates them, which is now the highest-value
+change rather than a tidiness fix.
