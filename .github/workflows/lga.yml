@@ -11,6 +11,11 @@ on:
   schedule:
     - cron: '4,19,34,49 * * * *'
   workflow_dispatch:
+    inputs:
+      full:
+        description: 'Ask all 9 routes instead of the rotating half'
+        type: boolean
+        default: false
 
 concurrency:
   group: gowild-collector
@@ -67,6 +72,8 @@ jobs:
         run: node collector/collect.mjs
         env:
           BOARD_PROFILE: lga
+          # A manual full pass: 9 routes x 2 dates = 18 requests. Deliberate only.
+          FULL_SWEEP: ${{ inputs.full && '1' || '0' }}
           BOARD_INGEST_URL: ${{ vars.BOARD_INGEST_URL }}
           BOARD_TOKEN: ${{ secrets.BOARD_TOKEN }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
