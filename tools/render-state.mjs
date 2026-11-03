@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { buildBoard } from '../src/board.js';
 import { renderPage } from '../src/render.js';
 import { frequencyTable } from '../src/frequency.js';
-import { ROUTES } from '../src/routes.js';
+import { ROUTES, ORIGIN } from '../src/routes.js';
 
 const src = process.env.STATE_IN || 'state.json';
 let state;
@@ -17,7 +17,10 @@ try {
 
 const now = Date.now();
 const view = buildBoard(state, now);
-const html = renderPage(view, state, frequencyTable(state, ROUTES), now, { basePath: '/s/LOCALPREVIEW' });
+const html = renderPage(view, state, frequencyTable(state, ROUTES), now, {
+  basePath: '/s/LOCALPREVIEW',
+  origin: ORIGIN,
+});
 writeFileSync('board.html', html);
 
 console.log(`state: ${src}`);

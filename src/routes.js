@@ -1,8 +1,13 @@
-// The 14 current nonstop Frontier routes from RDU.
-// Verified 2026-11-03 against FlightConnections (updated 2026-11-02) and RDU's
-// own nonstop table. The "32 destinations" figure circulating online is from
-// ABC11, 2019-05-01, and is stale. BUF is announced but not yet operating.
-export const ROUTES = [
+// Origin profiles. The board was built for RDU; LGA exists because Frontier quit
+// JFK entirely on 2026-10-05 (its last JFK route was JFK-ATL, cut that day), so a
+// JFK board would be permanently and honestly empty. LGA is Frontier's main New
+// York station: ATL, CLT, CLE, DEN, DFW, MCO, MIA, RDU and seasonal SJU.
+// DTW-LGA starts 2026-11-20 and belongs here only from then.
+//
+// RDU verified 2026-11-03 against FlightConnections (updated 2026-11-02) and
+// RDU's own nonstop table. The "32 destinations" figure circulating online is
+// from ABC11, 2019-05-01, and is stale. BUF is announced, not operating.
+const RDU_ROUTES = [
   { code: 'ATL', city: 'Atlanta', intl: false },
   { code: 'BOS', city: 'Boston', intl: false },
   { code: 'CLE', city: 'Cleveland', intl: false },
@@ -19,7 +24,38 @@ export const ROUTES = [
   { code: 'TPA', city: 'Tampa', intl: false },
 ];
 
-export const ORIGIN = 'RDU';
+const LGA_ROUTES = [
+  { code: 'ATL', city: 'Atlanta', intl: false },
+  { code: 'CLT', city: 'Charlotte', intl: false },
+  { code: 'CLE', city: 'Cleveland', intl: false },
+  { code: 'DEN', city: 'Denver', intl: false },
+  { code: 'DFW', city: 'Dallas/Fort Worth', intl: false },
+  { code: 'MCO', city: 'Orlando', intl: false },
+  { code: 'MIA', city: 'Miami', intl: false },
+  { code: 'RDU', city: 'Raleigh/Durham', intl: false },
+  { code: 'SJU', city: 'San Juan', intl: false },
+];
+
+export const PROFILES = {
+  rdu: { origin: 'RDU', city: 'Raleigh/Durham', routes: RDU_ROUTES },
+  lga: { origin: 'LGA', city: 'New York LaGuardia', routes: LGA_ROUTES },
+};
+
+// One process, one profile. The Worker cannot assign globalThis before its static
+// imports evaluate, so a Worker serving two origins passes the origin explicitly
+// to the renderer instead, and this resolves the collector's default.
+function resolveProfile() {
+  const asked =
+    (typeof globalThis !== 'undefined' && globalThis.__BOARD_PROFILE__) ||
+    (typeof process !== 'undefined' && process.env && process.env.BOARD_PROFILE) ||
+    'rdu';
+  const key = String(asked).toLowerCase();
+  return Object.prototype.hasOwnProperty.call(PROFILES, key) ? key : 'rdu';
+}
+
+export const PROFILE = resolveProfile();
+export const ORIGIN = PROFILES[PROFILE].origin;
+export const ROUTES = PROFILES[PROFILE].routes;
 
 // GoWild pass blackout dates (local departure date). Peak Day Charge applies:
 // the pass is bookable only at an inflated fare. Frontier does not announce this

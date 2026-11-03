@@ -4,11 +4,11 @@ import { frequencyTable } from './frequency.js';
 import { bookabilityHeatmap } from './heatmap.mjs';
 import { releaseTiming } from './timing.mjs';
 import { weeklyPattern } from './schedule.mjs';
-import { ROUTES } from './routes.js';
+import { ROUTES, PROFILES, PROFILE } from './routes.js';
 
 // Minimal offline shell. Cached per token path so the secret link is never
 // registered at the origin root.
-const SW_JS = `const CACHE = 'rdu-gowild-v1';
+const SW_JS = `const CACHE = 'gowild-v2';
 self.addEventListener('install', (e) => { self.skipWaiting(); });
 self.addEventListener('activate', (e) => { e.waitUntil(self.clients.claim()); });
 self.addEventListener('fetch', (event) => {
@@ -39,6 +39,11 @@ const json = (body, status = 200) =>
     headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
   });
 
+const html = (body) =>
+  new Response(body, {
+    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+  });
+
 const INGEST_MAX_BYTES = 6 * 1024 * 1024;
 
 // Constant-time compare: the ingest token must not be probeable by timing.
@@ -60,8 +65,13 @@ function bearerToken(request) {
 // BOARD_TOKEN already exists and already gates the page, so this adds no new
 // secret and removes a whole class of 401-after-a-full-sweep failures.
 //
-//   GET  /api/ingest   -> the raw stored state (token required)
-//   POST /api/ingest   -> replace it (token required, ?dryRun=1 writes nothing)
+//   GET  /api/ingest            -> the raw stored state (token required)
+//   POST /api/ingest            -> replace it (token required, ?dryRun=1 writes nothing)
+//   POST /api/ingest?profile=lga -> replace the LGA snapshot instead of the RDU one
+//
+// One Worker serves several origins by keeping one KV key per profile. That is
+// why a second origin costs no second Worker, no second namespace and no second
+// secret: only the key changes.
 async function handleIngest(request, env, url) {
   if (!env.BOARD_TOKEN) {
     return json({ ok: false, state: 'unconfigured', message: 'BOARD_TOKEN is not set on this Worker.' }, 503);
@@ -70,10 +80,19 @@ async function handleIngest(request, env, url) {
     return json({ ok: false, state: 'unauthorized', message: 'Bad or missing bearer token.' }, 401);
   }
 
+  const wanted = (url.searchParams.get('profile') || PROFILE).toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(PROFILES, wanted)) {
+    return json(
+      { ok: false, state: 'bad-profile', message: `Unknown profile "${wanted}".`, known: Object.keys(PROFILES) },
+      400,
+    );
+  }
+  const key = wanted === 'rdu' ? 'state' : `state:${wanted}`;
+
   if (request.method === 'GET') {
     try {
-      const stored = await env.BOARD.get('state', 'json');
-      return json({ ok: true, state: stored || null });
+      const stored = await env.BOARD.get(key, 'json');
+      return json({ ok: true, profile: wanted, state: stored || null });
     } catch (err) {
       return json({ ok: false, state: 'kv-error', message: String(err && err.message) }, 500);
     }
@@ -81,10 +100,11 @@ async function handleIngest(request, env, url) {
   if (request.method !== 'POST') {
     return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, POST' } });
   }
-  // Proves the credentials and the binding without writing anything, so a caller
-  // can fail in one second instead of after a two-minute sweep.
+  // Proves the credentials, the profile and the binding without writing
+  // anything, so a caller can fail in one second instead of after a two-minute
+  // sweep.
   if (url.searchParams.get('dryRun')) {
-    return json({ ok: true, dryRun: true, creds: 'valid', message: 'Write path reachable; nothing written.' });
+    return json({ ok: true, dryRun: true, profile: wanted, creds: 'valid', message: 'Write path reachable; nothing written.' });
   }
 
   const declared = Number(request.headers.get('content-length') || 0);
@@ -121,17 +141,28 @@ async function handleIngest(request, env, url) {
   }
 
   try {
-    await env.BOARD.put('state', raw);
+    await env.BOARD.put(key, raw);
   } catch (err) {
     return json({ ok: false, state: 'kv-error', message: String(err && err.message) }, 500);
   }
-  return json({ ok: true, stored: raw.length, updatedAt: payload.updatedAt || null, sweeps: payload.sweeps.length });
+  return json({
+    ok: true,
+    profile: wanted,
+    stored: raw.length,
+    updatedAt: payload.updatedAt || null,
+    sweeps: payload.sweeps.length,
+  });
 }
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const now = Date.now();
+
+    // The one origin that may be served without a token, so a link can be handed
+    // to somebody else. Everything else stays behind BOARD_TOKEN.
+    const pub = (env.PUBLIC_PROFILE || '').toLowerCase();
+    const pubOk = pub && Object.prototype.hasOwnProperty.call(PROFILES, pub) ? pub : null;
 
     if (url.pathname === '/api/ingest') return handleIngest(request, env, url);
 
@@ -174,35 +205,75 @@ export default {
     if (match) {
       if (!env.BOARD_TOKEN || match[1] !== env.BOARD_TOKEN) return new Response('Not found', { status: 404 });
       const view = buildBoard(state, now);
-      const html = renderPage(view, state, frequencyTable(state, ROUTES), now, {
-        basePath: `/s/${match[1]}`,
-      });
-      return new Response(html, {
-        headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
-      });
+      return html(
+        renderPage(view, state, frequencyTable(state, ROUTES), now, {
+          basePath: `/s/${match[1]}`,
+        }),
+      );
     }
 
-    // PWA assets, token-gated so the secret link is not discoverable at the root.
-    const asset = url.pathname.match(/^\/s\/([A-Za-z0-9_-]{8,})\/(manifest\.webmanifest|sw\.js|icon\.svg)$/);
+    // Public profile page: no token in the URL, because the whole point of this
+    // one is that it can be sent to someone. It reads only its own profile's key,
+    // so the primary board is unaffected by it.
+    if (pubOk && url.pathname === `/${pubOk}`) {
+      let mine = null;
+      try {
+        mine = await env.BOARD.get(pubOk === 'rdu' ? 'state' : `state:${pubOk}`, 'json');
+      } catch (err) {
+        return json({ ok: false, state: 'kv-error', message: String(err && err.message) }, 500);
+      }
+      const origin = PROFILES[pubOk].origin;
+      if (!mine) {
+        // Never an empty grid with no explanation: say exactly what is missing.
+        return html(
+          `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+            `<meta name="viewport" content="width=device-width,initial-scale=1">` +
+            `<title>${origin} GoWild</title></head>` +
+            `<body style="margin:0;padding:2rem;background:#0d0f13;color:#e6edf3;font:16px/1.5 system-ui,sans-serif">` +
+            `<h1 style="margin:0 0 1rem">${origin} <span style="color:#3fb950">GoWild</span></h1>` +
+            `<p>No snapshot for ${origin} yet. The collector has not written one for this origin, so there is ` +
+            `nothing to show rather than nothing available. This page fills in on its next run.</p>` +
+            `</body></html>`,
+        );
+      }
+      const view = buildBoard(mine, now);
+      return html(
+        renderPage(view, mine, frequencyTable(mine, PROFILES[pubOk].routes), now, {
+          basePath: `/${pubOk}`,
+          origin,
+        }),
+      );
+    }
+
+    // PWA assets: the token path, or the public profile prefix when one is enabled.
+    let asset = null;
+    const tokAsset = url.pathname.match(/^\/s\/([A-Za-z0-9_-]{8,})\/(manifest\.webmanifest|sw\.js|icon\.svg)$/);
+    if (tokAsset) {
+      if (!env.BOARD_TOKEN || tokAsset[1] !== env.BOARD_TOKEN) return new Response('Not found', { status: 404 });
+      asset = { base: `/s/${tokAsset[1]}`, name: tokAsset[2], origin: PROFILES[PROFILE].origin };
+    } else if (pubOk) {
+      const pubAsset = url.pathname.match(/^\/([a-z]{3})\/(manifest\.webmanifest|sw\.js|icon\.svg)$/);
+      if (pubAsset && pubAsset[1] === pubOk) {
+        asset = { base: `/${pubOk}`, name: pubAsset[2], origin: PROFILES[pubOk].origin };
+      }
+    }
     if (asset) {
-      if (!env.BOARD_TOKEN || asset[1] !== env.BOARD_TOKEN) return new Response('Not found', { status: 404 });
-      const base = `/s/${asset[1]}`;
-      if (asset[2] === 'manifest.webmanifest') {
+      if (asset.name === 'manifest.webmanifest') {
         const body = JSON.stringify({
-          name: 'RDU GoWild Board',
+          name: `${asset.origin} GoWild Board`,
           short_name: 'GoWild',
-          start_url: base,
-          scope: base,
+          start_url: asset.base,
+          scope: asset.base,
           display: 'standalone',
           background_color: '#0d0f13',
           theme_color: '#0d0f13',
-          icons: [{ src: `${base}/icon.svg`, sizes: 'any', type: 'image/svg+xml', purpose: 'any' }],
+          icons: [{ src: `${asset.base}/icon.svg`, sizes: 'any', type: 'image/svg+xml', purpose: 'any' }],
         });
         return new Response(body, {
           headers: { 'Content-Type': 'application/manifest+json', 'Cache-Control': 'no-store' },
         });
       }
-      if (asset[2] === 'icon.svg') {
+      if (asset.name === 'icon.svg') {
         return new Response(ICON_SVG, {
           headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'max-age=86400' },
         });
@@ -210,7 +281,7 @@ export default {
       return new Response(SW_JS, {
         headers: {
           'Content-Type': 'text/javascript; charset=utf-8',
-          'Service-Worker-Allowed': base,
+          'Service-Worker-Allowed': asset.base,
           'Cache-Control': 'no-store',
         },
       });

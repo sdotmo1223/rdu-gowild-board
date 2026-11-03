@@ -86,10 +86,17 @@ function rowHtml(r) {
     </li>`;
 }
 
+// Which origin this page shows. STATE_COPY is built at module load, before any
+// call knows the origin, so origin-bearing strings carry a {ORIGIN} token that is
+// filled in exactly once, at the end of renderPage.
+let PAGE_ORIGIN = 'RDU';
+const ORIGIN_TOKEN = /\{ORIGIN\}/g;
+const fillOrigin = (s) => s.replace(ORIGIN_TOKEN, () => PAGE_ORIGIN);
+
 const STATE_COPY = {
   blocked: 'Blocked — Frontier bot protection returned a challenge page. Last known data shown.',
   error: 'Collector error for this date. No data was returned.',
-  noflights: 'No Frontier departures from RDU on this date.',
+  noflights: 'No Frontier departures from {ORIGIN} on this date.',
   above: (d) => `${d.goWild} GoWild departure${d.goWild === 1 ? '' : 's'}, all above $${MAX_ALL_IN.toFixed(2)}.`,
   nogowild: (d) => `${d.total} departure${d.total === 1 ? '' : 's'}, but Frontier released no GoWild seats.`,
 };
@@ -288,6 +295,7 @@ function pricingHtml(state) {
 
 export function renderPage(view, state, freq, now = Date.now(), opts = {}) {
   const basePath = opts.basePath || '';
+  PAGE_ORIGIN = opts.origin || PAGE_ORIGIN;
   const err = view.error;
   let banner = '';
 
@@ -316,16 +324,16 @@ export function renderPage(view, state, freq, now = Date.now(), opts = {}) {
 
   const freqRows = (freq || [])
     .map(
-      (f) => `<tr><td>RDU&rarr;${esc(f.dest)}</td><td>${esc(f.city)}</td><td>opened on ${f.opened} of ${f.of} ${esc(f.weekday)}${f.of === 1 ? '' : 's'}</td></tr>`
+      (f) => `<tr><td>{ORIGIN}&rarr;${esc(f.dest)}</td><td>${esc(f.city)}</td><td>opened on ${f.opened} of ${f.of} ${esc(f.weekday)}${f.of === 1 ? '' : 's'}</td></tr>`
     )
     .join('');
 
-  return `<!DOCTYPE html>
+  return fillOrigin(`<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>RDU GoWild</title>
+<title>{ORIGIN} GoWild</title>
 ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : ''}
 <meta name="theme-color" content="#0d0f13">
 <style>
@@ -400,7 +408,7 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
 </style></head>
 <body>
 <header>
-  <h1>RDU <span>GoWild</span></h1>
+  <h1>{ORIGIN} <span>GoWild</span></h1>
   <span class="stamp ${view.stale ? 'stale' : ''}">${esc(ago(view.ageMin))}</span>
 </header>
 ${banner}
@@ -445,7 +453,7 @@ window.__basePath = ${JSON.stringify(basePath)};
     if (!start || !end) return null;
     var stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
     var price = Number(d.allin).toFixed(2);
-    var L = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//RDU GoWild//EN','CALSCALE:GREGORIAN',
+    var L = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//{ORIGIN} GoWild//EN','CALSCALE:GREGORIAN',
       'BEGIN:VTIMEZONE','TZID:America/New_York',
       'BEGIN:DAYLIGHT','TZOFFSETFROM:-0500','TZOFFSETTO:-0400','TZNAME:EDT',
       'DTSTART:19700308T020000','RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU','END:DAYLIGHT',
@@ -456,7 +464,7 @@ window.__basePath = ${JSON.stringify(basePath)};
       'DTSTAMP:' + stamp,
       'DTSTART;TZID=America/New_York:' + start,
       'DTEND;TZID=America/New_York:' + end,
-      'SUMMARY:RDU to ' + d.dest + ' (GoWild $' + price + ')',
+      'SUMMARY:{ORIGIN} to ' + d.dest + ' (GoWild $' + price + ')',
       'DESCRIPTION:Estimated all-in $' + price + '. Frontier publishes no tax or fee breakdown for GoWild fares.',
       'LOCATION:' + d.dest,'END:VEVENT','END:VCALENDAR'];
     return L.join(String.fromCharCode(13, 10)) + String.fromCharCode(13, 10);
@@ -488,5 +496,5 @@ window.__basePath = ${JSON.stringify(basePath)};
   }
 })();
 </script>
-</body></html>`;
+</body></html>`);
 }

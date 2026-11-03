@@ -13,6 +13,12 @@ preview_urls = false
 binding = "BOARD"
 id = "fec311a9eda84b90a8490061cda5d4bf"
 
+# The one origin served WITHOUT a token, at /<profile>, so a link can be sent to
+# someone who does not have BOARD_TOKEN. It reads only its own KV key
+# (state:lga) and cannot see or overwrite the token-gated RDU board.
+[vars]
+PUBLIC_PROFILE = "lga"
+
 # BOARD_TOKEN is NOT set here. It is a secret:
 #   npx wrangler secret put BOARD_TOKEN      (production)
 #   BOARD_TOKEN=... in .dev.vars             (local)

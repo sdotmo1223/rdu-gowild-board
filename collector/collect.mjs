@@ -7,6 +7,7 @@ import {
   routeShard,
   shardRoutes,
   departuresFinished,
+  PROFILE,
 } from '../src/routes.js';
 import { parseRoute, classifyFailure, shouldAbortSweep, mergeSweeps } from './parse.mjs';
 import { appendTransitions, recordObservation, recordFirstSeen } from '../src/history.js';
@@ -77,11 +78,16 @@ async function kvPut(env, state) {
 // Write path B: post the snapshot to our own Worker, which owns the KV write.
 // CI then needs no Cloudflare API token at all — only BOARD_TOKEN, which the
 // page already requires, so there is no fourth credential to get wrong.
+const addParam = (u, p) => u + (u.includes('?') ? '&' : '?') + p;
+
 function ingestEnv() {
   const url = process.env.BOARD_INGEST_URL;
   const token = process.env.BOARD_TOKEN;
   if (!url || !token) return null;
-  return { url, token };
+  // A second origin writes its own KV key through the same Worker, so CI needs
+  // no new secret and no second endpoint: only the profile name changes where
+  // the snapshot lands.
+  return { url: PROFILE === 'rdu' ? url : addParam(url, `profile=${PROFILE}`), token };
 }
 
 async function ingestFetch(env, url, { method = 'GET', body } = {}) {
@@ -110,7 +116,7 @@ async function main() {
   const kv = ingest ? null : kvEnv();
   let previous = null;
   if (ingest) {
-    const probe = await ingestFetch(ingest, `${ingest.url}?dryRun=1`, { method: 'POST', body: '{}' });
+    const probe = await ingestFetch(ingest, addParam(ingest.url, 'dryRun=1'), { method: 'POST', body: '{}' });
     if (!probe.ok) {
       throw new Error(
         `ingest dry run rejected (HTTP ${probe.status}): ${probe.text.slice(0, 200)} — no Frontier requests were made`,
