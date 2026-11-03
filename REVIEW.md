@@ -96,13 +96,36 @@ and what does not, each with evidence:
 | `run --agent surgeon-reviewer --auto <task file>` | `Error: You must provide a message` — `--file` attaches but does not replace the message |
 | `run --agent surgeon-reviewer --auto <14.6 KB prompt>` | `ETIMEDOUT` at 250 s; stderr shows the model is **`pulse-alpha-free`** |
 
-Conclusion: the persona layer works, but a real review cannot run headlessly here
-today — tool activation is broken and the free model cannot chew a 15 KB prompt inside
-a tool-call timeout. Two fixes, both outside this repo: start the OpenCode desktop
-service so plugins activate, and select a faster model with `--model`. Until then the
-review below is a **second pass by the same agent against the written invariants**, not
-an independent reviewer. Re-run `.agents/dispatch/peer-review.md` once both are fixed;
-the spec and the dispatch path are ready and proven up to the model call.
+Each failure was then removed in turn, and the chain is worth keeping because every
+link hides the next one:
+
+1. **`--file` needs a message.** Attaching the spec alone dies with `Error: You must
+   provide a message`; the file does not count as the prompt.
+2. **Tool use stalls.** Asking the persona to read a file produces nothing at all, so
+   the code has to travel *with* the request, not be fetched by a tool.
+3. **The Windows argv limit is 32 KB.** A 30 KB prompt returns `ENAMETOOLONG` before
+   any model sees it, so the code must ride as an attachment (`--file`), not an
+   argument.
+4. **The default model is too slow.** `pulse-alpha-free` exceeded 250 s on a 14.6 KB
+   prompt; `--model` is mandatory for anything real.
+5. **`google/gemini-2.5-flash` is retired**, and the error names its replacement:
+   `gemini-3.8-flash`.
+6. **Free-tier quota is 20 requests/day**, exhausted on 2026-11-03
+   (`retry in 12h33m`).
+
+With an attachment plus `--model google/gemini-3.8-flash`, the session reaches the
+model and streams retries — the dispatch path now works end to end and the only
+remaining blocker is model quota. Until it resets, the review below is a **second pass
+by the same agent against the written invariants**, not an independent reviewer.
+
+To finish this test: `.agents/dispatch/prompt.txt` already holds the instructions and
+the four files, so the command is
+
+```bash
+opencode-cli.exe run --agent surgeon-reviewer --model google/gemini-3.8-flash \\
+  --auto --file .agents/dispatch/prompt.txt \\
+  "The attached file is your complete task; reply with your findings."
+```
 
 ### Fixed during the review
 
