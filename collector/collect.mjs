@@ -297,6 +297,15 @@ async function main() {
     // Durable first-seen timestamps feed the release-timing model; they live
     // outside `history` so the 4,000-row cap cannot evict them.
     recordFirstSeen(state, boardRows, now);
+    // Fare mechanics: record EVERY itinerary this sweep saw, not only the ones
+    // that qualify. A flight still carrying its standard fare is the pre-flip
+    // evidence that makes "when does it turn into GoWild?" answerable at all;
+    // recording only qualifying rows would hide the transition on both sides.
+    // allFlights is the fresh response set, so a refused route contributes
+    // nothing and cannot be mistaken for "no GoWild seats today".
+    const { recordFares } = await import('../src/pricing.mjs');
+    const fareTrack = recordFares(state, allFlights, now);
+    console.log(`fares: tracked=${fareTrack.tracked} new=${fareTrack.created}`);
     // Bookability for a date uses every row we hold for it (fresh + carried) so a
     // route that was not re-asked is never counted as "not bookable". Whether the
     // date counts as OBSERVED is a different question and needs a this-sweep

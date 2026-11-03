@@ -51,6 +51,21 @@ export function normalizeSeats(value) {
   return null;
 }
 
+// The flight number is what makes "does this same flight always get GoWild seats?"
+// answerable, so it is worth capturing — but Frontier never documented a field
+// name for it, so probe the plausible ones instead of trusting a single key.
+// Absent is a supported outcome: the analysis then groups by departure time and
+// labels that as the weaker claim it is.
+function firstFlightNumber(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+  for (const key of ['flightNumber', 'flightNo', 'marketingFlightNumber', 'carrierFlightNumber', 'flt']) {
+    const v = obj[key];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+    if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+  }
+  return null;
+}
+
 export function normalizeFlight(f, dateISO, dest, city) {
   const legs = f.legs || [];
   const first = legs[0] || {};
@@ -73,6 +88,7 @@ export function normalizeFlight(f, dateISO, dest, city) {
     // in the payload, so the UI labels this "estimated all-in".
     allin: goWild ? round2(fare) : null,
     std: typeof f.standardFare === 'number' && f.standardFare > 0 ? round2(f.standardFare) : null,
+    flt: firstFlightNumber(first) || firstFlightNumber(f) || null,
     goWild,
   };
 }

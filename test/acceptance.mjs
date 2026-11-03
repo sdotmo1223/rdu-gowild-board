@@ -6,6 +6,7 @@ import { appendTransitions } from '../src/history.js';
 import { renderPage } from '../src/render.js';
 import { frequencyTable, headlineFrequency } from '../src/frequency.js';
 import { ROUTES, MAX_ALL_IN, PEAK_LABEL } from '../src/routes.js';
+import { recordFares, fareMechanics, departureMs } from '../src/pricing.mjs';
 
 let passed = 0;
 function check(name, fn) {
@@ -18,6 +19,77 @@ function check(name, fn) {
     process.exitCode = 1;
   }
 }
+
+// --- GoWild fare mechanics (src/pricing.mjs) -------------------------------
+// The point of that module is the flip: a sighting that carried only a standard
+// fare, then one that carried a GoWild fare. These assert the transition is
+// measured rather than assumed, and that a sentinel can never become a price.
+
+const flightAt = (over = {}) => ({
+  date: '2026-11-03',
+  dest: 'ATL',
+  city: 'Atlanta',
+  dep: '2026-11-03 06:30:00',
+  arr: '2026-11-03 08:39:00',
+  stops: 'Nonstop',
+  nonstop: true,
+  dur: '2 hrs 9 min',
+  seats: 3,
+  allin: 15.41,
+  std: 133.98,
+  flt: null,
+  goWild: true,
+  ...over,
+});
+
+check('a standard-only sighting followed by a GoWild one is a measured flip', () => {
+  const state = {};
+  recordFares(state, [flightAt({ goWild: false, allin: null, seats: null })], Date.UTC(2026, 10, 2, 21, 0));
+  recordFares(state, [flightAt()], Date.UTC(2026, 10, 2, 21, 30));
+  const m = fareMechanics(state);
+  assert.equal(m.instances, 1);
+  assert.equal(m.withGoWild, 1);
+  assert.equal(m.preFlipObserved, 1);
+  // 06:30 local on a November date is EST (-5) = 11:30Z; flipped at 21:30Z = 14h out.
+  assert.equal(m.medianLeadHours, 14);
+  // 15.41 / 133.98 = 11.5%, reported as a rounded ratio of 0.12.
+  assert.equal(m.std.fareRatioMedian, 0.12);
+});
+
+check('already-GoWild at first sight is not counted as an observed flip', () => {
+  const state = {};
+  recordFares(state, [flightAt()], Date.UTC(2026, 10, 2, 21, 0));
+  const m = fareMechanics(state);
+  assert.equal(m.preFlipObserved, 0);
+  assert.equal(m.gonWildAtFirstSight, 1);
+});
+
+check('the -1 GoWild sentinel never becomes a price', () => {
+  const state = {};
+  recordFares(state, [flightAt({ allin: -1 })], Date.UTC(2026, 10, 2, 21, 0));
+  const m = fareMechanics(state);
+  assert.equal(m.withGoWild, 0);
+  assert.equal(m.std.fareRatioMedian, null);
+});
+
+check('departureMs resolves a New York wall clock rather than UTC', () => {
+  assert.equal(departureMs('2026-11-03 06:30:00'), Date.UTC(2026, 10, 3, 11, 30));
+});
+
+check('the mechanism section admits its sample floor instead of showing a pattern', () => {
+  const state = {};
+  recordFares(state, [flightAt({ goWild: false, allin: null })], Date.UTC(2026, 10, 2, 21, 0));
+  recordFares(state, [flightAt()], Date.UTC(2026, 10, 2, 21, 30));
+  const html = renderPage(buildBoard(state), state, frequencyTable(state, ROUTES), Date.now(), {});
+  assert.match(html, /How the GoWild fare behaves/);
+  assert.match(html, /not a pattern/);
+  assert.doesNotMatch(html, /\$NaN|>undefined</);
+});
+
+check('a board with no fare observations explains why, never a blank', () => {
+  const html = renderPage(buildBoard({}), {}, frequencyTable({}, ROUTES), Date.now(), {});
+  assert.match(html, /No fare observations yet/);
+});
 
 // A payload shaped exactly like the live one, including its traps:
 // -1 sentinel when GoWild is off, string seats, a >$50 fare, a next-day arrival.

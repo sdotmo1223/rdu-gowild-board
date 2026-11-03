@@ -21,6 +21,7 @@ import {
   frontierDateParam,
   isBlackout,
 } from '../src/routes.js';
+import { recordFares, fareMechanics } from '../src/pricing.mjs';
 
 let passed = 0;
 let failed = 0;
@@ -36,6 +37,63 @@ function check(name, fn) {
     console.log(`FAIL  ${name}\n      ${err.message}`);
   }
 }
+
+// The fare map is updated in the collector's hot path, from whatever the payload
+// happened to contain. Half-written or hostile state must degrade, not throw.
+check('fare mechanics survives hostile state', () => {
+  for (const bad of [null, {}, { fares: null }, { fares: [] }, { fares: 'nope' }, { fares: { x: 'str', 'y|z': null } }]) {
+    assert.doesNotThrow(() => fareMechanics(bad));
+    assert.doesNotThrow(() => recordFares(bad, [null, {}, { date: 'not-a-date' }, { date: '2026-11-03', dest: 'ATL' }]));
+  }
+});
+
+check('fare instances are capped so the KV value cannot grow without bound', () => {
+  const state = { fares: {} };
+  for (let i = 0; i < 8100; i++) {
+    state.fares[`2026-11-03|ATL|2026-11-03 06:${String(i % 60).padStart(2, '0')}:00|F${i}`] = {
+      n: 1,
+      gw: 0,
+      first: i,
+      firstGw: 0,
+      stdMin: 100,
+      stdMax: 100,
+      gwMin: null,
+      gwMax: null,
+      last: i,
+      seats: null,
+    };
+  }
+  const r = recordFares(state, []);
+  assert.ok(r.tracked <= 8000, `tracked ${r.tracked}`);
+});
+
+check('instances outside the retention window are dropped by departure date', () => {
+  const state = {
+    fares: {
+      '2026-01-01|ATL|2026-01-01 06:00:00|?': { n: 1, gw: 1, first: 1, firstGw: 1, last: 1 },
+      '2026-11-03|MCO|2026-11-03 06:00:00|?': { n: 1, gw: 1, first: 2, firstGw: 2, last: 2 },
+    },
+  };
+  recordFares(state, []);
+  assert.ok(!state.fares['2026-01-01|ATL|2026-01-01 06:00:00|?'], 'old instance survived');
+  assert.ok(state.fares['2026-11-03|MCO|2026-11-03 06:00:00|?'], 'recent instance was dropped');
+});
+
+check('a NaN or zero fare never poisons the medians', () => {
+  const state = {};
+  recordFares(
+    state,
+    [
+      { date: '2026-11-03', dest: 'ATL', dep: '2026-11-03 06:30:00', goWild: true, allin: Number.NaN, std: Number.NaN },
+      { date: '2026-11-03', dest: 'ATL', dep: '2026-11-03 07:30:00', goWild: true, allin: 0, std: 0 },
+    ],
+    Date.now(),
+  );
+  const m = fareMechanics(state);
+  assert.equal(m.withGoWild, 0);
+  assert.equal(m.std.gwMedian, null);
+  assert.equal(m.std.fareRatioMedian, null);
+});
 
 const CITY = (code) => (ROUTES.find((r) => r.code === code) || {}).city || code;
 

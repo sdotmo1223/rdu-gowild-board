@@ -2,6 +2,7 @@ import { MAX_ALL_IN, PEAK_LABEL, MAX_STOPS, MAX_DURATION_MIN } from './routes.js
 import { bookabilityHeatmap } from './heatmap.mjs';
 import { releaseTiming, MIN_SAMPLES } from './timing.mjs';
 import { weeklyPattern } from './schedule.mjs';
+import { fareMechanics, median, MIN_SAMPLES as FARE_MIN } from './pricing.mjs';
 
 const esc = (s) =>
   String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -197,6 +198,68 @@ function timingHtml(state) {
     <p class="note">A route needs ${MIN_SAMPLES}+ observations before this claims a time of day.</p></details>`;
 }
 
+function pct(part, whole) {
+  if (!whole) return '\u2014';
+  return `${Math.round((part / whole) * 100)}%`;
+}
+
+// The mechanism section: when a fare flips, whether it follows the flight or the
+// load, and how the GoWild fare sits against the standard fare. Every number
+// carries its denominator, and below the sample floor the section says so instead
+// of implying a pattern.
+function pricingHtml(state) {
+  const m = fareMechanics(state);
+  if (!m.instances) {
+    return `<details><summary>How the GoWild fare behaves</summary>
+      <p class="note">No fare observations yet. The next sweep starts the clock: every itinerary is now stored with
+      both its standard fare and its GoWild fare, so the moment a fare flips becomes observable instead of inferred.</p></details>`;
+  }
+
+  const stats = [
+    `<strong>${m.instances}</strong> itineraries tracked (each a departure on a date)`,
+    `<strong>${m.withGoWild}</strong> carried a GoWild fare &middot; ${pct(m.withGoWild, m.instances)} of sightings`,
+    `<strong>${m.preFlipObserved}</strong> were watched flipping after a standard-fare-only sighting`,
+    m.medianLeadHours === null || m.medianLeadHours === undefined
+      ? 'lead time cannot be measured yet'
+      : `median flip <strong>${m.medianLeadHours}h</strong> before departure`,
+  ];
+
+  const hourRows = m.byHour
+    .filter((h) => h.instances > 0)
+    .map(
+      (h) =>
+        `<tr><td>${esc(hourLabel(h.hour))}</td><td>${h.instances}</td><td>${h.gw} &middot; ${pct(h.gw, h.instances)}</td><td>${h.gw && median(h.fares) !== null ? `$${median(h.fares).toFixed(2)}` : '\u2014'}</td></tr>`,
+    )
+    .join('');
+
+  const idRows = m.identities
+    .slice(0, 14)
+    .map(
+      (i) =>
+        `<tr><td>${esc(i.dest)} ${esc(i.id)}</td><td>${i.gwDays} of ${i.days}</td><td>${i.verdict === 'always' ? 'every sighting' : i.verdict === 'never' ? 'never' : 'varies'}</td></tr>`,
+    )
+    .join('');
+
+  const idNote = m.identityKnown
+    ? 'Grouped by flight number, so the question "is it this flight, or whichever flight is under-sold?" is answered directly.'
+    : 'The payload carried no flight number, so this groups by departure time instead \u2014 a weaker claim, and labelled as one.';
+
+  const ratio = m.std.fareRatioMedian;
+  const flipNote =
+    m.preFlipObserved < FARE_MIN
+      ? `Only ${m.preFlipObserved} flip${m.preFlipObserved === 1 ? '' : 's'} watched so far: below ${FARE_MIN}, this is an observation, not a pattern.`
+      : `${m.preFlipObserved} flips watched, median ${m.medianLeadHours === null ? 'unknown' : `${m.medianLeadHours}h`} ahead of departure.`;
+
+  return `<details><summary>How the GoWild fare behaves &middot; ${m.instances} itineraries tracked</summary>
+    <table>${stats.map((s) => `<tr><td>${s}</td></tr>`).join('')}</table>
+    ${hourRows ? `<div class="heat"><table><thead><tr><th>departs</th><th>sightings</th><th>GoWild</th><th>lowest</th></tr></thead><tbody>${hourRows}</tbody></table></div>
+    <p class="note">Which departure hours ever carry a GoWild fare, and the lowest one seen at that hour.</p>` : ''}
+    ${idRows ? `<div class="heat"><table><thead><tr><th>flight</th><th>GoWild</th><th>pattern</th></tr></thead><tbody>${idRows}</tbody></table></div>
+    <p class="note">${idNote} A column that reads "every sighting" points at particular flights being designated; a mixed column points at a load-based rule. ${m.identities.length} flight pattern${m.identities.length === 1 ? '' : 's'} have reached ${FARE_MIN}+ sightings.</p>` : `<p class="note">No flight has ${FARE_MIN} or more sightings yet, so whether GoWild follows specific flights or any under-sold flight is still open.</p>`}
+    <p class="note">Measured, not published: Frontier documents none of this. ${ratio !== null ? `GoWild fares have run at about ${Math.round(ratio * 100)}% of the standard fare (${m.std.ratioSamples} comparisons). ` : ''}${flipNote}</p>
+  </details>`;
+}
+
 export function renderPage(view, state, freq, now = Date.now(), opts = {}) {
   const basePath = opts.basePath || '';
   const err = view.error;
@@ -319,6 +382,7 @@ ${view.dates.map(dateSection).join('')}
 ${scheduleHtml(state)}
 ${heatmapHtml(state)}
 ${timingHtml(state)}
+${pricingHtml(state)}
 <details>
   <summary>Weekday opening history</summary>
   ${freqRows ? `<table>${freqRows}</table>` : '<p class="note">Not enough observations yet.</p>'}

@@ -71,6 +71,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `src/frequency.js` | weekday open-frequency with honest denominators |
 | `src/heatmap.mjs` | bookability by weekday (primary) and by date (secondary) |
 | `src/timing.mjs` | release-timing model: median local hour + median lead hours, `MIN_SAMPLES = 3` |
+| `src/pricing.mjs` | fare mechanics: records **every** itinerary (pre-flip standard fare included) into `state.fares`, measures when a fare flips, whether it follows the flight or the load, and the GoWild/std ratio |
 | `src/schedule.mjs` | per-date operating matrix + week-over-week stable-vs-rotating verdict |
 | `src/alerts.mjs` | ntfy.sh push, deduped per error state to once / 6 h |
 | `src/index.js` | Worker router: `/s/<TOKEN>`, `/api/board`, `/api/ingest` (token-gated snapshot write), PWA assets |
@@ -82,16 +83,16 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `tools/seed-schedule.mjs` | rebuild `state.json` (incl. schedule) from `.sweep/` captures |
 | `PLAN.md` | the current ordered plan and its acceptance criteria |
 | `tools/render-local.mjs` | render from interactive `.sweep/` captures |
-| `test/acceptance.mjs` | 17 spec-level checks |
-| `test/stress.mjs` | 28 adversarial checks (hostile input, malformed state, volume, budget) |
+| `test/acceptance.mjs` | 23 spec-level checks |
+| `test/stress.mjs` | 44 adversarial checks (hostile input, malformed state, volume, budget, fare retention) |
 
 ---
 
 ## Commands
 
 ```bash
-npm test                     # acceptance: 17 checks
-npm run stress               # adversarial: 28 checks
+npm test                     # acceptance: 23 checks
+npm run stress               # adversarial: 44 checks
 node --check <file>          # syntax gate, used on every file
 
 node tools/headless-probe.mjs              # 1 request, proves the pipeline
