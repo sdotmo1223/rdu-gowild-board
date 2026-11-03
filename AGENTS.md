@@ -79,6 +79,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `src/pricing.mjs` | fare mechanics: records **every** itinerary (pre-flip standard fare included) into `state.fares`, measures when a fare flips, whether it follows the flight or the load, and the GoWild/std ratio |
 | `src/schedule.mjs` | per-date operating matrix + week-over-week stable-vs-rotating verdict |
 | `src/alerts.mjs` | ntfy.sh push, deduped per error state to once / 6 h |
+| `.github/workflows/sweep.yml` | the only collector cron: every origin, sequential, per-profile request budget |
 | `src/index.js` | Worker router: `/s/<TOKEN>`, `/api/board`, `/api/ingest` (token-gated snapshot write), PWA assets |
 | `collector/collect.mjs` | Playwright sweep → KV (or `state.json` with no credentials) |
 | `collector/parse.mjs` | `extractJourneys`, `normalizeFlight`, `parseRoute`, `classifyFailure` |
@@ -89,16 +90,18 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `tools/seed-schedule.mjs` | rebuild `state.json` (incl. schedule) from `.sweep/` captures |
 | `PLAN.md` | the current ordered plan and its acceptance criteria |
 | `tools/render-local.mjs` | render from interactive `.sweep/` captures |
-| `test/acceptance.mjs` | 23 spec-level checks |
-| `test/stress.mjs` | 44 adversarial checks (hostile input, malformed state, volume, budget, fare retention) |
+| `test/acceptance.mjs` | 25 spec-level checks |
+| `test/profiles.mjs` | 9 multi-origin checks: profile resolution, unserved-vs-refused classification, per-origin rendering |
+| `test/stress.mjs` | 48 adversarial checks (hostile input, malformed state, volume, budget, fare retention) |
 
 ---
 
 ## Commands
 
 ```bash
-npm test                     # acceptance: 23 checks
-npm run stress               # adversarial: 44 checks
+npm test                     # acceptance: 25 checks
+npm run stress               # adversarial: 48 checks
+node test/profiles.mjs       # multi-origin: 9 checks
 node --check <file>          # syntax gate, used on every file
 
 node tools/headless-probe.mjs              # 1 request, proves the pipeline

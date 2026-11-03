@@ -221,3 +221,14 @@ half, self-correcting on the next slot. GitHub's schedule delay is the only caus
 Full LGA pass in the same period: 9/9 routes, 31 departures, 0 GoWild.
 Same collector, same parser, same minute — so the difference is the station, not
 the measurement.
+
+## Unserved vs refused (2026-11-03)
+
+| Signature | Bytes | Meaning | Sweep action |
+|---|---|---|---|
+| DataDome challenge | ~20,379 | refusal | abort |
+| Frontier app shell, no journeys | 596,915 | city pair not sold | continue |
+| Normal payload | 950k-1.09M | fares present | parse |
+
+Size alone was not enough — the stress suite proved a 1.5 MB junk page would have
+been read as "not sold" — so the payload must also look like Frontier's own app.

@@ -726,3 +726,80 @@ What this does **not** yet say:
 Only elapsed time answers the first, and plan item 8 (window vs exclusion)
 answers the second. Until then the page says "N departures, but Frontier released
 no GoWild seats" — which is exactly true and exactly verifiable.
+
+---
+
+## PHL, and the bug that adding it exposed
+
+PHL is Frontier's base and it serves 23 destinations from there, so a board is
+possible. But the exact city pairs are only partly sourceable (FlightConnections
+says 23, FlightQ says 21, no readably complete list existed), and that is what
+turned a feature into a bug hunt.
+
+### The bug: one wrong city pair killed the whole sweep
+
+`shouldAbortSweep` treated **any** failed route as a refusal. An unserved city
+pair answers with a full Frontier app shell and no `journeys` array — the same
+classification as the bot challenge:
+
+| Signature | Bytes | What it means |
+|---|---|---|
+| DataDome challenge | ~20,379 | refused, stop |
+| Frontier app shell, no journeys | 596,915 | this city pair is not sold |
+| Normal payload | 950k-1.09M | fares present |
+
+So a 22-route profile containing one wrong pair would abort on the first wrong
+pair, look exactly like bot protection, and keep yesterday's rows forever.
+
+Fix: size **and** a Frontier-looking payload now classify as `route-not-served`,
+which does not abort; `classifyFailure` reports an all-not-served sweep as
+`profile` ("this route list is probably wrong") rather than as an outage.
+
+Worth recording how it was caught: the first fix used size alone, and
+`test/stress.mjs` failed with *"a 1.5 MB page with no journeys key is not read as
+no-flights"*. The suite was right — a refusal could be large too — so the marker
+check was added. A test written weeks earlier for a different reason caught a real
+regression in the same afternoon.
+
+### Two process problems that only appeared at three origins
+
+1. **Three near-identical workflows.** Each paid its own `npm ci` + Chromium
+   install (~40-70 s), shared one concurrency group, and therefore queued behind
+   each other: a dispatched run waited ~4 minutes behind the cron. Adding an
+   origin meant copying a YAML file.
+2. **Unbounded burst.** Three origins at 14 requests each would have been a
+   42-request tick, well past the measured refusal zone.
+
+Fix: one workflow (`gowild-sweep`), one job, one Chromium, origins swept
+sequentially with a per-profile request budget (rdu 14, lga 10, phl 16). The
+primary runs every tick; secondaries split the alternate quarters, so a tick
+carries the primary plus one secondary. `board-collect` and `gowild-lga` are
+**disabled**, not deleted — `gh workflow enable` brings either back.
+
+### A slicing bug I nearly shipped
+
+The budget slice took `shardList.slice(0, maxRoutes)`. With a budget of 8 out of
+11 shard routes that asks the same 8 every tick and **starves the tail forever**.
+It now starts at a clock-derived offset and wraps, so successive ticks rotate
+through the whole list.
+
+### Tooling trap that cost a false alarm
+
+`npx wrangler kv key get "state:phl" --remote` reported nothing while the key
+existed and was readable through the Worker. Read profile snapshots with
+`GET /api/ingest?profile=phl` (Bearer BOARD_TOKEN) instead — it returns the key
+name and the parsed snapshot, and it cannot silently look empty.
+
+### First PHL numbers (run 41685288047)
+
+```
+sweep plan: 8/22 routes x 2 date(s) = 16 requests (shard full, budget 16)
+sweeps=16/16 requests=16 flights=77 blocked=0 aborted=no
+fares: tracked=57 new=57
+ingest write complete: 33617 bytes via the Worker
+```
+
+77 PHL departures across 8 of 22 routes — four times the LGA sample per route,
+which is what a base station looks like. The rotation covers the remaining 14
+routes over the following ticks; the page states how many routes were re-checked
+rather than implying the list is complete.
