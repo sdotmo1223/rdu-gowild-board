@@ -27,10 +27,25 @@ function kvEnv() {
   return { token, account, ns };
 }
 
+const VERIFY_HINT =
+  'Check the credential without printing it: powershell -NoProfile -ExecutionPolicy Bypass -File tools/verify-cf-token.ps1';
+
 async function kvGet(env) {
   const url = `${API_BASE}/accounts/${env.account}/storage/kv/namespaces/${env.ns}/values/${KV_KEY}`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${env.token}` } });
   if (res.status === 404) return null;
+  // A bare "KV GET 401" cost a whole 19-request sweep on 2026-11-03: the run had
+  // already scraped everything, then died writing. Say what to fix instead.
+  if (res.status === 401) {
+    throw new Error(
+      'KV GET 401 - CF_API_TOKEN was rejected. The token value is invalid, expired, or for another account. ' + VERIFY_HINT,
+    );
+  }
+  if (res.status === 403) {
+    throw new Error(
+      'KV GET 403 - CF_API_TOKEN is valid but lacks Workers KV Storage: Edit on this account. ' + VERIFY_HINT,
+    );
+  }
   if (!res.ok) throw new Error(`KV GET ${res.status}`);
   return res.json();
 }
@@ -42,7 +57,13 @@ async function kvPut(env, state) {
     headers: { Authorization: `Bearer ${env.token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(state),
   });
-  if (!res.ok) throw new Error(`KV PUT ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  if (!res.ok) {
+    const detail = (await res.text()).slice(0, 200);
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(`KV PUT ${res.status} - cannot write the snapshot. ${VERIFY_HINT} Cloudflare said: ${detail}`);
+    }
+    throw new Error(`KV PUT ${res.status}: ${detail}`);
+  }
 }
 
 async function main() {

@@ -242,3 +242,39 @@ Served page 79,291 B, 74 rows, lowest fare $15.41, zero occurrences of `$NaN`,
 **Still open:** the 15-minute collector cron. `.github/workflows/board-collect`
 stays `disabled_manually` until `CF_API_TOKEN` (Workers KV Storage:Edit, Account
 Settings:Read) exists as a repo secret — the other two are already set.
+
+---
+
+## First CI run: the sweep worked, the credential did not (2026-11-03)
+
+`CF_API_TOKEN` was added and `board-collect` went active, so I dispatched one run
+by hand: [41640525601](https://github.com/sdotmo1223/rdu-gowild-board/actions/runs/41640525601).
+
+**What worked in CI:** checkout, node, the missing-secret guard, `playwright
+install chromium`, and 17 of 19 flyfrontier requests — ATL 10 flights, PHL 10, SJU
+10, CLE 6, DEN 5, DFW 4, IAH 5, MCO 5, FLL 1, MIA 1, TPA 2. BOS and CUN came back
+`no-flights` twice, which is the honest empty state, not a block. **A GitHub
+runner can therefore reach Frontier**, which was the biggest unknown.
+
+**What failed:** `KV GET 401` at write time. The token is sent as a plain
+`Authorization: Bearer`, so a 401 means the *value* was rejected — a 403 would
+have meant missing permission. Wrangler's OAuth writes to the same namespace
+fine, so the account id and namespace id are correct; only the token is wrong.
+Cost: the sweep was scraped and then thrown away.
+
+**Second finding — the throttle moved again.** On a fresh runner IP with no prior
+probing, the burst was refused at request **19 of 28** (`2026-11-04 DEN:
+no-journeys-key`), where the same machine had done 28/28 clean earlier the same
+day. So the refusal is not a per-IP budget either; it is Frontier's own
+transient mood. `shouldAbortSweep` ended the sweep correctly, and the remaining
+9 requests were never spent.
+
+**Actions taken:**
+
+1. Disabled the workflow again, because a 15-minute cron that spends ~20 requests
+   and writes nothing is exactly the impoliteness the rules forbid. Re-enable
+   only once a token is verified working.
+2. `collector/collect.mjs` now names the fix on 401/403 instead of printing
+   `KV GET 401`, because that message cost a full sweep to decode.
+3. `tools/verify-cf-token.ps1` checks token shape, `/user/tokens/verify`, and a
+   real KV read, printing neither the token nor any part of it.
