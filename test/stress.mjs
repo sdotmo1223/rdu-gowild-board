@@ -513,4 +513,17 @@ check('a date that failed completely keeps its previous rows instead of being er
   assert.equal(kept.reduce((a, k) => a + k.rows, 0), 1);
 });
 
+// The bug this guards against: the client script is emitted from a template
+// literal, so a \r\n written as an escape collapses into a real line break
+// inside a string literal. The page still renders perfectly — only pin, calendar
+// export and the PWA wiring die, with one console exception nobody sees. Every
+// HTML assertion passed while the feature was completely dead.
+check('the delivered page ships a client script that actually parses', () => {
+  const state = { sweeps: [sweep({ flights: [flight()] })], updatedAt: Date.now(), routeCount: 14 };
+  const html = renderPage(buildBoard(state), state, [], Date.now());
+  const m = /<script>([\s\S]*?)<\/script>/.exec(html);
+  assert.ok(m, 'the page must carry its client script');
+  assert.doesNotThrow(() => new Function(m[1]), 'a syntax error here silently kills pin and calendar export');
+});
+
 console.log(`\nSTRESS: ${passed} passed, ${failed} failed`);

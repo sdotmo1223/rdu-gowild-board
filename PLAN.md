@@ -13,9 +13,11 @@ features.
 
 Two facts decide the order:
 
-1. A single fare request works fine; a **28-request burst gets soft-throttled
-   around request 15** (measured: 14 `no-flights`, then 14 straight
-   `no-journeys-key`).
+1. ~~A 28-request burst gets soft-throttled around request 15.~~ **Corrected
+   2026-11-03:** the same 28-request burst now completes cleanly (28/28 ok, 186
+   flights, 0 blocked), and a 14-request burst did the same. The earlier refusal
+   was **transient**, not a quota. Keep abort-on-refusal as a safety net; do not
+   design around a 14-request budget.
 2. The release-timing model and the weekly-schedule matrix both need **scheduled
    uptime**, not more code. Every hour it is not running is an hour of data lost
    permanently, because neither can be backfilled.
@@ -26,9 +28,13 @@ Two facts decide the order:
 
 These are safe, local, reversible, and spend **zero** Frontier requests.
 
-- [x] Split the sweep budget so a run cannot trip the throttle (stop on first refusal).
-- [x] Abort-on-refusal wired into the collector, with the remaining routes recorded
-      as "not attempted" rather than "no flights".
+- [x] Abort-on-refusal in the collector (`shouldAbortSweep`), unit-tested.
+      **Not yet observed firing live**: both live runs this morning completed all
+      requests, so the stop path is proven by test only, not by production.
+- [x] Partial-sweep retention extracted to a pure `mergeSweeps()` and tested — a
+      date with no usable payload keeps its previous rows.
+- [x] Two live bursts (14 and 28 requests) both completed cleanly, which corrects
+      the throttle theory above.
 - [x] Add `SWEEP_DAYS` so a deliberate backfill is possible without editing code.
 - [x] Re-run `npm test` and `npm run stress`, commit.
 - [x] Regenerate `board.html` from real captures so the preview is never a fixture.

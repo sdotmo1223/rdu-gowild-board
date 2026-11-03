@@ -122,11 +122,26 @@ npx wrangler deploy
 | `STATE_OUT`, `STATE_IN` | snapshot paths |
 | `SWEEP_DAYS` | dates per sweep, default 2. Do not raise it in the normal cadence: 14 routes × N dates is a burst, and the measured soft throttle starts around the 15th request. |
 
-## The throttle (measured 2026-11-02)
+## The throttle (updated 2026-11-03)
 
-A single fare request succeeds; a 28-request burst stops being served around
-request 15 (14 × `no-flights`, then 14 × `no-journeys-key`). Never add retries — a
-retry is a second request. Prefer fewer requests over faster sweeps.
+The evidence moved, so read this carefully rather than trusting the first story.
+
+- **2026-11-03:** a 28-request two-date burst completed **cleanly** — 28/28 ok,
+  186 flights, 0 blocked. A 14-request burst did the same minutes earlier.
+- **2026-11-02:** the *same* 28-request sweep returned 14 `no-flights` then 14
+  straight `no-journeys-key`, which looked like a hard per-burst budget.
+
+Correct reading: the refusal is **transient**, not a fixed quota. It followed a
+day of repeated heavy probing (many sweeps plus single-route probes). Do not
+encode a 14-request budget as fact.
+
+Rules that hold under either reading:
+
+- Sequential only, 2–5 s jitter, exactly one process touching Frontier.
+- Never add retries. A retry is a second request.
+- The collector **aborts on the first refusal** (`shouldAbortSweep`) and keeps the
+  previous rows for any date that returned nothing usable (`mergeSweeps`). It is a
+  safety net, not a licence to raise `SWEEP_DAYS`.
 
 ---
 
@@ -138,6 +153,13 @@ retry is a second request. Prefer fewer requests over faster sweeps.
 - `process_read` / `process_stop` need a UUID id; use `netstat -ano` +
   `taskkill //PID` for stray servers.
 - Never kill by process-name pattern — the agent's own command line can match.
+- **Never write `\n` or `\r\n` as an escape inside the HTML template in
+  `src/render.js`.** Template literals collapse it into a real newline, which
+  breaks the emitted client script while the page still renders perfectly — pin,
+  calendar export and the PWA all die silently. Use `String.fromCharCode(13, 10)`.
+  `test/stress.mjs` now runs `new Function()` on the emitted script to catch this.
+- Assert on generated code, not only on markup. A page that renders correctly can
+  ship JavaScript that does not parse.
 
 ---
 

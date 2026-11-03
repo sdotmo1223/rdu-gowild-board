@@ -368,7 +368,7 @@ window.__basePath = ${JSON.stringify(basePath)};
       'SUMMARY:RDU to ' + d.dest + ' (GoWild $' + price + ')',
       'DESCRIPTION:Estimated all-in $' + price + '. Frontier publishes no tax or fee breakdown for GoWild fares.',
       'LOCATION:' + d.dest,'END:VEVENT','END:VCALENDAR'];
-    return L.join('\r\n') + '\r\n';
+    return L.join(String.fromCharCode(13, 10)) + String.fromCharCode(13, 10);
   }
   document.addEventListener('click', function (ev) {
     var btn = ev.target && ev.target.closest ? ev.target.closest('button.act') : null;

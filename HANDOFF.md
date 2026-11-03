@@ -166,3 +166,39 @@ node tools/render-state.mjs         # board.html from real data
 ```
 
 Then read `AGENTS.md` invariants before touching `src/board.js` or `src/render.js`.
+
+---
+
+## Defect: the client script was dead and every test passed (2026-11-03)
+
+Found by opening the rendered page in a browser, which no test had ever done.
+
+**Symptom:** one console exception, `SyntaxError: Invalid or unexpected token`.
+Nothing else. The page rendered perfectly, every row appeared, the timestamp was
+correct, and all 35 HTML assertions passed. Pin, calendar export and the PWA
+wiring were simply never defined.
+
+**Cause:** the client script is emitted from a template literal in `render.js`,
+which contained:
+
+    return L.join('\r\n') + '\r\n';
+
+Inside a template literal, `\r\n` is not text — it becomes a real CR/LF. So the
+browser received a string literal broken across two lines:
+
+    return L.join('
+    ') + '
+    ';
+
+**Fix:** `return L.join(String.fromCharCode(13, 10)) + String.fromCharCode(13, 10);`
+No escape, nothing to collapse. The ICS still gets proper CRLF.
+
+**Why the tests missed it:** every test asserted on the *markup*, and the markup
+was fine. Nothing verified that the delivered JavaScript parses. The new stress
+check extracts `<script>…</script>` from a rendered page and runs `new Function()`
+on it; a mutation test (reintroducing the escape) proves it fails on the old bug
+and passes on the fix.
+
+**Lesson that generalises:** when one file generates another language, assert the
+generated language is valid. Rendering tests that only inspect the outer document
+cannot see a dead inner script.
