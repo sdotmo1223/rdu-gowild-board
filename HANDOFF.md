@@ -278,3 +278,40 @@ transient mood. `shouldAbortSweep` ended the sweep correctly, and the remaining
    `KV GET 401`, because that message cost a full sweep to decode.
 3. `tools/verify-cf-token.ps1` checks token shape, `/user/tokens/verify`, and a
    real KV read, printing neither the token nor any part of it.
+
+---
+
+## The token was valid; my checker mangled it (2026-11-03)
+
+A real token was pasted at the prompt and the checker reported
+`6003 Invalid request headers`. The token was fine. **The checker corrupted it.**
+
+Cloudflare now issues tokens in two formats, and the current UI hands out the
+first:
+
+| Format | Example shape | Where |
+|---|---|---|
+| `cfut_` + 48 chars = **53** | user-scoped API token | My Profile → API Tokens (current) |
+| `cfat_` + chars | account-owned API token | Account API Tokens |
+| legacy bare **40** alnum | old tokens still in the wild | older tokens |
+
+The checker was written against the 40-char legacy shape and "helpfully" pulled a
+40-char window out of any longer paste. Cutting four characters off a 53-char
+token produces a syntactically plausible but wrong credential, and Cloudflare's
+reply to that is `6003 invalid request headers` — which reads exactly like a
+permissions problem. Nothing about the error pointed at the truncation.
+
+**Fix:** match the prefixed forms first and take them verbatim; accept a legacy
+40-char value only when the whole input is exactly 40; extract from surrounding
+text only by the prefix, never by width. Verified with a synthetic 53-char token
+(now `401 invalid api token`, the honest answer for a fake), an embedded
+53-char token, a legacy 40-char value, and plain permissions text (sends nothing).
+
+**Also:** that token was pasted into a chat transcript, so it is burned and must
+be deleted at the dashboard regardless. Two credentials have now leaked this way.
+The rule already in `AGENTS.md` — never paste a token into chat — keeps earning
+its place.
+
+**Lesson:** a validator that rewrites its input can turn a good secret into a bad
+one while blaming the user. Parse secrets verbatim; the only safe transformation
+is whitespace trimming.

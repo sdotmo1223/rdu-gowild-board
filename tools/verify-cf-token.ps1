@@ -39,23 +39,28 @@ if (-not $Token) {
     exit 2
 }
 
-# A pasted value is often the token plus surrounding text or newlines (173 chars
-# was seen on 2026-11-03). Find the token-shaped run instead of rejecting the
-# whole paste, but never send anything that is not exactly 40 chars.
+# Cloudflare uses TWO token formats and both must be accepted verbatim:
+#   cfut_<48>   new scannable user-scoped token (53 chars)  <- the current UI
+#   cfat_<..>   account-owned token
+#   <40 alnum>  legacy bare token value
+# Never slice a fixed-width window out of a longer string: doing that to a 53-char
+# cfut_ token sent a truncated credential, and Cloudflare answers 6003 "invalid
+# request headers", which reads like a permissions bug (2026-11-03).
 $raw = ([string]$Token).Trim().Trim('"').Trim("'")
-$candidates = [regex]::Matches($raw, '[A-Za-z0-9_-]{40}') | ForEach-Object { $_.Value }
 $Token = $null
-if ($raw.Length -eq 40 -and $raw -match '^[A-Za-z0-9_-]+$') {
+if ($raw -match '^(cf(?:ut|at)_[A-Za-z0-9_-]{20,80})$') {
+    $Token = $Matches[1]
+    Write-Host ("token shape: {0}-prefixed, {1} chars, exactly a Cloudflare token" -f $Token.Substring(0, 5), $Token.Length)
+} elseif (($raw.Length -eq 40) -and ($raw -match '^[A-Za-z0-9_-]{40}$')) {
     $Token = $raw
-    Write-Host 'token shape: 40 chars, exactly a Cloudflare token'
-} elseif ($candidates.Count -ge 1) {
-    $Token = $candidates[0]
-    Write-Host ("token shape: input was {0} chars; extracted a 40-char token (arguably clean)" -f $raw.Length)
-    if ($candidates.Count -gt 1) { Write-Host '  WARNING: several 40-char runs found; using the first.' }
+    Write-Host 'token shape: legacy 40-char value, exactly a Cloudflare token'
+} elseif ($raw -match '(cf(?:ut|at)_[A-Za-z0-9_-]{20,80})') {
+    $Token = $Matches[1]
+    Write-Host ("token shape: input was {0} chars; extracted the {1}-prefixed token ({2} chars) from it" -f $raw.Length, $Token.Substring(0, 5), $Token.Length)
 } else {
-    Write-Host ("token shape: input was {0} chars and contains NO 40-char token." -f $raw.Length)
-    Write-Host '  Nothing was sent to Cloudflare. A token id is 32 hex chars; a board URL is ~82.'
-    Write-Host '  Copy the SECRET value from My Profile -> API Tokens (40 chars), or use -Prompt.'
+    Write-Host ("token shape: input was {0} chars and contains no cfut_/cfat_ or legacy 40-char token." -f $raw.Length)
+    Write-Host '  Nothing was sent to Cloudflare. A token ID is 32 hex chars; a board URL is ~82.'
+    Write-Host '  Copy the token VALUE from My Profile -> API Tokens, or use -Prompt.'
     exit 3
 }
 Write-Host ''
