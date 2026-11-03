@@ -698,3 +698,31 @@ Two candidate explanations, both testable and neither yet settled:
 The distinction matters because only (1) is a Frontier policy decision. Plan item
 8 (window vs exclusion) is what separates them, which is now the highest-value
 change rather than a tidiness fix.
+
+### Paired probe: the zero belongs to LGA, not to our code
+
+Same destination, same date, same minute (six seconds apart), same Chromium path,
+same parser:
+
+| Query | Bytes | Flights | GoWild |
+|---|---|---|---|
+| **RDU-MCO** | 951,435 | 2 | **2** (100%) |
+| **LGA-MCO** | 987,200 | 2 | **0** |
+
+Both returned `ok: true`. If the collector, the parser or Frontier itself were
+broken, RDU would have failed too. GoWild was demonstrably live at 17:2xZ on
+2026-11-03 — just not out of LaGuardia.
+
+Combined with the full pass (9/9 routes, 31 departures, 0 GoWild), today's LGA
+answer is: **Frontier is not releasing GoWild seats from LGA on these routes.**
+That is consistent with its own "not all Frontier flights will be available" and
+with LGA being slot-constrained and high-demand.
+
+What this does **not** yet say:
+
+- whether LGA is permanently excluded or just sold out this afternoon;
+- whether a specific LGA flight ever gets seats at the start of its window.
+
+Only elapsed time answers the first, and plan item 8 (window vs exclusion)
+answers the second. Until then the page says "N departures, but Frontier released
+no GoWild seats" — which is exactly true and exactly verifiable.

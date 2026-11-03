@@ -210,3 +210,14 @@ answered; omitting the option keeps the old whole-list behaviour.
 slot, so two runs landing inside the same 15-minute slot (a delayed runner) repeat a
 half and postpone the other by one tick — a worst case of a 45-minute gap for that
 half, self-correcting on the next slot. GitHub's schedule delay is the only cause.
+
+## LGA vs RDU, same minute (2026-11-03 17:2xZ)
+
+| Origin-destination | Bytes | Flights | GoWild |
+|---|---|---|---|
+| RDU-MCO | 951,435 | 2 | **2** |
+| LGA-MCO | 987,200 | 2 | **0** |
+
+Full LGA pass in the same period: 9/9 routes, 31 departures, 0 GoWild.
+Same collector, same parser, same minute — so the difference is the station, not
+the measurement.
