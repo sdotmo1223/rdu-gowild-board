@@ -426,3 +426,39 @@ then a refusal, `conclusion: success`, previous rows kept, 44 instances recorded
 
 **Lesson worth keeping:** when a field "does not exist", check the raw artefact,
 not the shape I produced from it.
+
+---
+
+## The mechanism tracker
+
+The board answers "what can I fly". This answers "why is that the price" — the
+distinction the user drew when they said the discovery mattered more than the
+itinerary.
+
+`src/pricing.mjs` records **every** itinerary each sweep, GoWild or not, into
+`state.fares`. That is the whole trick: `history` stores only rows that already
+qualify, so the moment a fare flipped was structurally invisible to it. Keeping
+the standard-fare sighting turns the transition into an observed event instead of
+an inference. The Worker renders it as "How the GoWild fare behaves".
+
+Measured from real snapshots (not synthetic):
+
+| Question | Answer | Basis |
+|---|---|---|
+| Do flights carry GoWild at all? | 62 of 101 instances in one day's board (61%) | real |
+| Is GoWild a discount off the standard fare? | yes, roughly 12-15% of `standardFare` | 62 comparisons |
+| Are particular flights designated, or is it load-based? | **now testable by flight number** — 81 of 140 flights carry one | real |
+| Which hours carry GoWild? | 7 distinct departure hours | 1 day |
+
+**The flip metric starts at zero and that is correct.** A flip is only counted
+when an instance was seen carrying a standard fare *and then* seen carrying a
+GoWild fare. The first sweep with the new recorder saw flights that were already
+GoWild at first sight, so it recorded 0 flips — an honest zero, not a failure.
+Flips accumulate from the second sweep onward.
+
+**Deployment lesson (cost one wasted verification):** the collector was writing
+fare data the deployed Worker could not render, because `src/render.js` changed
+without a `wrangler deploy`. KV was correct the whole time and the page simply
+served the old bundle. After deploying, version `d029541b`, the section appeared
+with `44 itineraries tracked` and no placeholder leaks. Changing the collector
+needs no deploy; changing the render path does.

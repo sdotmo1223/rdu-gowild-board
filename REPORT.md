@@ -157,3 +157,15 @@ Ingest boundary, verified against the deployed Worker:
 | same, no `Authorization` header | `401` |
 | same, `Bearer wrong-token-value` | `401` |
 | all-blocked sweep body | `409`, KB untouched (offline stress test) |
+
+## Fare mechanics (measured, 2026-11-03)
+
+| Metric | Value | Basis |
+|---|---|---|
+| Itinerary instances tracked | 101 (first full day) | 2 dates x 14 routes, real snapshot |
+| Carried a GoWild fare | 62 (61%) | real |
+| GoWild as share of standard fare | ~12-15% | 62 real comparisons |
+| Distinct departure hours with GoWild | 7 | real |
+| Flight number in payload | **present** | 81 of 140 flights carry one |
+| Flips observed | 0 on the first recorder sweep | expected: all were already GoWild at first sight |
+| Live render | version `d029541b`, section present, 44 rows, no `$NaN`/`>undefined<` | verified over HTTPS |
