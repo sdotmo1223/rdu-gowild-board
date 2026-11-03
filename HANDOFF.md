@@ -395,3 +395,34 @@ permanently on.
 
 Run 41655488371 then completed: 28/28 ok, 151 flights, 0 blocked, `KV write complete.`,
 board `ageMinutes=0`, `stale=false`.
+
+---
+
+## Correction: the payload DOES carry flight numbers
+
+Earlier the same evening I recorded that Frontier's payload has no flight number,
+having probed five candidate keys and found nothing. **That was wrong, and the
+mistake was mine:** I probed the *normalized* flights in `state.json`, which the
+old parser wrote without a flight-number field, and `.sweep/` held no raw
+captures to check against. Absence from my own output is not absence from
+Frontier's payload.
+
+The parser now probes `flightNumber`, `flightNo`, `marketingFlightNumber`,
+`carrierFlightNumber` and `flt` on both the leg and the journey. The first sweep
+to run with it (`41666674363`, `success`) produced:
+
+    140 flights, 81 carrying a flight number
+    e.g. 1669, 1039, 2072, 4797, 1111, 2060, 4937, 1233, 2225
+
+So "are particular flights given GoWild seats, or is it any under-sold flight?"
+is answerable by flight number, which is the stronger form of the question. The
+section stops calling its grouping time-based as soon as identities exist; it
+needs 3 sightings per flight before it will report a pattern, so the first
+verdicts land after roughly three sweeps.
+
+That same sweep also exercised the partial path end to end: 21 of 28 requests,
+then a refusal, `conclusion: success`, previous rows kept, 44 instances recorded,
+`generatedAt 15:44:49Z`. Nothing was overwritten by the refusal.
+
+**Lesson worth keeping:** when a field "does not exist", check the raw artefact,
+not the shape I produced from it.
