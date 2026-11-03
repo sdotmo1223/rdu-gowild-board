@@ -38,6 +38,17 @@ function check(name, fn) {
 
 const CITY = (code) => (ROUTES.find((r) => r.code === code) || {}).city || code;
 
+// The live Worker serves /s/<token> straight out of KV, and a namespace that has
+// never been written holds no state at all. That path threw a 500 in production
+// on 2026-11-03 because frequencyTable() dereferenced a null state. A missing
+// snapshot must render the explicit "no data yet" banner, never an error page.
+check('renders a never-swept board instead of throwing', () => {
+  const view = buildBoard(null, Date.now());
+  const html = renderPage(view, null, frequencyTable(null, ROUTES), Date.now(), { basePath: '/s/testtoken' });
+  assert.match(html, /No data yet/);
+  assert.doesNotMatch(html, /\$NaN|\$undefined/);
+});
+
 let seq = 0;
 function flight(over = {}) {
   seq++;

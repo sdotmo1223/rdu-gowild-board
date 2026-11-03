@@ -111,3 +111,19 @@ five reports of the same blocked page.
 2. If blocked: retry with `headless: false` under `xvfb-run` before changing anything else.
 3. `wrangler kv namespace create BOARD` → paste id; `wrangler secret put BOARD_TOKEN`; deploy.
 4. Add the three Cloudflare repo secrets; run the workflow once; open `/s/<TOKEN>`.
+
+## Live deployment (2026-11-03)
+
+| Measurement | Value |
+|---|---|
+| URL | `https://rdu-gowild-board.sdotmo1223.workers.dev/s/<TOKEN>` (token in gitignored `.board-token`) |
+| Worker version | `12c1eb7b-5c6f-4051-a537-8c333de42740` |
+| Startup time / upload | 6 ms / 36.28 KiB (11.68 KiB gzip) |
+| Route checks | 9/9 pass, including 404 on `/`, `/s/`, a wrong token, and a wrong-token `sw.js` |
+| Served page | 79,291 B, 74 rows, lowest estimated all-in $15.41 |
+| Forbidden strings | `$NaN` 0, `$undefined` 0, `$0.01` 0, `>undefined<` 0, `>-1<` 0 |
+| Empty-namespace case | renders "No data yet" banner, not a 500 (was a 500 before the fix) |
+| Cost | $0 — Workers free tier, KV free tier, no card |
+
+Reproduce with `powershell -NoProfile -ExecutionPolicy Bypass -File tools/verify-live.ps1`
+(curl and Node both fail TLS on this host; use .NET).

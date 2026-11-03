@@ -2,6 +2,10 @@ name = "rdu-gowild-board"
 main = "src/index.js"
 compatibility_date = "2026-11-01"
 
+# No preview URLs: this is a one-user tool whose only address is the token path.
+# A second, unlisted alias for the same content is surface with no benefit.
+preview_urls = false
+
 # The board state is written by the headless-browser collector (see collector/).
 # Create the namespace with:  npx wrangler kv namespace create BOARD
 # then paste the returned id here.

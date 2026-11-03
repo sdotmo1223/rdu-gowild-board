@@ -10,8 +10,11 @@ function weekdayIndex(dateISO) {
 }
 
 export function routeFrequency(state, dest) {
-  const observed = state.observed || {};
-  const days = state.days || {};
+  // A brand-new KV namespace holds no state at all, and the page must still
+  // render its "no data yet" banner instead of throwing a 500.
+  const src = state || {};
+  const observed = src.observed || {};
+  const days = src.days || {};
   const byWeekday = WEEKDAYS.map((name) => ({ name, of: 0, opened: 0 }));
 
   for (const date of Object.keys(observed)) {

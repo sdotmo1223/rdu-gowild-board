@@ -202,3 +202,43 @@ and passes on the fix.
 **Lesson that generalises:** when one file generates another language, assert the
 generated language is valid. Rendering tests that only inspect the outer document
 cannot see a dead inner script.
+
+---
+
+## Deployed, and the first request found a 500 (2026-11-03)
+
+The Worker is live at `https://rdu-gowild-board.sdotmo1223.workers.dev`, version
+`12c1eb7b`, KV namespace `fec311a9eda84b90a8490061cda5d4bf`, secret `BOARD_TOKEN`
+set. It was seeded with the last good sweep (28/28 ok, 186 flights) so the page
+has real rows before any cron runs.
+
+**Two defects only a live request could show, both invisible to the test suite:**
+
+1. **`/s/<TOKEN>` returned 500 on an empty namespace.** Every test built a board
+   from a real snapshot, so nothing had ever rendered the state a brand-new KV
+   namespace actually holds: nothing. `frequencyTable()` began
+   `const observed = state.observed || {}` — a null dereference, not a guard, so
+   the whole page threw. `/api/board` survived only because it returns before
+   that call. Fixed by defending in `routeFrequency()`, plus a stress check that
+   renders `buildBoard(null)` and asserts the "No data yet" banner appears. This
+   is invariant 1 failing in the one way the suite could not see: an empty grid
+   rendered as an error page.
+
+2. **curl and Node could not verify the deploy at all.** Both failed the TLS
+   handshake (`SEC_E_ILLEGAL_MESSAGE` / alert 40) while `example.com` failed the
+   same way through the same curl — a host-level TLS path problem, not the
+   Worker. .NET reaches it fine, so `tools/verify-live.ps1` uses
+   `Invoke-WebRequest` and checks nine routes, the forbidden strings, and that
+   the pin/ICS client code is actually in the served bytes. First run of any
+   check tool should be against a known-good URL, or you will debug the wrong
+   side of the wire.
+
+**Verified live (9/9 checks, `tools/verify-live.ps1`):** `/` 404 · wrong token 404
+· `/s/` 404 · right token 200 `text/html` · `/api/board` 200 JSON · token-scoped
+`sw.js`, `manifest.webmanifest`, `icon.svg` 200 · `sw.js` at a wrong token 404.
+Served page 79,291 B, 74 rows, lowest fare $15.41, zero occurrences of `$NaN`,
+`$undefined`, `$0.01`, `>undefined<`, `>-1<`.
+
+**Still open:** the 15-minute collector cron. `.github/workflows/board-collect`
+stays `disabled_manually` until `CF_API_TOKEN` (Workers KV Storage:Edit, Account
+Settings:Read) exists as a repo secret — the other two are already set.

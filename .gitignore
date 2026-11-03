@@ -22,3 +22,5 @@ threads/
 
 # local board token; never commit (it is the /s/<TOKEN> path)
 .board-token
+board.live.html
+.verify.log
