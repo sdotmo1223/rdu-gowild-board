@@ -2,7 +2,7 @@
 // 2026-11-03. Both failures were silent: a refused route vanished from the board,
 // and a stale row claimed to be fresh.
 import assert from 'node:assert';
-import { mergeSweeps } from '../collector/parse.mjs';
+import { mergeSweeps, extractJourneys } from '../collector/parse.mjs';
 
 let n = 0;
 const ok = (label) => {
@@ -64,5 +64,12 @@ const r3 = mergeSweeps(
 ok('a rotated half is carried as rotated and raises no partial banner');
 assert.equal(r3.partial.length, 0);
 assert.equal(r3.sweeps.filter((s) => s.dest === 'BOS')[0].carriedReason, 'rotated');
+
+// extractJourneys must not treat a non-array journeys value plus a later '[' as a
+// journeys list: that is how a refusal gets reported as an honest empty day.
+ok('a non-array journeys value is a refusal, not an empty day');
+assert.equal(extractJourneys('{"journeys":null,"other":[1,2,3]}'), null);
+ok('a journeys array with odd spacing still parses');
+assert.deepEqual(extractJourneys('{"journeys"  :  [{"a":1}]}'), [{ a: 1 }]);
 
 console.log(`\nMERGE: ${n} checks passed`);

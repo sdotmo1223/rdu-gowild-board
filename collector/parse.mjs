@@ -15,8 +15,16 @@ export const APP_SHELL_MIN_BYTES = 200000;
 export function extractJourneys(html) {
   const label = html.indexOf('"journeys"');
   if (label === -1) return null;
-  const start = html.indexOf('[', label);
-  if (start === -1) return null;
+  // The value has to be an array. A payload can carry `"journeys":null` and still
+  // contain a later '[' (any nested array); scanning forward blindly would parse
+  // that unrelated array as a journeys list and report a refusal as "no flights".
+  let cursor = label + '"journeys"'.length;
+  while (cursor < html.length && /\s/.test(html[cursor])) cursor++;
+  if (html[cursor] !== ':') return null;
+  cursor++;
+  while (cursor < html.length && /\s/.test(html[cursor])) cursor++;
+  if (html[cursor] !== '[') return null;
+  const start = cursor;
 
   let depth = 0;
   let inStr = false;

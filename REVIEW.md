@@ -173,6 +173,23 @@ P1 and P2 are why this review was worth chasing: both produce a board that looks
 correct while quietly lying about a route and about freshness. `test/merge.mjs` now
 pins both, and it runs inside `npm test`.
 
+### Second pass, through the new MCP reviewer (2026-11-03)
+
+Same persona, now dispatched by `independent_review` instead of a hand-built argv. It
+re-checked both HIGH fixes and confirmed they hold (carry from `ok` rows only;
+`Number(s.carriedAt) || carriedAt` on all three carry paths; the duplicate filter cannot
+touch a fresh `ok` row because the two dest sets are disjoint). Four new items:
+
+| # | Sev | Finding | Disposition |
+|---|---|---|---|
+| P5 | MED | `extractJourneys` scanned to the next `[` after `"journeys"`, so `"journeys":null` plus any later array parsed as a journeys list and a refusal read as "no flights" | **fixed**: the key must be followed by `:` then `[`; regression check in `test/merge.mjs` |
+| P6 | MED | `merged = fresh.slice()` drops prior rows for dates in neither `dateList` nor `skippedDates` | accepted: the collector always passes the two dates the board renders, and preserving arbitrary older dates would resurrect stale days forever |
+| P7 | LOW | the first carry stamps `carriedAt = now`, so "carried from X" can understate age by up to one tick | accepted: fixing it needs an `observedAt` on every fresh row crossing `normalizeFlight` into state; a ≤15 min label error is not worth widening the row shape |
+| P8 | LOW | `ok:false` rows with no prior row are written into state | accepted: `buildBoard` ignores rows with no flights, and keeping them is what lets the next tick tell a refusal from a route that was never asked |
+
+P5 is the one that mattered: the same failure the first review found, arriving by a
+different door — a refusal quietly presented as an honest empty day.
+
 ## Fixes, in order, each with an acceptance test
 
 1. **Set `NTFY_TOPIC`** (owner action — the topic name is the credential).
