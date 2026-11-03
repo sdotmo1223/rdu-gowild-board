@@ -155,13 +155,32 @@ async function main() {
   // give the same coverage every 30 minutes for half the burst. FULL_SWEEP=1 asks
   // all 14 for a deliberate backfill.
   const shard = process.env.FULL_SWEEP === '1' ? null : routeShard(startedAt);
-  const plannedRoutes = shardRoutes(ROUTES, shard);
+  const shardList = shardRoutes(ROUTES, shard);
+  // A per-profile request budget. Several origins in one job would otherwise add
+  // up to a burst big enough to earn a refusal, and a refusal aborts. The budget
+  // keeps each profile's burst small and simply defers the rest to the next tick,
+  // where the rotation picks it up. Budget is in requests, not routes.
+  const budget = Math.max(
+    1,
+    Number(process.env.SWEEP_MAX_REQUESTS) || shardList.length * dates.length,
+  );
+  const maxRoutes = Math.max(1, Math.floor(budget / dates.length));
+  // Slice with a clock-driven offset instead of always taking the first N. Taking
+  // the head every tick would starve the tail of each shard forever: with a budget
+  // of 8 out of 11 routes, three routes would never be asked again.
+  const offset = shardList.length ? Math.floor(startedAt / (15 * 60 * 1000)) % shardList.length : 0;
+  const plannedRoutes = Array.from(
+    { length: Math.min(maxRoutes, shardList.length) },
+    (_, i) => shardList[(offset + i) % shardList.length],
+  );
   const { chromium } = await import('playwright');
 
   console.log(
     `sweep plan: ${plannedRoutes.length}/${ROUTES.length} routes x ${dates.length} date(s) = ${
       dates.length * plannedRoutes.length
-    } requests (shard ${shard === null ? 'full' : shard}${skipToday ? '; today skipped, departures finished' : ''})`,
+    } requests (shard ${shard === null ? 'full' : shard}, budget ${budget}${
+      skipToday ? '; today skipped, departures finished' : ''
+    })`,
   );
 
   // CORRECTED 2026-11-02: headless Chromium is NOT refused. An earlier conclusion
@@ -268,7 +287,9 @@ async function main() {
       detail:
         kind === 'auth'
           ? `${sweeps.length} of ${total} requests 404'd on www — the session cookie has expired or the warm-up URL regressed`
-          : `${sweeps.length}/${total} requests attempted: ${blockedCount} hit the DataDome redirect, ` +
+          : kind === 'profile'
+            ? `all ${sweeps.length} routes answered with the no-route page; this profile's route list is probably wrong`
+            : `${sweeps.length}/${total} requests attempted: ${blockedCount} hit the DataDome redirect, ` +
             `${sweeps.length - okCount} returned no journeys array` +
             (abortedAt ? ` (stopped early at ${abortedAt.dest})` : ''),
     };

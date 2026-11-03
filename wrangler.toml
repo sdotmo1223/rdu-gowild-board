@@ -17,7 +17,7 @@ id = "fec311a9eda84b90a8490061cda5d4bf"
 # someone who does not have BOARD_TOKEN. It reads only its own KV key
 # (state:lga) and cannot see or overwrite the token-gated RDU board.
 [vars]
-PUBLIC_PROFILE = "lga"
+PUBLIC_PROFILE = "lga,phl"
 
 # BOARD_TOKEN is NOT set here. It is a secret:
 #   npx wrangler secret put BOARD_TOKEN      (production)

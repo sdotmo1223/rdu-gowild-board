@@ -161,8 +161,15 @@ export default {
 
     // The one origin that may be served without a token, so a link can be handed
     // to somebody else. Everything else stays behind BOARD_TOKEN.
-    const pub = (env.PUBLIC_PROFILE || '').toLowerCase();
-    const pubOk = pub && Object.prototype.hasOwnProperty.call(PROFILES, pub) ? pub : null;
+    // One var, several origins: PUBLIC_PROFILE="lga,phl" serves both at /lga and
+    // /phl with no token. Everything else stays behind BOARD_TOKEN.
+    const pubs = (env.PUBLIC_PROFILE || '')
+      .toLowerCase()
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s && Object.prototype.hasOwnProperty.call(PROFILES, s));
+    const wantedPub =
+      url.pathname.length > 1 && !url.pathname.slice(1).includes('/') ? url.pathname.slice(1) : null;
 
     if (url.pathname === '/api/ingest') return handleIngest(request, env, url);
 
@@ -215,7 +222,8 @@ export default {
     // Public profile page: no token in the URL, because the whole point of this
     // one is that it can be sent to someone. It reads only its own profile's key,
     // so the primary board is unaffected by it.
-    if (pubOk && url.pathname === `/${pubOk}`) {
+    if (wantedPub && pubs.includes(wantedPub)) {
+      const pubOk = wantedPub;
       let mine = null;
       try {
         mine = await env.BOARD.get(pubOk === 'rdu' ? 'state' : `state:${pubOk}`, 'json');
@@ -251,10 +259,10 @@ export default {
     if (tokAsset) {
       if (!env.BOARD_TOKEN || tokAsset[1] !== env.BOARD_TOKEN) return new Response('Not found', { status: 404 });
       asset = { base: `/s/${tokAsset[1]}`, name: tokAsset[2], origin: PROFILES[PROFILE].origin };
-    } else if (pubOk) {
+    } else {
       const pubAsset = url.pathname.match(/^\/([a-z]{3})\/(manifest\.webmanifest|sw\.js|icon\.svg)$/);
-      if (pubAsset && pubAsset[1] === pubOk) {
-        asset = { base: `/${pubOk}`, name: pubAsset[2], origin: PROFILES[pubOk].origin };
+      if (pubAsset && pubs.includes(pubAsset[1])) {
+        asset = { base: `/${pubAsset[1]}`, name: pubAsset[2], origin: PROFILES[pubAsset[1]].origin };
       }
     }
     if (asset) {

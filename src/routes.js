@@ -36,9 +36,43 @@ const LGA_ROUTES = [
   { code: 'SJU', city: 'San Juan', intl: false },
 ];
 
+// PHL. Frontier treats Philadelphia as a base and serves 23 destinations from it
+// (FlightConnections, updated 2026-11-02); the exact list is only partly
+// sourceable, so this is the 20 pairs a published table attributes to Frontier
+// plus BOS and DEN, which are widely reported as restored and appear on PHL's own
+// airline-news page. Those two are the contested ones — if the sweep reports them
+// as `route-not-served`, they come out again. That is what the classifier is for.
+// Caribbean/Mexico (CUN, PUJ, SDQ, STI) is winter-peaked and the most volatile
+// part of Frontier's network, so expect those to churn.
+const PHL_ROUTES = [
+  { code: 'ATL', city: 'Atlanta', intl: false },
+  { code: 'BOS', city: 'Boston', intl: false },
+  { code: 'CLT', city: 'Charlotte', intl: false },
+  { code: 'CUN', city: 'Cancun', intl: true },
+  { code: 'DEN', city: 'Denver', intl: false },
+  { code: 'DFW', city: 'Dallas/Fort Worth', intl: false },
+  { code: 'DTW', city: 'Detroit', intl: false },
+  { code: 'FLL', city: 'Fort Lauderdale', intl: false },
+  { code: 'JAX', city: 'Jacksonville', intl: false },
+  { code: 'LAS', city: 'Las Vegas', intl: false },
+  { code: 'MCO', city: 'Orlando', intl: false },
+  { code: 'MIA', city: 'Miami', intl: false },
+  { code: 'MSY', city: 'New Orleans', intl: false },
+  { code: 'MYR', city: 'Myrtle Beach', intl: false },
+  { code: 'ORD', city: "Chicago O'Hare", intl: false },
+  { code: 'PBI', city: 'West Palm Beach', intl: false },
+  { code: 'PUJ', city: 'Punta Cana', intl: true },
+  { code: 'RDU', city: 'Raleigh/Durham', intl: false },
+  { code: 'SDQ', city: 'Santo Domingo', intl: true },
+  { code: 'SJU', city: 'San Juan', intl: false },
+  { code: 'STI', city: 'Santiago de los Caballeros', intl: true },
+  { code: 'TPA', city: 'Tampa', intl: false },
+];
+
 export const PROFILES = {
   rdu: { origin: 'RDU', city: 'Raleigh/Durham', routes: RDU_ROUTES },
   lga: { origin: 'LGA', city: 'New York LaGuardia', routes: LGA_ROUTES },
+  phl: { origin: 'PHL', city: 'Philadelphia', routes: PHL_ROUTES },
 };
 
 // One process, one profile. The Worker cannot assign globalThis before its static

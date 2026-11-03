@@ -1,0 +1,117 @@
+name: gowild-sweep
+
+# ONE job, ONE Chromium, every origin, strictly one at a time.
+#
+# Why this replaced three near-identical workflows:
+#   - each workflow paid its own `npm ci` + Chromium install (~40-70 s) every tick;
+#   - three workflows sharing one concurrency group queue behind each other, so a
+#     delayed RDU run pushed LGA and PHL later and later (observed: a dispatched run
+#     waited ~4 minutes behind the cron);
+#   - adding an origin meant copying a file and hoping its name resolved.
+#
+# Now adding an origin is a profile in src/routes.js plus a word in PUBLIC_PROFILE.
+#
+# Request budget: each profile is capped (see SWEEP_MAX_REQUESTS below), so the
+# number of Frontier requests per tick is bounded no matter how many origins exist.
+# A refusal aborts that profile's sweep and the rotation defers the rest to the next
+# tick, which is why a smaller burst buys more data than a bigger one.
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      profiles:
+        description: 'Comma list of origins to sweep'
+        default: 'rdu,lga,phl'
+      full:
+        description: 'Ask every route in each profile (deliberate, not scheduled)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: gowild-collector
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # A sweep that spends 18 fare requests and only then discovers it cannot
+      # write is the worst case there is. This costs one cheap request and zero
+      # Frontier contact.
+      - name: Prove the write path before touching Frontier
+        env:
+          INGEST_URL: ${{ vars.BOARD_INGEST_URL }}
+          BOARD_TOKEN: ${{ secrets.BOARD_TOKEN }}
+        run: |
+          set -u
+          if [ -z "${INGEST_URL:-}" ] || [ -z "${BOARD_TOKEN:-}" ]; then
+            echo "::error::BOARD_INGEST_URL variable or BOARD_TOKEN secret is missing. Refusing to sweep Frontier for nothing."
+            exit 1
+          fi
+          code=$(curl -sS -o /tmp/preflight.json -w '%{http_code}' \
+            -X POST "${INGEST_URL}?dryRun=1" \
+            -H "Authorization: Bearer ${BOARD_TOKEN}" \
+            -H 'Content-Type: application/json' -d '{}' || echo 000)
+          if [ "$code" != "200" ]; then
+            echo "::error::Write path rejected the credentials: HTTP $code. No Frontier request has been made."
+            head -c 500 /tmp/preflight.json || true
+            exit 1
+          fi
+          echo "write path verified (HTTP 200)"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      # Sequential by construction: the loop blocks on each sweep. Secondaries run
+      # on alternating quarters of the hour so a tick carries the primary plus one
+      # secondary, which keeps the total request count at roughly what it was when
+      # there was a single origin.
+      - name: Sweep each origin in turn
+        env:
+          BOARD_INGEST_URL: ${{ vars.BOARD_INGEST_URL }}
+          BOARD_TOKEN: ${{ secrets.BOARD_TOKEN }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          FULL: ${{ inputs.full && '1' || '0' }}
+          WANT: ${{ inputs.profiles }}
+        run: |
+          set -eu
+          WANT="${WANT:-rdu,lga,phl}"
+          MIN=$(date -u +%M)
+          SLOT=$(( 10#$MIN % 30 ))
+          if [ $(( SLOT / 15 )) -eq 0 ]; then HALF=lga; else HALF=phl; fi
+          for P in rdu lga phl; do
+            case ",$WANT," in *",$P,"*) ;; *) echo "skip $P (not requested)"; continue ;; esac
+            # Schedule: primary every tick, one secondary per tick. Manual dispatch
+            # honours the list exactly, so a requested origin is never silently skipped.
+            if [ "${{ github.event_name }}" = "schedule" ] && [ "$P" != "rdu" ] && [ "$P" != "$HALF" ]; then
+              echo "skip $P (not its quarter)"
+              continue
+            fi
+            case "$P" in
+              rdu) BUDGET=14 ;;
+              lga) BUDGET=10 ;;
+              phl) BUDGET=16 ;;
+              *)   BUDGET=10 ;;
+            esac
+            echo "::group::sweep $P (budget $BUDGET requests)"
+            BOARD_PROFILE="$P" SWEEP_MAX_REQUESTS="$BUDGET" FULL_SWEEP="$FULL" node collector/collect.mjs
+            echo "::endgroup::"
+          done

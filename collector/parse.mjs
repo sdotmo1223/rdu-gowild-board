@@ -6,6 +6,12 @@ export function round2(n) {
   return Math.round(n * 100) / 100;
 }
 
+// The bot challenge is ~20 KB; a real Frontier app shell with no journeys is
+// ~596 KB. Anything in between is treated as a refusal, which is the safe default
+// because aborting only costs one tick while misclassifying a refusal costs the
+// rest of the burst.
+export const APP_SHELL_MIN_BYTES = 200000;
+
 export function extractJourneys(html) {
   const label = html.indexOf('"journeys"');
   if (label === -1) return null;
@@ -102,6 +108,10 @@ export function classifyFailure(sweeps) {
   if (ok > 0) return null;
   const blocked = sweeps.filter((s) => s.blocked).length;
   if (blocked === sweeps.length) return 'blocked';
+  // Every route answering "we do not fly that" is not a collection failure, it
+  // is a wrong route list. Saying so separately stops a bad profile from being
+  // diagnosed forever as bot protection.
+  if (sweeps.filter((s) => s.notServed).length === sweeps.length) return 'profile';
   const notFound = sweeps.filter((s) => s.reason === 'not-found').length;
   if (notFound === sweeps.length) return 'auth';
   if (notFound > sweeps.length / 2) return 'auth';
@@ -114,7 +124,13 @@ export function classifyFailure(sweeps) {
 // the remaining budget and deepens the throttle for nothing, so one refusal is
 // treated as the end of the sweep rather than as a single unlucky route.
 export function shouldAbortSweep(result) {
-  return Boolean(result) && result.ok === false;
+  // A city pair Frontier does not fly is NOT a refusal. Measured 2026-11-03: an
+  // unserved pair returns a full app shell (~596 KB) with no journeys array,
+  // while the DataDome challenge is ~20 KB. Both used to classify as
+  // no-journeys-key, so one wrong city pair in a route list would abort the whole
+  // sweep and look exactly like bot protection.
+  if (!result || result.ok !== false) return false;
+  return result.notServed !== true;
 }
 
 // Decide what gets written when only part of a sweep produced usable data.
@@ -210,6 +226,15 @@ export function parseRoute(response, dateISO, dest, city) {
   const journeys = extractJourneys(text || '');
 
   if (blocked || journeys === null) {
+    const size = (text || '').length;
+    // Size alone is not enough: a refusal page or garbage can be large as well.
+    // Only a payload that also looks like Frontier's own app shell counts as
+    // "this city pair is not sold"; anything else stays a refusal.
+    const looksLikeApp = /flyfrontier/i.test(text || '');
+    if (!blocked && journeys === null && size >= APP_SHELL_MIN_BYTES && looksLikeApp) {
+      // A real Frontier page, just not one that sells this city pair.
+      return { ok: false, blocked: false, notServed: true, flights: [], reason: 'route-not-served' };
+    }
     return { ok: false, blocked, flights: [], reason: blocked ? 'datadome-redirect' : 'no-journeys-key' };
   }
   if (journeys === undefined) {
