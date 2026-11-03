@@ -185,9 +185,14 @@ async function main() {
   let routePool = onlyCodes.length ? ROUTES.filter((r) => onlyCodes.includes(r.code)) : ROUTES.slice();
   if (quarantined.length && !forced) routePool = routePool.filter((r) => !quarantined.includes(r.code));
   if (onlyCodes.length && !routePool.length) {
-    throw new Error(
-      `SWEEP_ONLY=${onlyCodes.join(',')} matched no route in this profile (${ROUTES.map((r) => r.code).join(',')})`,
+    // A diagnostic aimed at one route list must not fail the other origins: a
+    // dispatch with only=BOS across three profiles would otherwise turn the job
+    // red for a correct question. Skip with zero Frontier requests.
+    console.warn(
+      `SWEEP_ONLY=${onlyCodes.join(',')} matches no route in ${ORIGIN} ` +
+        `(${ROUTES.map((r) => r.code).join(',')}); skipping this profile with 0 requests`,
     );
+    return;
   }
   const shard = forced ? null : routeShard(startedAt);
   const shardList = shardRoutes(routePool, shard);
@@ -434,9 +439,14 @@ async function main() {
     // A board that is healthy and empty looks exactly like one nobody is running.
     // Count consecutive empty sweeps so the page can state a verdict instead of
     // repeating "no seats" forever, and so an alert can say "still nothing".
+    // A "clean" sweep is one where every planned route on every date answered.
+    // An aborted or half-refused sweep is not evidence that Frontier released
+    // nothing, so it must not build toward a "N healthy sweeps" verdict.
+    const cleanSweep =
+      !abortedAt && sweeps.length === dates.length * plannedRoutes.length && sweeps.every((s) => s && s.ok);
     if (boardRows.length > 0) {
       state.zero = null;
-    } else {
+    } else if (cleanSweep) {
       const priorZero = state.zero && typeof state.zero === 'object' ? state.zero : null;
       state.zero = {
         count: priorZero ? Number(priorZero.count || 0) + 1 : 1,

@@ -152,6 +152,27 @@ opencode-cli.exe run --agent surgeon-reviewer --model google/gemini-3.8-flash \\
 
 ---
 
+### Independent review — first real run (2026-11-03)
+
+Dispatched through OpenCode with `--model opencode-go/claude-haiku-5-5`, which has
+working tools (it read `src/schedule.mjs` and ran the stress suite unprompted). Four
+findings, each verified against the source before acting:
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| P1 | HIGH | `mergeSweeps` counted a refused route as "asked", so its previous good row was dropped instead of carried | fixed: `asked` is built from `ok` rows and the failed row is replaced by its carried copy |
+| P2 | HIGH | `carriedAt` was re-stamped every tick, so a row blocked for hours read "carried from 3 min ago" | fixed: the original stamp survives via `Number(s.carriedAt) || carriedAt` |
+| P3 | MEDIUM | The zero streak counted aborted and partial sweeps, so "N healthy sweeps" could be a lie | fixed: only a sweep where every planned route answered can increment it |
+| P4 | LOW | `SWEEP_ONLY` aimed at one origin failed the other origins with a throw | fixed: a no-match now skips that profile with 0 requests and a warning |
+
+The reviewer's verdict was "ship with fixes", and it independently confirmed the
+slot/HALF alternation, `FAILED` accumulation under `set -u`, preflight-before-Frontier
+ordering, quarantine retry arithmetic, budget rotation, and the notServed classifier.
+
+P1 and P2 are why this review was worth chasing: both produce a board that looks
+correct while quietly lying about a route and about freshness. `test/merge.mjs` now
+pins both, and it runs inside `npm test`.
+
 ## Fixes, in order, each with an acceptance test
 
 1. **Set `NTFY_TOPIC`** (owner action — the topic name is the credential).

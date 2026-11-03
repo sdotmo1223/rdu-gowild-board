@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 const suites = [
   ['acceptance', 'test/acceptance.mjs'],
   ['profiles', 'test/profiles.mjs'],
+  ['merge', 'test/merge.mjs'],
 ];
 
 let failed = 0;

@@ -164,7 +164,9 @@ export function mergeSweeps(prevSweeps, sweeps, dates, opts = {}) {
     if (!rows.length) continue;
     merged = merged
       .filter((s) => s.date !== d)
-      .concat(rows.map((s) => ({ ...s, carried: true, carriedAt, carriedReason: 'day-over' })));
+      .concat(
+        rows.map((s) => ({ ...s, carried: true, carriedAt: Number(s.carriedAt) || carriedAt, carriedReason: 'day-over' })),
+      );
     skipped.push({ date: d, rows: rows.length });
   }
 
@@ -174,7 +176,7 @@ export function mergeSweeps(prevSweeps, sweeps, dates, opts = {}) {
     if (!rows.length) continue;
     merged = merged
       .filter((s) => s.date !== d)
-      .concat(rows.map((s) => ({ ...s, carried: true, carriedAt, carriedReason: 'dead' })));
+      .concat(rows.map((s) => ({ ...s, carried: true, carriedAt: Number(s.carriedAt) || carriedAt, carriedReason: 'dead' })));
     kept.push({ date: d, rows: rows.length });
   }
 
@@ -191,16 +193,23 @@ export function mergeSweeps(prevSweeps, sweeps, dates, opts = {}) {
     if (skippedDates.includes(d)) continue;
     const forDate = fresh.filter((s) => s && s.date === d);
     if (!forDate.length || !forDate.some((s) => s.ok)) continue;
-    const asked = new Set(forDate.map((s) => s.dest));
+    // Only a route that ANSWERED counts as asked. A refused route — or one that
+    // came back as the wrong city pair — must keep its previous good row, or a
+    // single refusal silently deletes that route from the board for the day.
+    const asked = new Set(forDate.filter((s) => s.ok).map((s) => s.dest));
     const unasked = prev.filter((s) => s && s.date === d && !asked.has(s.dest));
     if (!unasked.length) continue;
     const carried = unasked.map((s) => ({
       ...s,
       carried: true,
-      carriedAt,
+      // Keep the ORIGINAL carry time. Re-stamping every tick made a row that had
+      // been blocked for six hours read "carried from 3 min ago" forever.
+      carriedAt: Number(s.carriedAt) || carriedAt,
       carriedReason: planned && !planned.includes(s.dest) ? 'rotated' : 'aborted',
     }));
-    merged = merged.concat(carried);
+    // The failed row for a carried route must not sit beside its own carried copy.
+    const carriedDests = new Set(carried.map((s) => s.dest));
+    merged = merged.filter((s) => !(s.date === d && carriedDests.has(s.dest))).concat(carried);
     const rotated = carried.filter((s) => s.carriedReason === 'rotated').length;
     const aborted = carried.length - rotated;
     const attempted = planned
