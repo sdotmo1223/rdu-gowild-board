@@ -44,7 +44,7 @@ Anything that needs a decision from you is **not** in this phase.
 ## Phase 1 — the 5-minute unblock (you)
 
 - [ ] Create the GitHub repo and push:
-      DONE 2026-11-03: repo exists (private), origin -> https://github.com/sdotmo1223/rdu-gowild-board.git,
+      DONE 2026-11-03: repo exists and is **public** (confirmed via `gh repo view`), origin -> https://github.com/sdotmo1223/rdu-gowild-board.git,
       6 commits on main. The scheduled workflow is **disabled_manually** on purpose:
       it has no secrets yet, so enabling it would sweep Frontier every 15 minutes and
       write nothing. Enable it only after phase 2 sets the secrets.

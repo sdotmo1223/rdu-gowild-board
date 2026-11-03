@@ -556,3 +556,22 @@ So the refusal is real and intermittent (2026-11-03 gave 28/28 clean twice, then
 21/28), the stop fires on the first refused route, and the carried-row path kept
 the previous day's data instead of blanking it. That is the invariant working as
 designed: a refused sweep degrades to a stated age, never to an empty grid.
+
+### The schedule is best-effort, and it showed
+
+At 16:32Z the page was 47 minutes old and displaying `Data is stale`, which looks
+like a dead cron. It was not: `gh run list` showed a `schedule`-event run created
+at 16:32Z and still `queued`. GitHub cron for `*/15` is best-effort and can be
+tens of minutes late under load.
+
+Two consequences, both already handled by the design:
+
+- The page said **"Data is stale"** out loud instead of showing a quietly old
+  board. That is the invariant doing its job — the reader is never misled.
+- Sweeps are ~1.5-3 minutes each, so a delayed run does not overlap the next one
+  badly, but the *cadence is a target, not a promise*. Any future "every 15
+  minutes" claim should say "roughly every 15 minutes when GitHub feels like it".
+
+Also corrected here: `PLAN.md` described the repo as private. It is public, which
+is what the $0 invariant requires (2,000 free Actions minutes/month is a
+private-repo limit; public repos are not metered that way).
