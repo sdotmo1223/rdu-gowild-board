@@ -3,6 +3,7 @@ import { ROUTES, ORIGIN, easternDate, frontierDateParam } from '../src/routes.js
 import { parseRoute, classifyFailure } from './parse.mjs';
 import { appendTransitions, recordObservation, recordFirstSeen } from '../src/history.js';
 import { buildAlert, sendAlert } from '../src/alerts.mjs';
+import { recordSchedule } from '../src/schedule.mjs';
 import { readCookieString, applyCookies } from './cookies.mjs';
 
 const KV_KEY = 'state';
@@ -45,7 +46,12 @@ async function kvPut(env, state) {
 }
 
 async function main() {
-  const dates = [easternDate(0), easternDate(1)];
+  // Two dates by default. SWEEP_DAYS raises the window for a deliberate backfill
+  // (e.g. SWEEP_DAYS=4 once), but each extra day costs 14 more requests and the
+  // measured soft throttle starts around the fifteenth request in a burst, so
+  // raising it in the normal 15-minute cadence is a bad trade.
+  const dayCount = Math.max(1, Math.min(7, Number(process.env.SWEEP_DAYS) || 2));
+  const dates = Array.from({ length: dayCount }, (_, i) => easternDate(i));
   const { chromium } = await import('playwright');
 
   // Measured 2026-11-02: headless Chromium is refused by DataDome on every route
@@ -172,6 +178,11 @@ async function main() {
       : null;
     state.updatedAt = now;
     state.sweeps = merged;
+
+    // Free schedule data: record what each route did on each swept date. No extra
+    // requests, and it is what makes a week-over-week rotation verdict possible.
+    const schedDates = [...new Set(merged.map((s) => s.date))];
+    for (const d of schedDates) recordSchedule(state, d, merged, now);
     // One digest for the whole board (both dates). Calling this per-date would
     // overwrite lastRows and re-emit the other date's rows as new transitions.
     const boardRows = allFlights.filter((f) => f.goWild && f.allin !== null && f.allin <= 50);

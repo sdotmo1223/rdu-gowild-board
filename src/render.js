@@ -1,6 +1,7 @@
 import { MAX_ALL_IN, PEAK_LABEL, MAX_STOPS, MAX_DURATION_MIN } from './routes.js';
 import { bookabilityHeatmap } from './heatmap.mjs';
 import { releaseTiming, MIN_SAMPLES } from './timing.mjs';
+import { weeklyPattern } from './schedule.mjs';
 
 const esc = (s) =>
   String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -124,6 +125,35 @@ function weekdayCell(d) {
   if (!d.of) return '<td class="wk none">&middot;</td>';
   const cls = d.opened === d.of && d.opened > 0 ? 'wk on' : d.opened > 0 ? 'wk part' : 'wk off';
   return `<td class="${cls}">${d.opened}/${d.of}</td>`;
+}
+
+function scheduleHtml(state) {
+  const pat = weeklyPattern(state);
+  if (!pat.dates) return '';
+  const cell = (c) => {
+    if (!c.of) return '<td class="sc none">&middot;</td>';
+    const cls = c.operates === c.of ? 'sc on' : c.operates === 0 ? 'sc off' : 'sc part';
+    return `<td class="${cls}">${c.operates}/${c.of}</td>`;
+  };
+  const body = pat.rows
+    .map((r) => {
+      const flag =
+        r.verdict === 'rotating'
+          ? ' <span class="scflag rot">varies by week</span>'
+          : r.verdict === 'stable'
+            ? ' <span class="scflag sta">same every week</span>'
+            : '';
+      return `<tr><th scope="row">${esc(r.dest)}${flag}</th>${r.cells.map(cell).join('')}</tr>`;
+    })
+    .join('');
+  const stable = pat.rows.filter((r) => r.verdict === 'stable').length;
+  const rotating = pat.rows.filter((r) => r.verdict === 'rotating').length;
+  const thin = pat.rows.filter((r) => r.verdict === 'sampled' || r.verdict === 'unknown').length;
+  const head = ['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d) => `<th>${d}</th>`).join('');
+  return `<details><summary>Weekly schedule: ${pat.dates} date${pat.dates === 1 ? '' : 's'} across ${pat.weeks} week${pat.weeks === 1 ? '' : 's'}</summary>
+    <div class="heat"><table><thead><tr><th></th>${head}</tr></thead><tbody>${body}</tbody></table></div>
+    <p class="note">Cells read <strong>days operating / days swept</strong> for that weekday. ${stable} route${stable === 1 ? '' : 's'} look the same every week, ${rotating} vary week to week, ${thin} need another week before they can be judged. A failed or throttled request is never recorded as "does not fly".</p>
+  </details>`;
 }
 
 function heatmapHtml(state) {
@@ -265,6 +295,13 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
   .wk.on { color:#5fd67a; font-weight:700; }
   .wk.part { color:#f0d48a; font-weight:600; }
   .wk.off, .wk.none { color:#4a5260; }
+  .sc { font-size:10px; padding:2px 3px; text-align:center; color:#5f6875; }
+  .sc.on { color:#5fd67a; font-weight:700; }
+  .sc.part { color:#f0d48a; font-weight:600; }
+  .sc.off, .sc.none { color:#4a5260; }
+  .scflag { font-size:9px; font-weight:600; letter-spacing:0; margin-left:4px; }
+  .scflag.rot { color:#f0d48a; }
+  .scflag.sta { color:#5fd67a; }
   details { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; }
   summary { cursor:pointer; font-size:13px; color:#c4ccd8; }
   table { width:100%; border-collapse:collapse; margin-top:10px; font-size:12px; }
@@ -279,6 +316,7 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
 </header>
 ${banner}
 ${view.dates.map(dateSection).join('')}
+${scheduleHtml(state)}
 ${heatmapHtml(state)}
 ${timingHtml(state)}
 <details>

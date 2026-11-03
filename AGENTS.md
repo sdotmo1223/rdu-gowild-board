@@ -69,6 +69,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `src/frequency.js` | weekday open-frequency with honest denominators |
 | `src/heatmap.mjs` | bookability by weekday (primary) and by date (secondary) |
 | `src/timing.mjs` | release-timing model: median local hour + median lead hours, `MIN_SAMPLES = 3` |
+| `src/schedule.mjs` | per-date operating matrix + week-over-week stable-vs-rotating verdict |
 | `src/alerts.mjs` | ntfy.sh push, deduped per error state to once / 6 h |
 | `src/index.js` | Worker router: `/s/<TOKEN>`, `/api/board`, token-scoped PWA assets |
 | `collector/collect.mjs` | Playwright sweep → KV (or `state.json` with no credentials) |
@@ -76,6 +77,8 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `collector/cookies.mjs` | optional cookie loading, never logs the value |
 | `tools/headless-probe.mjs` | one-request diagnostic; `HEADLESS=0` / `IGNORE_COOKIE=1` |
 | `tools/render-state.mjs` | render `board.html` from a real collector snapshot |
+| `tools/seed-schedule.mjs` | rebuild `state.json` (incl. schedule) from `.sweep/` captures |
+| `PLAN.md` | the current ordered plan and its acceptance criteria |
 | `tools/render-local.mjs` | render from interactive `.sweep/` captures |
 | `test/acceptance.mjs` | 17 spec-level checks |
 | `test/stress.mjs` | 28 adversarial checks (hostile input, malformed state, volume, budget) |
@@ -117,6 +120,13 @@ npx wrangler deploy
 | `NTFY_TOPIC` | optional phone push, no account needed |
 | `WARMUP_URL` | defaults to `https://booking.flyfrontier.com/` — do not change blindly |
 | `STATE_OUT`, `STATE_IN` | snapshot paths |
+| `SWEEP_DAYS` | dates per sweep, default 2. Do not raise it in the normal cadence: 14 routes × N dates is a burst, and the measured soft throttle starts around the 15th request. |
+
+## The throttle (measured 2026-11-02)
+
+A single fare request succeeds; a 28-request burst stops being served around
+request 15 (14 × `no-flights`, then 14 × `no-journeys-key`). Never add retries — a
+retry is a second request. Prefer fewer requests over faster sweeps.
 
 ---
 

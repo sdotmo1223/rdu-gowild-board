@@ -8,6 +8,7 @@ import { appendTransitions, recordObservation, recordFirstSeen, digestRows } fro
 import { frequencyTable } from '../src/frequency.js';
 import { bookabilityHeatmap } from '../src/heatmap.mjs';
 import { releaseTiming, departureUtcMs, etOffsetHours } from '../src/timing.mjs';
+import { recordSchedule, weeklyPattern, weekKey } from '../src/schedule.mjs';
 import { buildAlert } from '../src/alerts.mjs';
 import { normalizeSeats, parseRoute, extractJourneys, classifyFailure } from '../collector/parse.mjs';
 import {
@@ -439,6 +440,48 @@ check('extractJourneys survives a truncated payload', () => {
   assert.equal(extractJourneys('"journeys":[{"flights":[]'), undefined);
   assert.equal(extractJourneys('nothing here'), null);
   assert.deepEqual(extractJourneys('"journeys":[]'), []);
+});
+
+check('the schedule never records a failed request as "does not fly"', () => {
+  const state = {};
+  const ok = (dest, n) => ({
+    date: '2026-11-02',
+    dest,
+    ok: true,
+    blocked: false,
+    flights: Array.from({ length: n }, () => ({ goWild: true, allin: 15 })),
+  });
+  const bad = (dest) => ({ date: '2026-11-02', dest, ok: false, blocked: false, flights: [] });
+  recordSchedule(state, '2026-11-02', [ok('MCO', 2), ok('CUN', 0), bad('ATL')], 1000);
+  const day = state.schedule['2026-11-02'];
+  assert.equal(day.MCO.operates, true);
+  assert.equal(day.CUN.operates, false, 'a successful empty response is a real absence');
+  assert.equal(day.ATL.ok, undefined, 'a failed request teaches nothing about the schedule');
+});
+
+check('week over week decides stable vs rotating', () => {
+  const mk = (date, dest, operates) => ({
+    date,
+    dest,
+    ok: true,
+    blocked: false,
+    flights: operates ? [{ goWild: true, allin: 15 }] : [],
+  });
+  const state = {};
+  recordSchedule(state, '2026-11-02', [mk('2026-11-02', 'MCO', true), mk('2026-11-02', 'CUN', true)], 1000);
+  recordSchedule(state, '2026-11-09', [mk('2026-11-09', 'MCO', true), mk('2026-11-09', 'CUN', false)], 2000);
+  const pat = weeklyPattern(state);
+  const mco = pat.rows.find((r) => r.dest === 'MCO');
+  const cun = pat.rows.find((r) => r.dest === 'CUN');
+  assert.equal(pat.dates, 2);
+  assert.equal(pat.weeks, 2, 'two Mondays a week apart');
+  assert.equal(mco.cells[1].of, 2);
+  assert.equal(mco.cells[1].operates, 2);
+  assert.equal(mco.verdict, 'stable');
+  assert.equal(cun.verdict, 'rotating', 'CUN differed between the two Mondays');
+  assert.equal(mco.cells[2].of, 0, 'an unswept Tuesday has no denominator');
+  assert.equal(weekKey('2026-11-02'), '2026-11-02', 'a Monday starts its own week');
+  assert.equal(weekKey('2026-11-08'), '2026-11-02', 'Sunday belongs to the preceding Monday');
 });
 
 console.log(`\nSTRESS: ${passed} passed, ${failed} failed`);

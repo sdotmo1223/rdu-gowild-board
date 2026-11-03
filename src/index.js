@@ -3,6 +3,7 @@ import { renderPage } from './render.js';
 import { frequencyTable } from './frequency.js';
 import { bookabilityHeatmap } from './heatmap.mjs';
 import { releaseTiming } from './timing.mjs';
+import { weeklyPattern } from './schedule.mjs';
 import { ROUTES } from './routes.js';
 
 // Minimal offline shell. Cached per token path so the secret link is never
@@ -72,6 +73,7 @@ export default {
           rows: d.rows,
         })),
         frequency: frequencyTable(state, ROUTES),
+        schedule: weeklyPattern(state),
         heatmap: bookabilityHeatmap(state),
         timing: releaseTiming(state),
       });
