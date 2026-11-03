@@ -25,6 +25,26 @@ jobs:
         with:
           node-version: '20'
 
+      # Without these the collector still sweeps Frontier, then discovers it has
+      # nowhere to write and exits 0 — a green run that did nothing, every 15
+      # minutes, forever. Fail in five seconds instead of two minutes.
+      - name: Refuse to sweep without somewhere to write
+        env:
+          KV_ID: ${{ secrets.CF_KV_NAMESPACE_ID }}
+          API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          missing=""
+          if [ -z "$KV_ID" ]; then missing="$missing CF_KV_NAMESPACE_ID"; fi
+          if [ -z "$API_TOKEN" ]; then missing="$missing CF_API_TOKEN"; fi
+          if [ -z "$ACCOUNT_ID" ]; then missing="$missing CF_ACCOUNT_ID"; fi
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secrets:$missing — refusing to sweep Frontier for nothing."
+            echo "Set them in Settings > Secrets and variables > Actions, then re-enable this workflow."
+            exit 1
+          fi
+          echo "credentials present: sweeping"
+
       - name: Install dependencies
         run: npm ci
 
