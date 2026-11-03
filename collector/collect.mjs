@@ -16,8 +16,14 @@ import { recordSchedule } from '../src/schedule.mjs';
 import { readCookieString, applyCookies } from './cookies.mjs';
 
 const KV_KEY = 'state';
-// A city pair retired after this many "not sold" answers.
+// A city pair retired after this many "not sold" answers...
 const QUARANTINE_AFTER = 3;
+// ...but not forever: a route Frontier restarts must come back by itself.
+const QUARANTINE_RETRY_MS = 7 * 24 * 3600 * 1000;
+// The largest burst this project has evidence for is 28 requests (28/28 clean on
+// 2026-11-03). "Ask everything" on a 22-route profile would be 44, so forced
+// sweeps are capped and the remainder is deferred to the rotation.
+const FORCED_BUDGET_CEILING = 30;
 const API_BASE = 'https://api.cloudflare.com/client/v4';
 const BASE_URL = 'https://booking.flyfrontier.com/Flight/Select';
 // The booking root keeps the fetches same-origin; /Flight/Select redirects to
@@ -168,7 +174,13 @@ async function main() {
   // must not be paid for forever. Three sightings retire it; FULL_SWEEP=1 or
   // SWEEP_ONLY=CODE puts it back deliberately.
   const watch = previous && previous.routeWatch && typeof previous.routeWatch === 'object' ? previous.routeWatch : {};
-  const quarantined = Object.keys(watch).filter((c) => Number(watch[c] && watch[c].notServed) >= QUARANTINE_AFTER);
+  const quarantined = Object.keys(watch).filter((c) => {
+    const w = watch[c] && typeof watch[c] === 'object' ? watch[c] : null;
+    if (!w || Number(w.notServed) < QUARANTINE_AFTER) return false;
+    // Retired, but re-checkable: after a week the pair is asked again in case
+    // Frontier restarted it. Permanent removal would hide a real route forever.
+    return !(w.lastAt && startedAt - Number(w.lastAt) >= QUARANTINE_RETRY_MS);
+  });
   const forced = onlyCodes.length > 0 || process.env.FULL_SWEEP === '1';
   let routePool = onlyCodes.length ? ROUTES.filter((r) => onlyCodes.includes(r.code)) : ROUTES.slice();
   if (quarantined.length && !forced) routePool = routePool.filter((r) => !quarantined.includes(r.code));
@@ -185,13 +197,12 @@ async function main() {
   // where the rotation picks it up. Budget is in requests, not routes.
   // FULL_SWEEP/SWEEP_ONLY mean "ask everything named", so the per-profile budget
   // must not silently halve a deliberate backfill (it did: FULL_SWEEP asked 7 of
-  // 14 routes). The normal rotating tick is unaffected.
-  const budget = Math.max(
-    1,
-    forced
-      ? routePool.length * dates.length
-      : Number(process.env.SWEEP_MAX_REQUESTS) || shardList.length * dates.length,
-  );
+  // 14 routes). The normal rotating tick is unaffected. A forced sweep is still
+  // capped by FORCED_BUDGET_CEILING, because "ask everything" on PHL would be 44.
+  const wantedBudget = forced
+    ? routePool.length * dates.length
+    : Number(process.env.SWEEP_MAX_REQUESTS) || shardList.length * dates.length;
+  const budget = Math.max(1, forced ? Math.min(wantedBudget, FORCED_BUDGET_CEILING) : wantedBudget);
   const maxRoutes = Math.max(1, Math.floor(budget / dates.length));
   // Slice with a clock-driven offset instead of always taking the first N. Taking
   // the head every tick would starve the tail of each shard forever: with a budget
@@ -210,7 +221,7 @@ async function main() {
       skipToday ? '; today skipped, departures finished' : ''
     }${onlyCodes.length ? `; SWEEP_ONLY=${onlyCodes.join(',')}` : ''}${
       quarantined.length && !forced ? `; ${quarantined.length} retired as not-sold` : ''
-    })`,
+    }${wantedBudget > budget ? `; capped from ${wantedBudget} to ${budget}` : ''})`,
   );
 
   // CORRECTED 2026-11-02: headless Chromium is NOT refused. An earlier conclusion

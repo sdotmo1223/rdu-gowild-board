@@ -92,7 +92,11 @@ jobs:
           FULL: ${{ inputs.full && '1' || '0' }}
           WANT: ${{ inputs.profiles }}
         run: |
-          set -eu
+          # set -u only: with -e, the first origin to fail would silently skip the
+          # others, so one broken profile could starve three boards. Failures are
+          # collected and reported at the end instead.
+          set -u
+          FAILED=""
           WANT="${WANT:-rdu,lga,phl}"
           MIN=$(date -u +%M)
           SLOT=$(( 10#$MIN % 30 ))
@@ -112,6 +116,15 @@ jobs:
               *)   BUDGET=10 ;;
             esac
             echo "::group::sweep $P (budget $BUDGET requests)"
-            BOARD_PROFILE="$P" SWEEP_MAX_REQUESTS="$BUDGET" FULL_SWEEP="$FULL" node collector/collect.mjs
+            if BOARD_PROFILE="$P" SWEEP_MAX_REQUESTS="$BUDGET" FULL_SWEEP="$FULL" node collector/collect.mjs; then
+              echo "sweep $P: ok"
+            else
+              echo "::error::sweep $P failed; continuing so one origin cannot starve the others"
+              FAILED="$FAILED $P"
+            fi
             echo "::endgroup::"
           done
+          if [ -n "$FAILED" ]; then
+            echo "::error::origins that failed this tick:$FAILED"
+            exit 1
+          fi
