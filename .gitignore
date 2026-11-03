@@ -19,3 +19,6 @@ collector/last-state.json
 # App-managed directories and local thread data
 .freebuff/
 threads/
+
+# local board token; never commit (it is the /s/<TOKEN> path)
+.board-token
