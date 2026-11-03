@@ -27,6 +27,9 @@ on:
         description: 'Ask every route in each profile (deliberate, not scheduled)'
         type: boolean
         default: false
+      only:
+        description: 'Comma list of route codes to ask (diagnostic; ignores shard and budget). Costs 2 requests per code per date.'
+        default: ''
 
 concurrency:
   group: gowild-collector
@@ -91,6 +94,7 @@ jobs:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           FULL: ${{ inputs.full && '1' || '0' }}
           WANT: ${{ inputs.profiles }}
+          ONLY: ${{ inputs.only }}
         run: |
           # set -u only: with -e, the first origin to fail would silently skip the
           # others, so one broken profile could starve three boards. Failures are
@@ -116,7 +120,7 @@ jobs:
               *)   BUDGET=10 ;;
             esac
             echo "::group::sweep $P (budget $BUDGET requests)"
-            if BOARD_PROFILE="$P" SWEEP_MAX_REQUESTS="$BUDGET" FULL_SWEEP="$FULL" node collector/collect.mjs; then
+            if BOARD_PROFILE="$P" SWEEP_ONLY="${ONLY:-}" SWEEP_MAX_REQUESTS="$BUDGET" FULL_SWEEP="$FULL" node collector/collect.mjs; then
               echo "sweep $P: ok"
             else
               echo "::error::sweep $P failed; continuing so one origin cannot starve the others"
