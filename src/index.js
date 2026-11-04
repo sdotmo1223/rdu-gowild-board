@@ -14,6 +14,11 @@ self.addEventListener('activate', (e) => { e.waitUntil(self.clients.claim()); })
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
+  // A cached page is a board frozen at render time: its "updated N min ago", its
+  // banners and its row times would all read as current. Navigation must always
+  // hit the network, so an offline phone sees a plain failure instead of
+  // yesterday's board presented as today's.
+  if (req.mode === 'navigate') return;
   event.respondWith((async () => {
     try {
       const res = await fetch(req);
@@ -266,6 +271,7 @@ export default {
       return html(
         renderPage(view, state, frequencyTable(state, ROUTES), now, {
           basePath: `/s/${match[1]}`,
+          origin: PROFILES[PROFILE].origin,
         }),
       );
     }

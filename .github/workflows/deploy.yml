@@ -26,11 +26,6 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 12
-    # Secrets cannot be referenced in an `if:`, env can. CF_API_TOKEN is scoped to
-    # KV and Cloudflare refuses it for a Worker upload ("No access to the specified
-    # service"), so deploying needs its own token with Workers Scripts:Edit.
-    env:
-      DEPLOY_TOKEN: ${{ secrets.CF_DEPLOY_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -50,13 +45,21 @@ jobs:
           npm test
           npm run stress
 
+      # The token is read here and nowhere else. Putting it at job level exposed it
+      # to the checkout and to the test suites, which have no business seeing it.
+      # CF_API_TOKEN is KV-scoped and Cloudflare refuses it for a Worker upload
+      # ("No access to the specified service"), so deploying needs its own token.
+      - name: Is a deploy token available?
+        id: token
+        run: echo "have=${{ secrets.CF_DEPLOY_TOKEN != '' }}" >> $GITHUB_OUTPUT
+
       - name: Deploy to Cloudflare
         # main only: a manual dispatch from a feature branch must not push
         # unreviewed code to production.
-        if: env.DEPLOY_TOKEN != '' && github.ref == 'refs/heads/main'
+        if: steps.token.outputs.have == 'true' && github.ref == 'refs/heads/main'
         uses: cloudflare/wrangler-action@v3
         with:
-          apiToken: ${{ env.DEPLOY_TOKEN }}
+          apiToken: ${{ secrets.CF_DEPLOY_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
           command: deploy
 
@@ -64,7 +67,7 @@ jobs:
       # for a credential the repo does not hold, and a red badge stops meaning
       # "broken". This says exactly what is missing instead.
       - name: Say why nothing was deployed
-        if: env.DEPLOY_TOKEN == '' || github.ref != 'refs/heads/main'
+        if: steps.token.outputs.have != 'true' || github.ref != 'refs/heads/main'
         run: |
           echo "::notice::Gates passed; no CF_DEPLOY_TOKEN secret, so this run did not deploy."
           echo "CF_API_TOKEN is KV-scoped and cannot upload a Worker. Add a token with Workers Scripts:Edit as CF_DEPLOY_TOKEN to make pushes deploy themselves."

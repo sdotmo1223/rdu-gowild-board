@@ -1,4 +1,4 @@
-import { MAX_ALL_IN, PEAK_LABEL, MAX_STOPS, MAX_DURATION_MIN } from './routes.js';
+import { MAX_ALL_IN, PEAK_LABEL, MAX_STOPS, MAX_DURATION_MIN, ORIGIN } from './routes.js';
 import { bookabilityHeatmap } from './heatmap.mjs';
 import { releaseTiming, MIN_SAMPLES } from './timing.mjs';
 import { weeklyPattern } from './schedule.mjs';
@@ -100,7 +100,6 @@ const STATE_COPY = {
   noflights: 'No Frontier departures from {ORIGIN} on this date.',
   above: (d) => `${d.goWild} GoWild departure${d.goWild === 1 ? '' : 's'}, all above $${MAX_ALL_IN.toFixed(2)}.`,
   nogowild: (d) => `${d.total} departure${d.total === 1 ? '' : 's'}, but Frontier released no GoWild seats.`,
-  departed: 'Every bookable departure on this date has already left.',
 };
 
 function dateSection(d, view, now) {
@@ -139,9 +138,6 @@ function dateSection(d, view, now) {
     body = `<div class="state bad">${esc(STATE_COPY.blocked)}</div>`;
   } else if (d.status === 'error') {
     body = `<div class="state bad">${esc(STATE_COPY.error)}</div>`;
-  } else if (d.status === 'departed') {
-    const gone = Number(d.departedCount ?? d.pastCount) || 0;
-    body = `<div class="state warn">All ${gone} departure${gone === 1 ? '' : 's'} on this date already left. Check the next date for what is still ahead.</div>`;
   } else if (d.status === 'folded') {
     const cap = `${MAX_STOPS} stop${MAX_STOPS === 1 ? '' : 's'} / ${Math.round(MAX_DURATION_MIN / 60)}h`;
     body = `<div class="state warn">${d.folded.length} GoWild option${d.folded.length === 1 ? '' : 's'} under $${MAX_ALL_IN.toFixed(2)}, all beyond ${cap}.</div><details class="folded" open><summary>Show them anyway</summary><ul class="rows">${d.folded.map(rowHtml).join('')}</ul></details>`;
@@ -334,7 +330,10 @@ function pricingHtml(state) {
 
 export function renderPage(view, state, freq, now = Date.now(), opts = {}) {
   const basePath = opts.basePath || '';
-  PAGE_ORIGIN = opts.origin || PAGE_ORIGIN;
+  // Reset to this Worker's own origin when the caller does not name one. Carrying
+  // the previous value forward meant a single /lga render inside the same isolate
+  // relabelled the RDU page, its title and its calendar events as LGA.
+  PAGE_ORIGIN = opts.origin || ORIGIN;
   const err = view.error;
   let banner = '';
 

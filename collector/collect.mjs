@@ -525,6 +525,9 @@ async function main() {
     // The watchlist is answered first because it is the more specific question, and
     // one event must not buzz the phone twice.
     const watchAlert = buildWatchAlert(state, fresh, process.env.WATCH, now);
+    // Only a delivered watch alert may suppress the digest. Recording the intent
+    // instead meant one ntfy outage dropped both pushes for the same fare.
+    let watchSent = false;
     if (watchAlert) {
       try {
         await sendAlert(topic, watchAlert);
@@ -534,6 +537,7 @@ async function main() {
         const keys = Object.keys(fired).sort((a, b) => Number(fired[b]) - Number(fired[a]));
         for (const k of keys.slice(200)) delete fired[k];
         state.watchFired = fired;
+        watchSent = true;
         console.log(`watch alert sent: ${watchAlert.title}`);
       } catch (err) {
         console.error(`watch alert failed: ${err.message}`);
@@ -542,7 +546,7 @@ async function main() {
     const alert = buildAlert(state, fresh, now) || buildZeroAlert(state, now);
     // A watched fare already got its own push; the generic "N new under $50" would
     // be the same news twice.
-    const duplicateOfWatch = Boolean(watchAlert) && alert && alert.kind === 'fares';
+    const duplicateOfWatch = watchSent && alert && alert.kind === 'fares';
     if (alert && !duplicateOfWatch) {
       try {
         await sendAlert(topic, alert);
