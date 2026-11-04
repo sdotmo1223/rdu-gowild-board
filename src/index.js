@@ -230,6 +230,14 @@ export default {
         ageMinutes: view.ageMin,
         stale: view.stale,
         error: view.error,
+        // Sweep health, not only board health. A partial sweep (a refused route,
+        // rows carried from a previous tick) was visible on the page but invisible
+        // to every API caller, which is how a collector that crashed on every tick
+        // could still look like a healthy board.
+        requests: state.requests ?? null,
+        lastSweep: state.lastSweep || null,
+        aborted: state.aborted || null,
+        sweepError: view.error || null,
         routeCount: view.routeCount,
         dates: view.dates.map((d) => ({
           date: d.date,

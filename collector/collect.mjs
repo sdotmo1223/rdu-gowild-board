@@ -1,4 +1,5 @@
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import {
   ROUTES,
   ORIGIN,
@@ -115,6 +116,83 @@ async function ingestFetch(env, url, { method = 'GET', body } = {}) {
   return { status: res.status, ok: res.ok, parsed, text };
 }
 
+// Real acquisition: a warmed-up Chromium page. CORRECTED 2026-11-02: headless
+// Chromium is NOT refused. An earlier conclusion blamed headless when the real
+// cause was the warm-up URL — /Flight/Select redirects to /Flight/Redirect, after
+// which fare calls bounce to www and 404. Headless and headed return identical
+// payloads; HEADLESS=0 exists for a scheduler that prefers an offscreen window.
+async function openFaresPage() {
+  const { chromium } = await import('playwright');
+  const headless = process.env.HEADLESS !== '0';
+  const browser = await chromium.launch({
+    headless,
+    args: [
+      '--no-sandbox',
+      '--disable-blink-features=AutomationControlled',
+      ...(headless ? [] : ['--window-position=-32000,-32000', '--window-size=1280,800']),
+    ],
+  });
+  const context = await browser.newContext({
+    userAgent: UA,
+    locale: 'en-US',
+    timezoneId: 'America/New_York',
+    viewport: { width: 1366, height: 768 },
+  });
+  // Measured 2026-11-02: the session cookie is NOT required. Warming up on the
+  // booking root gives a cookie-less headless browser the full fare payload
+  // (200 / 1,090,472 B / journeys present). The cookie is still applied when one
+  // exists, purely for resilience, and 0 is a fully supported mode.
+  const cookieCount = await applyCookies(context, readCookieString());
+  console.log(`cookies loaded: ${cookieCount} (optional; 0 is supported)`);
+
+  const page = await context.newPage();
+  // Warm up on the booking origin so the in-page fetches stay same-origin and any
+  // DataDome JS challenge runs before we ask for fares.
+  await page.goto(WARMUP_URL, { waitUntil: 'domcontentloaded', timeout: 90000 });
+  await sleep(3000);
+  return { page, close: () => browser.close() };
+}
+
+// Fixture acquisition: the same page interface with no network at all. Used by
+// `npm run dry` (test/dry.mjs) so the collector's own wiring — plan, parse, merge,
+// alerts, write — is executed by a gate. On 2026-11-04 a branch-scoped binding
+// threw here after 42 paid requests and no gate could see it, because nothing ran
+// this function outside the cron.
+function openFixturePage() {
+  const file = process.env.COLLECTOR_FIXTURE || 'test/fixtures/route.json';
+  const raw = JSON.parse(readFileSync(file, 'utf8')); // corrupt fixture = loud failure
+  // A committed fixture would fall out of the 48-hour window by tomorrow, and an
+  // all-past fixture would skip every interesting path (transitions, fares,
+  // watchlist). Re-base the departure dates onto this sweep's today, keeping the
+  // real captured clock times and fares.
+  const today = easternDate(0);
+  const rebase = (s) => (typeof s === 'string' && /^\d{4}-\d{2}-\d{2}/.test(s) ? `${today}${s.slice(10)}` : s);
+  let payload = null;
+  try {
+    payload = JSON.parse(raw.text);
+  } catch {
+    payload = null;
+  }
+  if (payload && Array.isArray(payload.journeys)) {
+    for (const j of payload.journeys) {
+      for (const f of j.flights || []) {
+        for (const leg of f.legs || []) {
+          leg.departureDate = rebase(leg.departureDate);
+          leg.arrivalDate = rebase(leg.arrivalDate);
+        }
+      }
+    }
+  }
+  const text = payload ? JSON.stringify(payload) : raw.text;
+  const page = {
+    async goto() {},
+    async evaluate() {
+      return { status: 200, url: WARMUP_URL, text };
+    },
+  };
+  return Promise.resolve({ page, close: async () => {} });
+}
+
 async function main() {
   // Two dates by default. SWEEP_DAYS raises the window for a deliberate backfill
   // (e.g. SWEEP_DAYS=4 once), but each extra day costs 7 more requests and the
@@ -123,8 +201,11 @@ async function main() {
   // Resolve and PROVE the write path before Frontier is touched. On 2026-11-03 a
   // rejected token was only discovered after 19 fare requests had been spent,
   // which is exactly the waste invariant 4 forbids.
-  const ingest = ingestEnv();
-  const kv = ingest ? null : kvEnv();
+  // A dry run must never touch production: no Worker ingest, no KV, no cookie, no
+  // Frontier. It exists so a gate executes this function instead of the cron.
+  const dry = process.env.COLLECTOR_DRY_RUN === '1';
+  const ingest = dry ? null : ingestEnv();
+  const kv = dry || ingest ? null : kvEnv();
   let previous = null;
   if (ingest) {
     const probe = await ingestFetch(ingest, addParam(ingest.url, 'dryRun=1'), { method: 'POST', body: '{}' });
@@ -233,8 +314,6 @@ async function main() {
     { length: Math.min(maxRoutes, shardList.length) },
     (_, i) => shardList[(offset + i) % shardList.length],
   );
-  const { chromium } = await import('playwright');
-
   console.log(
     `sweep plan: ${plannedRoutes.length}/${routePool.length} routes x ${dates.length} date(s) = ${
       dates.length * plannedRoutes.length
@@ -245,39 +324,7 @@ async function main() {
     }${wantedBudget > budget ? `; capped from ${wantedBudget} to ${budget}` : ''})`,
   );
 
-  // CORRECTED 2026-11-02: headless Chromium is NOT refused. An earlier conclusion
-  // blamed headless when the real cause was the warm-up URL — /Flight/Select
-  // redirects to /Flight/Redirect, after which fare calls bounce to www and 404.
-  // Headless and headed return identical payloads. HEADLESS=0 still exists for a
-  // scheduler that prefers an offscreen window, not because it is required.
-  const headless = process.env.HEADLESS !== '0';
-  const browser = await chromium.launch({
-    headless,
-    args: [
-      '--no-sandbox',
-      '--disable-blink-features=AutomationControlled',
-      ...(headless ? [] : ['--window-position=-32000,-32000', '--window-size=1280,800']),
-    ],
-  });
-  const context = await browser.newContext({
-    userAgent: UA,
-    locale: 'en-US',
-    timezoneId: 'America/New_York',
-    viewport: { width: 1366, height: 768 },
-  });
-  // Measured 2026-11-02: the session cookie is NOT required. Warming up on the
-  // booking root gives a cookie-less headless browser the full fare payload
-  // (200 / 1,090,472 B / journeys present). The cookie is still applied when one
-  // exists, purely for resilience, and 0 is a fully supported mode.
-  const cookieCount = await applyCookies(context, readCookieString());
-  console.log(`cookies loaded: ${cookieCount} (optional; 0 is supported)`);
-
-  const page = await context.newPage();
-
-  // Warm up on the booking origin so the in-page fetches stay same-origin and
-  // any DataDome JS challenge runs before we ask for fares.
-  await page.goto(WARMUP_URL, { waitUntil: 'domcontentloaded', timeout: 90000 });
-  await sleep(3000);
+  const { page, close } = await (dry ? openFixturePage() : openFaresPage());
 
   const sweeps = [];
   const notServedHits = [];
@@ -322,7 +369,7 @@ async function main() {
     }
   }
 
-  await browser.close();
+  await close();
 
   const now = Date.now();
 
@@ -599,6 +646,7 @@ async function main() {
     // No write path at all: emit the snapshot locally so the real renderer can
     // be exercised against the collector's own output instead of a fixture.
     const out = process.env.STATE_OUT || 'state.json';
+    mkdirSync(dirname(out), { recursive: true });
     const blob = JSON.stringify(state);
     writeFileSync(out, blob);
     console.error(`No write credentials; wrote ${out} instead of uploading.`);

@@ -15,6 +15,7 @@ dist/
 board.html
 state.json
 collector/last-state.json
+.dry/
 
 # App-managed directories and local thread data
 .freebuff/

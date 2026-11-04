@@ -171,6 +171,12 @@ export function buildWatchAlert(state, fresh, spec, now) {
 
 export async function sendAlert(topic, alert) {
   if (!topic || !alert) return { sent: false, reason: 'no-topic-or-alert' };
+  // The dry-run harness must execute this branch (it is where the 2026-11-04
+  // ReferenceError lived) without pushing anything to a real phone.
+  if (process.env.NTFY_DRY === '1') {
+    console.log(`[dry] alert would be sent: ${alert.title}`);
+    return { sent: true, dry: true };
+  }
   const res = await fetch(`https://ntfy.sh/${encodeURIComponent(topic)}`, {
     method: 'POST',
     headers: {

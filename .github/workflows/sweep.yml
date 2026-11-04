@@ -81,6 +81,12 @@ jobs:
       - name: Lint before spending requests
         run: npm run lint
 
+      # Executes the collector's main() against a fixture: same plan, parse, merge,
+      # alerts and write path, zero Frontier contact. A ReferenceError in there used
+      # to be discovered by the cron, after the requests had been paid for.
+      - name: Dry-run the collector before spending requests
+        run: npm run dry
+
       - name: Cache Chromium
         uses: actions/cache@v4
         with:

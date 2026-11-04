@@ -43,6 +43,7 @@ jobs:
         run: |
           set -e
           npm run lint
+          npm run dry
           npm test
           npm run stress
 
