@@ -32,7 +32,7 @@ In `sweep.yml`, in this order, each cheaper than the next:
 - **Dry run: 9500 ms**, no network, no write.
 - **Board now: 11/4/2026, 6:30:36 AM ET, 22 bookable rows, age 2 min, requests 14, shard 1, sweepError null**
 - Gates: lint, dry, acceptance 25, multi-origin 9, merge 6, stress 62 — all green
-  on commit `4638da8`.
+  on commit `7054364`.
 
 Every failure in the table above is now impossible to reach with a green gate chain:
 the collector's own wiring is executed by a gate, and the harness is proven to fail
