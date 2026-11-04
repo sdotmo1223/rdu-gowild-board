@@ -74,6 +74,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Cheap and before Chromium on purpose. A collector that cannot resolve its
+      # own identifiers would otherwise spend a full budget of Frontier requests
+      # and then throw before writing the snapshot -- which is what happened on
+      # 2026-11-04 10:18 ("boardRows is not defined", 42 requests discarded).
+      - name: Lint before spending requests
+        run: npm run lint
+
       - name: Cache Chromium
         uses: actions/cache@v4
         with:

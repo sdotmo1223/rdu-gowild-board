@@ -100,8 +100,9 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 ## Commands
 
 ```bash
+npm run lint                 # no-undef: the defect class `node --check` cannot see
 npm test                     # acceptance 25 + multi-origin 9; both must pass
-npm run stress               # adversarial: 48 checks
+npm run stress               # adversarial: 62 checks
 node test/profiles.mjs       # multi-origin: 9 checks
 node --check <file>          # syntax gate, used on every file
 
@@ -187,6 +188,16 @@ Rules that hold under either reading:
   breaks the emitted client script while the page still renders perfectly — pin,
   calendar export and the PWA all die silently. Use `String.fromCharCode(13, 10)`.
   `test/stress.mjs` now runs `new Function()` on the emitted script to catch this.
+- **`node --check` does not resolve identifiers.** On 2026-11-04 10:18 ET a
+  scheduled sweep died with `boardRows is not defined` *after* spending all 42
+  Frontier requests and *before* writing the snapshot: the binding was declared
+  inside `if (!everythingFailed)` but read from the alert block outside it. Every
+  gate was green, because the file parsed and no test executes `collector/main()`.
+  `npm run lint` (`no-undef`) is now the gate for this, and `sweep.yml` runs it
+  before installing Chromium so a broken collector never spends a request.
+- **Side effects must never be able to cost the snapshot.** The alert block used
+  to run outside any `try`, so one throw in notification code discarded a paid-for
+  sweep. Alerting is wrapped; the write is what matters.
 - Assert on generated code, not only on markup. A page that renders correctly can
   ship JavaScript that does not parse.
 
@@ -194,6 +205,6 @@ Rules that hold under either reading:
 
 ## Definition of done
 
-`npm test` and `npm run stress` both exit 0, `node --check` passes on every
-touched file, and any change to the render path is checked against the invariants
+`npm run lint`, `npm test` and `npm run stress` all exit 0, `node --check` passes
+on every touched file, and any change to the render path is checked against the invariants
 above (no empty grid, no unverified price, no silent overwrite).

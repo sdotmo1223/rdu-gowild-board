@@ -42,6 +42,7 @@ jobs:
       - name: Gates (a red tree must not deploy)
         run: |
           set -e
+          npm run lint
           npm test
           npm run stress
 

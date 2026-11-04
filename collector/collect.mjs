@@ -357,6 +357,16 @@ async function main() {
   // Usable means at least one route returned a parseable payload. "No journeys
   // key, fourteen times" is bot protection wearing a different costume than
   // /Flight/Redirect, and counting only `blocked` let it overwrite good data.
+  // Declared here, NOT inside the success branch below. The alert block further
+  // down runs on both paths, and referencing a branch-scoped binding from there
+  // threw "boardRows is not defined" after a full sweep had already been paid for
+  // in 42 Frontier requests and before the snapshot was written -- so every tick
+  // of 2026-11-04 10:18 lost its data.
+  const boardStamp = easternStamp(now);
+  const boardRows = allFlights.filter(
+    (f) => f.goWild && f.allin !== null && f.allin <= MAX_ALL_IN && (!f.dep || String(f.dep) >= boardStamp),
+  );
+
   const everythingFailed = okCount === 0;
   if (everythingFailed) {
     const kind = classifyFailure(sweeps) || 'error';
@@ -454,10 +464,8 @@ async function main() {
     // Bookable means bookable: a departure that has already left is not a new
     // opportunity, so it must not create a history transition or a push. Without
     // this a watchlist could buzz about a flight that left an hour ago.
-    const boardStamp = easternStamp(now);
-    const boardRows = allFlights.filter(
-      (f) => f.goWild && f.allin !== null && f.allin <= MAX_ALL_IN && (!f.dep || String(f.dep) >= boardStamp),
-    );
+    // (boardRows/boardStamp are computed above, before the branch, because the
+    // alert block outside it reads them.)
     // A board that is healthy and empty looks exactly like one nobody is running.
     // Count consecutive empty sweeps so the page can state a verdict instead of
     // repeating "no seats" forever, and so an alert can say "still nothing".
@@ -520,6 +528,9 @@ async function main() {
   if (!topic && process.env.WATCH) {
     console.warn(`WATCH=${process.env.WATCH} is set but NTFY_TOPIC is not, so no watch alert can be sent`);
   }
+  // Alerting is a side effect and must never cost the snapshot: a throw in here
+  // used to abort main() before the write, discarding a sweep already paid for.
+  try {
   if (topic) {
     const fresh = (state.history || []).filter((h) => h.ts === now);
     // The watchlist is answered first because it is the more specific question, and
@@ -567,6 +578,9 @@ async function main() {
         console.error(`alert failed: ${err.message}`);
       }
     }
+  }
+  } catch (err) {
+    console.error(`alerting failed (snapshot still written): ${err.message}`);
   }
 
   console.log(

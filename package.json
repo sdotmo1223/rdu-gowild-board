@@ -10,9 +10,11 @@
     "collect": "node collector/collect.mjs",
     "test": "node test/all.mjs",
     "stress": "node test/stress.mjs",
+    "lint": "eslint .",
     "check": "node --check src/index.js && node --check src/board.js && node --check src/render.js && node --check collector/collect.mjs"
   },
   "devDependencies": {
+    "eslint": "^9.39.5",
     "playwright": "^1.64.1",
     "wrangler": "^4.0.0"
   }
