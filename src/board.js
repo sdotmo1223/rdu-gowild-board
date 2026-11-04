@@ -130,11 +130,18 @@ export function buildBoard(state, now = Date.now()) {
     rows.push(...qualified);
   }
 
+  // A date whose bookable departures have all left is no longer an answer to "what
+  // can I fly". It leaves the rendered list but is reported once, so it never looks
+  // like the day was lost or like the collector failed.
+  const departedDates = dates.filter((d) => d.status === 'departed');
+  const visibleDates = dates.filter((d) => d.status !== 'departed');
+
   const updatedAt = src.updatedAt || null;
   const ageMin = updatedAt ? Math.max(0, Math.round((now - updatedAt) / 60000)) : null;
 
   return {
-    dates,
+    dates: visibleDates,
+    departed: departedDates,
     rows,
     updatedAt,
     ageMin,

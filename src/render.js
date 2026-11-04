@@ -327,7 +327,14 @@ export function renderPage(view, state, freq, now = Date.now(), opts = {}) {
     }
   }
 
-  if (!view.dates.length) {
+  const departedDays = Array.isArray(view.departed) ? view.departed : [];
+  if (departedDays.length) {
+    const gone = departedDays.reduce((n, d) => n + (Number(d.pastCount) || 0), 0);
+    const which = departedDays.map((d) => esc(d.date)).join(', ');
+    banner += `<div class="banner warn"><strong>That day has flown</strong>
+      <span>${gone} departure${gone === 1 ? '' : 's'} on ${which} already left, so ${gone === 1 ? 'it is' : 'they are'} not offered. Everything below is still ahead.</span></div>`;
+  }
+  if (!view.dates.length && !departedDays.length) {
     banner += `<div class="banner bad"><strong>No data yet</strong>
       <span>The collector has not written a snapshot. This is not "no flights" — it is a missing run.</span></div>`;
   }

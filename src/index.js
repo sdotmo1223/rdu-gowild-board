@@ -220,6 +220,7 @@ export default {
           past: Array.isArray(d.past) ? d.past.length : 0,
           rows: Array.isArray(d.ahead) ? d.ahead : d.rows,
         })),
+        departed: (view.departed || []).map((d) => ({ date: d.date, past: d.pastCount })),
         frequency: frequencyTable(state, ROUTES),
         schedule: weeklyPattern(state),
         heatmap: bookabilityHeatmap(state),

@@ -162,11 +162,14 @@ Rules that hold under either reading:
 
 - **The burst is capped, not the cadence.** 7 routes per tick
   (`routeShard`/`shardRoutes`), so a two-date sweep is **14 requests** and every
-  route is still re-checked every 30 minutes. `FULL_SWEEP=1` asks all 14. After
-  23:00 ET the collector stops asking about today (`departuresFinished`) and
-  carries those rows; the page states their age (`7/14 routes re-checked ·
-  7 carried from 22:45 ET`). A carried row is never recorded as a fresh
-  observation or a fresh schedule sample.
+  route is still re-checked every 30 minutes. `FULL_SWEEP=1` asks all 14. Once the
+  last observed departure for today has gone (`departuresFinished`, or the last
+  `dep` in the snapshot), the collector stops asking about today and spends that
+  slot on the day after tomorrow, so the two-date window stays a full 48 hours
+  ahead at the same 14 requests. Today's rows are carried, the page states their
+  age (`7/14 routes re-checked · 7 carried from 22:45 ET`), and a date whose
+  departures have all flown leaves the list and is reported once instead. A
+  carried row is never recorded as a fresh observation or a fresh schedule sample.
 
 ---
 

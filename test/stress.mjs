@@ -459,11 +459,14 @@ check('a date whose departures all left states it instead of listing them', () =
   };
   const LATER = Date.UTC(2026, 10, 3, 23, 0); // 18:00 ET, after the fixtures
   const view = buildBoard(state, LATER);
-  assert.equal(view.dates[0].status, 'departed');
-  assert.equal(view.dates[0].rows.length, 0, 'nothing bookable is listed');
-  assert.equal(view.dates[0].past.length, 2, 'the departed ones are still counted');
+  assert.equal(view.dates.length, 0, 'a finished day is not a bookable date');
+  assert.equal(view.departed.length, 1, 'it is reported, not silently dropped');
+  assert.equal(view.departed[0].status, 'departed');
+  assert.equal(view.departed[0].rows.length, 0, 'nothing bookable is listed');
+  assert.equal(view.departed[0].past.length, 2, 'the departed ones are still counted');
   const html = renderPage(view, state, [], LATER);
   assert.ok(/already left/.test(html), 'the reason is stated, never a blank section');
+  assert.ok(!/No data yet/.test(html), 'a finished day is not a missing collector');
 });
 
 check('a mixed date lists only what is still ahead and states the rest', () => {
