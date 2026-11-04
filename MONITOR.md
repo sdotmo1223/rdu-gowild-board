@@ -41,14 +41,59 @@ name exits 1 with a `ReferenceError`).
 
 ## Open risks that can still cost a first-time go
 
-1. **Ntfy delivery is not retried.** A failed push is logged and dropped; the watch
+1. **Stale half of the routes** (above): up to ~6.5 h between real
+   fetch and display for 7 of 14 routes. This is the largest gap
+   between what the page implies and what it does.
+
+2. **Ntfy delivery is not retried.** A failed push is logged and dropped; the watch
    dedupe will not re-fire until the fare changes. Board data is unaffected.
-2. **Half the routes per tick.** A single tick answers 7 of 14 RDU routes; the board
+3. **Half the routes per tick.** A single tick answers 7 of 14 RDU routes; the board
    is complete only after two ticks (~30 min). Reading one tick shows half a list.
-3. **The fixture is one journey.** The dry harness proves wiring, not breadth: it
+4. **The fixture is one journey.** The dry harness proves wiring, not breadth: it
    cannot catch a parser regression that only affects multi-leg or sold-out rows.
-4. **Frontier can refuse a burst at any time.** That is external and is handled by
+5. **Frontier can refuse a burst at any time.** That is external and is handled by
    abort-and-carry, but it still means a given tick may add no new rows.
+
+## Finding 2026-11-04 15:20 ET — half the board refreshes about every 6.5 hours, not every 30 minutes
+
+Measured on the live snapshot (\`/api/ingest\`, 14:54 ET): 14 sweep records were
+fresh, 14 were \`carried\` with \`carriedReason: rotated\`. The carried half
+(DTW, IAH, MIA, SJU, ATL, CLE, DEN) was last actually fetched at **08:54 ET —
+388 minutes earlier**. The other half was fetched at 14:54.
+
+Cause is a cadence mismatch, not a refusal. \`routeShard()\` picks the half from
+\`Math.floor(now / 15 min) % 2\`, but GitHub does not fire a \`*/15\` cron every 15
+minutes on a busy free runner: 24 scheduled runs in 24 hours, gaps median 60 min
+(min 42, max 81). A one-hour cadence is four 15-minute slots, so a run landing at
+the same minute each hour always sees the *same* parity and asks the same half.
+The carried half only flips when the runner's minute drifts across a slot
+boundary — hence 6.5 hours, not 30 minutes.
+
+Impact: a GoWild flip on the carried half can go unseen for ~6.5 h, and the
+page's "re-checked every 30 minutes" is not true in practice. The board remains
+honest (carried rows are labelled with their age), but the freshness is worse
+than documented.
+
+Fix identified, not yet applied: store the shard that was actually used in the
+snapshot and alternate from it (\`nextShard = 1 - state.lastShard\`), so the
+rotation follows ticks instead of a clock the cron cannot keep. Any change here
+touches the burst budget and needs its own test.
+
+## Measurement caveats — do not quote these as Frontier facts
+
+- **Release timing (\`medianHour\` 2–4 AM) is our window entry, not Frontier's
+  release.** First-seen histogram: 00:00→16, 01:00→15, 03:00→9, 04:00→50,
+  16:00→1. A date enters the two-day window at midnight ET, so the model is
+  measuring when we started looking. The only genuine release evidence is the
+  13 instances watched *before* they flipped: 14:30–21:46 ET, lead 14–40 h,
+  median 29 h. n=13 across 11 destinations — not yet a per-route model.
+- **Weekly schedule verdicts need two weeks of dates.** There is one week
+  (2026-11-03..11-05), so all 14 routes read \`sampled\`, not \`stable\`/rotating.
+- **Weekday bookability denominators are 1** (Tue/Wed/Thu only). Every cell is
+  0/1 or 1/1; it becomes a rate after 14 daily sweeps.
+- **Flight identity is the first leg.** \`1669\` repeats across ATL, DEN, DTW —
+  those are itineraries whose first leg is the same RDU→ATL flight, so the
+  identity verdicts partly measure the hub feed, not the destination.
 
 ## How to check health in 30 seconds
 
