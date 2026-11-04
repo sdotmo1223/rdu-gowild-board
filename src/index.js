@@ -171,6 +171,24 @@ export default {
     const wantedPub =
       url.pathname.length > 1 && !url.pathname.slice(1).includes('/') ? url.pathname.slice(1) : null;
 
+    // The bare origin used to answer 404, which reads as a broken deploy and gives
+    // no hint that the boards live one path segment down.
+    if (url.pathname === '/') {
+      const items = pubs
+        .map((p) => `<li><a href="/${p}">${PROFILES[p].origin} &mdash; ${PROFILES[p].city}</a></li>`)
+        .join('');
+      return html(
+        '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+          '<title>GoWild boards</title>' +
+          '<body style="font:16px/1.5 system-ui,sans-serif;max-width:34rem;margin:0 auto;padding:2rem">' +
+          '<h1 style="font-size:1.4rem">Frontier GoWild boards</h1>' +
+          '<p>GoWild departures with an estimated all-in fare of $50.00 or less, for the next 48 hours, nonstop first. Every listed departure is still ahead.</p>' +
+          `<ul>${items || '<li>No public board is configured.</li>'}</ul>` +
+          '<p>The RDU board is token-gated: open it from its <code>/s/&lt;token&gt;</code> link.</p>' +
+          '</body>',
+      );
+    }
+
     if (url.pathname === '/api/ingest') return handleIngest(request, env, url);
 
     let state = null;
@@ -199,7 +217,8 @@ export default {
           goWild: d.goWild,
           above50: d.above,
           folded: d.folded ? d.folded.length : 0,
-          rows: d.rows,
+          past: Array.isArray(d.past) ? d.past.length : 0,
+          rows: Array.isArray(d.ahead) ? d.ahead : d.rows,
         })),
         frequency: frequencyTable(state, ROUTES),
         schedule: weeklyPattern(state),

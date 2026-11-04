@@ -1,4 +1,4 @@
-import { isBlackout, PEAK_LABEL, MAX_ALL_IN, MAX_STOPS, MAX_DURATION_MIN } from './routes.js';
+import { isBlackout, PEAK_LABEL, MAX_ALL_IN, MAX_STOPS, MAX_DURATION_MIN, easternStamp } from './routes.js';
 
 // Three missed 15-minute sweeps is a real fault, not jitter. Tighter than this
 // would paint the board amber during one slow GitHub runner start; looser would
@@ -45,6 +45,9 @@ export function buildBoard(state, now = Date.now()) {
   const dateKeys = [...new Set(sweeps.map((s) => s.date).filter(Boolean))].sort();
   const dates = [];
   const rows = [];
+  // One clock reading for the whole build, so a row cannot be judged ahead on one
+  // date and departed on the next.
+  const stamp = easternStamp(now);
 
   for (const date of dateKeys) {
     const forDate = sweeps.filter((s) => s.date === date);
@@ -74,6 +77,12 @@ export function buildBoard(state, now = Date.now()) {
     const priced = goWild.filter((f) => f.allin <= MAX_ALL_IN);
     const qualified = priced.filter(withinLimits).sort(rank);
     const folded = priced.filter((f) => !withinLimits(f)).sort(rank);
+    // A departure that has already left cannot be booked, so it must not sit in the
+    // list looking like an option. It is kept and counted, never deleted: "everything
+    // shown is actionable" is only honest if the departed ones are stated out loud.
+    // A missing departure time is kept, because an unknown is not a gone one.
+    const ahead = qualified.filter((f) => !f.dep || String(f.dep) >= stamp);
+    const past = qualified.filter((f) => f.dep && String(f.dep) < stamp);
 
     // Frontier never announces a blackout; it just inflates the GoWild fare
     // (observed $317.96 on 2026-11-24 vs $15.41 normally). Trust the calendar,
@@ -84,8 +93,14 @@ export function buildBoard(state, now = Date.now()) {
     if (!flights.length && blocked) status = 'blocked';
     else if (!flights.length && failed.length) status = 'error';
     else if (!flights.length) status = peak ? 'peak' : 'noflights';
-    else if (!qualified.length) status = peak ? 'peak' : priced.length ? 'folded' : goWild.length ? 'above' : 'nogowild';
-    else status = 'ok';
+    else if (ahead.length) status = 'ok';
+    // Every bookable option already left. Saying that is the difference between a
+    // quiet board and a board that looks empty because something broke.
+    else if (past.length) status = 'departed';
+    else if (peak) status = 'peak';
+    else if (priced.length) status = 'folded';
+    else if (goWild.length) status = 'above';
+    else status = 'nogowild';
 
     dates.push({
       date,
@@ -106,7 +121,11 @@ export function buildBoard(state, now = Date.now()) {
       carriedRoutes: carriedRows.length,
       carriedAt,
       carriedReason,
-      rows: qualified,
+      // `rows` is exactly what the page offers: departures that can still be booked.
+      // Anything already gone is in `past`, counted by `pastCount`, never listed.
+      rows: ahead,
+      past,
+      pastCount: past.length,
     });
     rows.push(...qualified);
   }

@@ -7,6 +7,7 @@ import {
   routeShard,
   shardRoutes,
   departuresFinished,
+  easternStamp,
   PROFILE,
 } from '../src/routes.js';
 import { parseRoute, classifyFailure, shouldAbortSweep, mergeSweeps } from './parse.mjs';
@@ -153,7 +154,20 @@ async function main() {
   // today: with nothing to carry forward, the date would disappear from the
   // board entirely, and a vanished date is the one state the page must never show.
   const todayHasRows = prevSweeps.some((s) => s && s.date === todayISO);
-  const skipToday = process.env.SWEEP_ALL_DATES !== '1' && departuresFinished(startedAt) && todayHasRows;
+  // The real end of today is the last departure already observed, not 23:00. From
+  // that moment this slot in the two-date window can only return flights nobody can
+  // book, so it goes to the date that keeps the window a full 48 hours ahead. Same
+  // request count: two dates, seven routes per tick.
+  const lastDepToday = prevSweeps
+    .filter((s) => s && s.date === todayISO)
+    .flatMap((s) => (Array.isArray(s.flights) ? s.flights : []))
+    .map((f) => String((f && f.dep) || ''))
+    .filter(Boolean)
+    .sort()
+    .pop();
+  const todayDone =
+    departuresFinished(startedAt) || (lastDepToday ? easternStamp(startedAt) > lastDepToday : false);
+  const skipToday = process.env.SWEEP_ALL_DATES !== '1' && todayDone && todayHasRows;
   const dates = Array.from({ length: dayCount }, (_, i) => easternDate((skipToday ? 1 : 0) + i, startedAt));
   const skippedDates = skipToday ? [todayISO] : [];
 

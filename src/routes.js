@@ -129,6 +129,26 @@ export function easternDate(offsetDays = 0, now = Date.now()) {
   return fmt.format(new Date(now + offsetDays * 86400000));
 }
 
+// Wall-clock compare without timezone arithmetic: now and a flight's `dep` are
+// both Eastern "YYYY-MM-DD HH:MM:SS", so a lexical compare is exact and DST-proof.
+export function easternStamp(now = Date.now()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(now));
+  const g = (t) => {
+    const hit = parts.find((p) => p.type === t);
+    return hit ? hit.value : '00';
+  };
+  return `${g('year')}-${g('month')}-${g('day')} ${g('hour')}:${g('minute')}:${g('second')}`;
+}
+
 // Frontier wants dd1=Nov%2003,%202026
 export function frontierDateParam(dateISO) {
   const [y, m, d] = dateISO.split('-');

@@ -165,7 +165,8 @@ check('filter drops >$50 and sorts nonstops first', () => {
       ] },
     ],
   };
-  const view = buildBoard(state);
+  // A clock before every fixture departure: the board lists only bookable rows now.
+  const view = buildBoard(state, Date.UTC(2026, 10, 2, 12, 0));
   const rows = view.dates[0].rows;
   assert.equal(rows.length, 2, 'the $74 fare must be dropped');
   assert.ok(rows.every((r) => r.allin <= MAX_ALL_IN));
@@ -290,7 +291,9 @@ check('long connections are folded, not dropped and not hidden', () => {
       mk({ dest: 'PHL', city: 'Philadelphia', stops: '2 Stops MCO, ATL', nonstop: false, dur: '6 hrs' }),
     ] }],
   };
-  const view = buildBoard(state);
+  // Judge against a clock before the fixture's departures: only rows still ahead are
+  // listed now, and this check is about folding, not about the passage of time.
+  const view = buildBoard(state, Date.UTC(2026, 10, 3, 13, 0));
   const d = view.dates[0];
   assert.equal(d.rows.length, 1, 'only the short nonstop qualifies');
   assert.equal(d.folded.length, 2, 'the 22h and 2-stop options are folded, not dropped');

@@ -27,6 +27,11 @@ import { recordFares, fareMechanics } from '../src/pricing.mjs';
 let passed = 0;
 let failed = 0;
 
+// The fixtures sit on 2026-11-03. Judged against the real clock those departures are
+// nearly always in the past by now, and the board lists only what can still be
+// booked, so every check that counts rows pins a clock before them.
+const FIXTURE_NOW = Date.UTC(2026, 10, 2, 12, 0);
+
 function check(name, fn) {
   try {
     fn();
@@ -161,8 +166,11 @@ check('every date with rows emits real rows, never an empty list', () => {
     sweep({ date, flights: [flight({ date }), flight({ date, dest: 'ATL' })] }),
   );
   const state = { sweeps, updatedAt: Date.now(), routeCount: 14 };
-  const view = buildBoard(state);
-  const html = renderPage(view, state, [], Date.now());
+  // A clock before every fixture departure: afterwards these rows are correctly
+  // "departed", and this check is about never emitting an empty row list.
+  const NOW = Date.UTC(2026, 10, 2, 12, 0);
+  const view = buildBoard(state, NOW);
+  const html = renderPage(view, state, [], NOW);
   assert.ok(!/<ul class="rows"><\/ul>/.test(html), 'no empty row list anywhere');
   assert.equal((html.match(/<li class="row"/g) || []).length, 6);
 });
@@ -174,7 +182,8 @@ check('hostile city/stop strings are escaped, not executed', () => {
     updatedAt: Date.now(),
     routeCount: 14,
   };
-  const html = renderPage(buildBoard(state), state, [], Date.now());
+  const NOW = Date.UTC(2026, 10, 2, 12, 0);
+  const html = renderPage(buildBoard(state, NOW), state, [], NOW);
   assert.ok(!html.includes('<img'), 'raw tag must not survive');
   assert.ok(html.includes('&lt;img'), 'it must be escaped instead');
 });
@@ -209,7 +218,7 @@ check('fares above the ceiling are counted, never rendered as qualified', () => 
     updatedAt: Date.now(),
     routeCount: 14,
   };
-  const d = buildBoard(state).dates[0];
+  const d = buildBoard(state, FIXTURE_NOW).dates[0];
   assert.equal(d.rows.length, 1);
   assert.equal(d.above, 2);
   assert.equal(d.lowest, 49.99);
@@ -279,10 +288,10 @@ check('blackout date outranks a normal-looking fare', () => {
     updatedAt: Date.now(),
     routeCount: 14,
   };
-  const d = buildBoard(state).dates[0];
+  const d = buildBoard(state, FIXTURE_NOW).dates[0];
   assert.equal(d.peak, true, 'the calendar flags the date');
   assert.equal(d.rows.length, 1, 'a genuine sub-$50 fare is shown, not hidden');
-  const html = renderPage(buildBoard(state), state, [], Date.now());
+  const html = renderPage(buildBoard(state, FIXTURE_NOW), state, [], FIXTURE_NOW);
   assert.ok(html.includes('Peak Day Charge'));
   assert.ok(/Verify the fare at checkout/.test(html), 'the contradiction is stated, not smoothed over');
 });
@@ -432,9 +441,54 @@ check('disabled and null GoWild fares never become $0.01 or NaN', () => {
 
 check('rows carry the data needed to export a calendar event', () => {
   const state = { sweeps: [sweep({ flights: [flight()] })], updatedAt: Date.now(), routeCount: 14 };
-  const html = renderPage(buildBoard(state), state, [], Date.now());
+  const NOW = Date.UTC(2026, 10, 2, 12, 0);
+  const html = renderPage(buildBoard(state, NOW), state, [], NOW);
   for (const attr of ['data-dep=', 'data-arr=', 'data-dest=', 'data-date=', 'data-allin=']) assert.ok(html.includes(attr), attr);
   assert.ok(html.includes('class="act ics"'));
+});
+
+// The board's promise is that everything shown can still be booked. A date whose
+// options have all flown must say so, never render an empty list and never keep
+// offering a departure that has left.
+check('a date whose departures all left states it instead of listing them', () => {
+  const date = '2026-11-03';
+  const state = {
+    sweeps: [sweep({ date, flights: [flight({ date }), flight({ date, dest: 'ATL' })] })],
+    updatedAt: Date.now(),
+    routeCount: 14,
+  };
+  const LATER = Date.UTC(2026, 10, 3, 23, 0); // 18:00 ET, after the fixtures
+  const view = buildBoard(state, LATER);
+  assert.equal(view.dates[0].status, 'departed');
+  assert.equal(view.dates[0].rows.length, 0, 'nothing bookable is listed');
+  assert.equal(view.dates[0].past.length, 2, 'the departed ones are still counted');
+  const html = renderPage(view, state, [], LATER);
+  assert.ok(/already left/.test(html), 'the reason is stated, never a blank section');
+});
+
+check('a mixed date lists only what is still ahead and states the rest', () => {
+  const date = '2026-11-03';
+  const state = {
+    sweeps: [
+      sweep({
+        date,
+        flights: [
+          flight({ date, dep: '2026-11-03 16:20:00' }),
+          flight({ date, dest: 'ATL', dep: '2026-11-03 21:30:00' }),
+        ],
+      }),
+    ],
+    updatedAt: Date.now(),
+    routeCount: 14,
+  };
+  const MID = Date.UTC(2026, 10, 3, 22, 0); // 17:00 ET
+  const view = buildBoard(state, MID);
+  assert.equal(view.dates[0].status, 'ok');
+  assert.equal(view.dates[0].rows.length, 1, 'only the 21:30 departure is bookable');
+  assert.equal(view.dates[0].pastCount, 1);
+  const html = renderPage(view, state, [], MID);
+  assert.ok(html.includes('2026-11-03 21:30'), 'the live row is rendered');
+  assert.ok(!html.includes('2026-11-03 16:20'), 'the departed row is not offered');
 });
 
 check('service worker is only offered when the page knows its secret path', () => {
@@ -458,7 +512,7 @@ check('a single route blocked does not mark the whole date blocked', () => {
     updatedAt: Date.now(),
     routeCount: 14,
   };
-  const d = buildBoard(state).dates[0];
+  const d = buildBoard(state, FIXTURE_NOW).dates[0];
   assert.equal(d.blockedRoutes, 1);
   assert.notEqual(d.status, 'blocked', 'one blocked route is not an outage');
 });
@@ -469,7 +523,7 @@ check('an all-blocked state keeps the board and raises the banner', () => {
     updatedAt: Date.now(),
     routeCount: 14,
   };
-  const d = buildBoard(state).dates[0];
+  const d = buildBoard(state, FIXTURE_NOW).dates[0];
   assert.equal(d.status, 'blocked');
   const html = renderPage(buildBoard(state), state, [], Date.now());
   assert.ok(/bot protection/i.test(html));
@@ -478,7 +532,7 @@ check('an all-blocked state keeps the board and raises the banner', () => {
 check('MAX_ALL_IN is the only price gate', () => {
   assert.equal(MAX_ALL_IN, 50);
   const state = { sweeps: [sweep({ flights: [flight({ allin: 50.0 }), flight({ allin: 50.0 + 0.004, dest: 'ATL' })] })], updatedAt: Date.now(), routeCount: 14 };
-  const d = buildBoard(state).dates[0];
+  const d = buildBoard(state, FIXTURE_NOW).dates[0];
   assert.equal(d.rows.length, 1, '$50.00 exactly is in; $50.004 rounds to $50.00 too');
 });
 

@@ -99,6 +99,7 @@ const STATE_COPY = {
   noflights: 'No Frontier departures from {ORIGIN} on this date.',
   above: (d) => `${d.goWild} GoWild departure${d.goWild === 1 ? '' : 's'}, all above $${MAX_ALL_IN.toFixed(2)}.`,
   nogowild: (d) => `${d.total} departure${d.total === 1 ? '' : 's'}, but Frontier released no GoWild seats.`,
+  departed: 'Every bookable departure on this date has already left.',
 };
 
 function dateSection(d, view) {
@@ -110,7 +111,14 @@ function dateSection(d, view) {
   let body;
 
   if (d.status === 'ok') {
-    body = `<ul class="rows">${d.rows.map(rowHtml).join('')}</ul>`;
+    // Only departures that can still be booked are listed. If some of this date's
+    // options have already flown, that is stated rather than left as a silent gap.
+    const live = Array.isArray(d.ahead) ? d.ahead : d.rows;
+    body = `<ul class="rows">${live.map(rowHtml).join('')}</ul>`;
+    const gone = Number(d.pastCount) || 0;
+    if (gone) {
+      body += `<div class="state">${gone} more under $${MAX_ALL_IN.toFixed(2)} on this date already departed and cannot be booked.</div>`;
+    }
     if (d.folded && d.folded.length) {
       const cap = `${MAX_STOPS} stop${MAX_STOPS === 1 ? '' : 's'} / ${Math.round(MAX_DURATION_MIN / 60)}h`;
       body += `<details class="folded"><summary>${d.folded.length} more under $${MAX_ALL_IN.toFixed(2)} — beyond ${cap}</summary><ul class="rows">${d.folded.map(rowHtml).join('')}</ul></details>`;
@@ -127,6 +135,9 @@ function dateSection(d, view) {
     body = `<div class="state bad">${esc(STATE_COPY.blocked)}</div>`;
   } else if (d.status === 'error') {
     body = `<div class="state bad">${esc(STATE_COPY.error)}</div>`;
+  } else if (d.status === 'departed') {
+    const gone = Number(d.pastCount) || 0;
+    body = `<div class="state warn">All ${gone} bookable departure${gone === 1 ? '' : 's'} on this date already left. Check the next date for what is still ahead.</div>`;
   } else if (d.status === 'folded') {
     const cap = `${MAX_STOPS} stop${MAX_STOPS === 1 ? '' : 's'} / ${Math.round(MAX_DURATION_MIN / 60)}h`;
     body = `<div class="state warn">${d.folded.length} GoWild option${d.folded.length === 1 ? '' : 's'} under $${MAX_ALL_IN.toFixed(2)}, all beyond ${cap}.</div><details class="folded" open><summary>Show them anyway</summary><ul class="rows">${d.folded.map(rowHtml).join('')}</ul></details>`;
