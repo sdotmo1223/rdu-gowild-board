@@ -184,6 +184,21 @@ export function shardRoutes(routes, shard) {
   return list.filter((_, i) => i % 2 === want);
 }
 
+// The shard for the *next* tick.
+//
+// Alternating on the clock looked equivalent to alternating per tick, and is not.
+// GitHub fires the fifteen-minute cron about hourly (measured 2026-11-04: 24 runs
+// in 24 h, median gap 60 min, range 42-81), and one hour is exactly four 15-minute
+// slots, so a run landing at the same minute each hour reads the same parity every
+// time. Measured consequence: seven routes carried for 388 minutes while the other
+// seven were 28 minutes old. Alternation therefore follows what the previous tick
+// actually used; the clock is only the first-run guess.
+export function nextShard(lastShard, now = Date.now()) {
+  const last = Number(lastShard);
+  if (last === 0 || last === 1) return last === 0 ? 1 : 0;
+  return routeShard(now);
+}
+
 export function easternHour(now = Date.now()) {
   return Number(
     new Intl.DateTimeFormat('en-US', {

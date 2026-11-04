@@ -122,8 +122,10 @@ own nonstop table. The widely repeated "32 destinations" is an ABC11 article fro
 
 - **$0**: Workers Free + KV Free + GitHub Actions free minutes. No card, no R2, no paid tier.
 - **Politeness**: strictly sequential, 2–5 s randomized, half the routes per tick
-  (14 requests per two-date sweep), 15-minute cadence, one process
-  ever (enforced by a GitHub Actions `concurrency` group).
+  (14 requests per two-date sweep), one process ever (enforced by a GitHub Actions
+  `concurrency` group). The cron asks for 15 minutes; GitHub delivers about hourly
+  on a free runner (measured 2026-11-04: 24 runs in 24 h, gaps median 60 min,
+  range 42–81), so rotation alternates per tick rather than per clock slot.
 - **Read-only**: no checkout, payment, or booking path is ever requested.
 - **No stored password**: there is no login at all — only a session cookie you paste once.
 

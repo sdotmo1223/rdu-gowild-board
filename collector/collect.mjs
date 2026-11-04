@@ -6,8 +6,8 @@ import {
   MAX_ALL_IN,
   easternDate,
   frontierDateParam,
-  routeShard,
   shardRoutes,
+  nextShard,
   departuresFinished,
   easternStamp,
   PROFILE,
@@ -291,7 +291,14 @@ async function main() {
     );
     return;
   }
-  const shard = forced ? null : routeShard(startedAt);
+  // Tick-driven, not clock-driven (see nextShard). SWEEP_SHARD=0|1 is the manual
+  // override for a deliberate single-half probe and is not used by the cron.
+  const explicitShard = Number(process.env.SWEEP_SHARD);
+  const shard = forced
+    ? null
+    : explicitShard === 0 || explicitShard === 1
+      ? explicitShard
+      : nextShard(previous && previous.lastShard, startedAt);
   const shardList = shardRoutes(routePool, shard);
   // A per-profile request budget. Several origins in one job would otherwise add
   // up to a burst big enough to earn a refusal, and a refusal aborts. The budget
@@ -309,7 +316,15 @@ async function main() {
   // Slice with a clock-driven offset instead of always taking the first N. Taking
   // the head every tick would starve the tail of each shard forever: with a budget
   // of 8 out of 11 routes, three routes would never be asked again.
-  const offset = shardList.length ? Math.floor(startedAt / (15 * 60 * 1000)) % shardList.length : 0;
+  // The budget slice had the same phase lock: with a budget below the shard size
+  // (LGA asks 5 of 7, PHL 8 of 11) a clock-derived offset pins the same tail
+  // forever. Advance a stored cursor by exactly what the last tick asked instead.
+  const priorCursor = Number(previous && previous.routeCursor);
+  const offset = shardList.length
+    ? Number.isInteger(priorCursor) && priorCursor >= 0
+      ? priorCursor % shardList.length
+      : Math.floor(startedAt / (15 * 60 * 1000)) % shardList.length
+    : 0;
   const plannedRoutes = Array.from(
     { length: Math.min(maxRoutes, shardList.length) },
     (_, i) => shardList[(offset + i) % shardList.length],
@@ -347,13 +362,24 @@ async function main() {
         }, path);
         requests++;
       } catch (err) {
-        sweeps.push({ date, dest: route.code, ok: false, blocked: false, flights: [], reason: `fetch-failed: ${err.message}` });
+        sweeps.push({
+          date,
+          dest: route.code,
+          ok: false,
+          blocked: false,
+          flights: [],
+          reason: `fetch-failed: ${err.message}`,
+          at: Date.now(),
+        });
         abortedAt = { date, dest: route.code, reason: 'fetch-failed', attempts: sweeps.length };
         break outer;
       }
 
       const parsed = parseRoute(response, date, route.code, route.city);
-      sweeps.push({ date, dest: route.code, ...parsed });
+      // `at` is the fetch time of THIS row. Without it, the first time the row is
+      // carried mergeSweeps has nothing older than "now" to stamp it with, and the
+      // page reports data one tick fresher than it is.
+      sweeps.push({ date, dest: route.code, ...parsed, at: Date.now() });
       if (parsed.notServed) notServedHits.push(route.code);
       else if (parsed.ok && watch[route.code]) servedHits.push(route.code);
       console.log(`${date} ${route.code}: ${parsed.reason} flights=${parsed.flights.length} blocked=${parsed.blocked}`);
@@ -394,6 +420,12 @@ async function main() {
   state.version = 1;
   state.routeCount = ROUTES.length;
   state.requests = requests;
+  // What this tick actually asked, so the next one alternates from fact. A forced
+  // sweep must not move the rotation: a diagnostic would otherwise advance it.
+  if (shard !== null) {
+    state.lastShard = shard;
+    state.routeCursor = shardList.length ? (offset + plannedRoutes.length) % shardList.length : 0;
+  }
   state.generatedAt = now;
   // NOTE: state.sweeps is assigned only in the success branch below. Assigning it
   // here would replace the last good board with fourteen empty results on a sweep

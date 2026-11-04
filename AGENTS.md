@@ -94,6 +94,8 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `tools/render-local.mjs` | render from interactive `.sweep/` captures |
 | `test/acceptance.mjs` | 25 spec-level checks |
 | `test/profiles.mjs` | 9 multi-origin checks: profile resolution, unserved-vs-refused classification, per-origin rendering |
+| `test/rotation.mjs` | 53 checks: tick-driven shard alternation, two-tick and budgeted coverage |
+| `test/carry.mjs` | 7 checks: a carried row keeps its real fetch time, never re-stamps |
 | `test/stress.mjs` | 48 adversarial checks (hostile input, malformed state, volume, budget, fare retention) |
 
 ---

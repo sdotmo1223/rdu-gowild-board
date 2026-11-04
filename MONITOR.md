@@ -79,6 +79,54 @@ snapshot and alternate from it (`nextShard = 1 - state.lastShard`), so the
 rotation follows ticks instead of a clock the cron cannot keep. Any change here
 touches the burst budget and needs its own test.
 
+## Seven-pass live verification, 2026-11-04 18:24–18:52 ET
+
+Run **after** the tick-driven rotation landed, which is what made repeated passes
+meaningful: under the old clock parity all seven would have asked the same seven
+routes and "clean" would have described half a board.
+
+| Pass | Shard | Requests | Answered | Blocked | Flights (fresh) | Ingest | rc |
+|---|---|---|---|---|---|---|---|
+| 1 | 1 | 14 | 14 | 0 | 71 | 163,233 B | 0 |
+| 2 | 0 | 14 | 14 | 0 | 114 | 166,804 B | 0 |
+| 3 | 1 | 14 | 14 | 0 | 71 | 168,110 B | 0 |
+| 4 | 0 | 14 | 14 | 0 | 114 | 171,673 B | 0 |
+| 5 | 1 | 14 | 14 | 0 | 71 | 172,979 B | 0 |
+| 6 | 0 | 14 | 14 | 0 | 114 | 176,808 B | 0 |
+| 7 | 1 | 14 | 14 | 0 | 71 | 178,378 B | 0 |
+
+**98 requests, 98 answered, 0 blocked, 0 aborts, 7/7 snapshots written, 0 failed
+passes.** Shards alternate 1,0,1,0,1,0,1 on consecutive ticks, so both halves are
+really asked. With zero failures in 98 trials the one-sided 95% lower bound on the
+per-request success rate is **96.99%** (`0.05^(1/98)`).
+
+What KV held at pass 7: 185 flights, 40 with GoWild, `$15.41–$114.39`, median
+`$30.81`, 32 of the 40 at or below `$50`. Split by date: 11-04 27 flights/21
+GoWild, 11-05 158/19. Every GoWild row had a finite price above zero; BOS again
+returned zero flights on both dates. `history` grew 468 → 564 across the run.
+
+### Defect found by the passes, and fixed
+
+A row carried for the **first time** was stamped with the current tick, because a
+fresh sweep record carried no timestamp at all (`carriedAt: Number(s.carriedAt) ||
+carriedAt` fell straight through to "now"). The board's "7 carried from HH:MM ET"
+was therefore up to one tick newer than the data behind it — small, but it is the
+exact number a reader uses to judge freshness.
+
+Fixed: each sweep row records `at: Date.now()` at fetch time, and the three carry
+paths use `carriedAt || at || now`. Verified live — at pass 7 the carried half
+reported 98–160 s against a 93 s tick gap instead of 0 — and by `test/carry.mjs`
+(7 checks: first carry, repeat carry, stampless fallback, carry across a refusal,
+no drift over three carries).
+
+### Own-goals, recorded so they are not repeated
+
+- `allin` is **`null`, not 0**, on non-GoWild rows, and `null <= 0` is true in JS.
+  A careless "prices at or below zero" check reports 145 violations out of 185 on
+  perfectly good data. Count GoWild rows explicitly.
+- A binomial bound is `0.05^(1/n)`, not `1 - 0.05^(1/n)`. The first form printed
+  3.01% for 98 clean requests; the true figure is 96.99%.
+
 ## Measurement caveats — do not quote these as Frontier facts
 
 - **Release timing (`medianHour` 2–4 AM) is our window entry, not Frontier's
@@ -91,6 +139,9 @@ touches the burst budget and needs its own test.
   (2026-11-03..11-05), so all 14 routes read `sampled`, not `stable`/rotating.
 - **Weekday bookability denominators are 1** (Tue/Wed/Thu only). Every cell is
   0/1 or 1/1; it becomes a rate after 14 daily sweeps.
+- **`allin` is null on non-GoWild rows**, by design (`normalizeFlight` only
+  prices the GoWild channel). Any check of "prices at or below zero" must filter
+  `goWild` first, or it reports nulls as failures.
 - **Flight identity is the first leg.** `1669` repeats across ATL, DEN, DTW —
   those are itineraries whose first leg is the same RDU→ATL flight, so the
   identity verdicts partly measure the hub feed, not the destination.

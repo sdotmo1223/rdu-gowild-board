@@ -173,7 +173,7 @@ export function mergeSweeps(prevSweeps, sweeps, dates, opts = {}) {
     merged = merged
       .filter((s) => s.date !== d)
       .concat(
-        rows.map((s) => ({ ...s, carried: true, carriedAt: Number(s.carriedAt) || carriedAt, carriedReason: 'day-over' })),
+        rows.map((s) => ({ ...s, carried: true, carriedAt: Number(s.carriedAt) || Number(s.at) || carriedAt, carriedReason: 'day-over' })),
       );
     skipped.push({ date: d, rows: rows.length });
   }
@@ -184,7 +184,7 @@ export function mergeSweeps(prevSweeps, sweeps, dates, opts = {}) {
     if (!rows.length) continue;
     merged = merged
       .filter((s) => s.date !== d)
-      .concat(rows.map((s) => ({ ...s, carried: true, carriedAt: Number(s.carriedAt) || carriedAt, carriedReason: 'dead' })));
+      .concat(rows.map((s) => ({ ...s, carried: true, carriedAt: Number(s.carriedAt) || Number(s.at) || carriedAt, carriedReason: 'dead' })));
     kept.push({ date: d, rows: rows.length });
   }
 
@@ -212,7 +212,7 @@ export function mergeSweeps(prevSweeps, sweeps, dates, opts = {}) {
       carried: true,
       // Keep the ORIGINAL carry time. Re-stamping every tick made a row that had
       // been blocked for six hours read "carried from 3 min ago" forever.
-      carriedAt: Number(s.carriedAt) || carriedAt,
+      carriedAt: Number(s.carriedAt) || Number(s.at) || carriedAt,
       carriedReason: planned && !planned.includes(s.dest) ? 'rotated' : 'aborted',
     }));
     // The failed row for a carried route must not sit beside its own carried copy.
