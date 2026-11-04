@@ -141,6 +141,12 @@ function dateSection(d, view, now) {
   } else if (d.status === 'folded') {
     const cap = `${MAX_STOPS} stop${MAX_STOPS === 1 ? '' : 's'} / ${Math.round(MAX_DURATION_MIN / 60)}h`;
     body = `<div class="state warn">${d.folded.length} GoWild option${d.folded.length === 1 ? '' : 's'} under $${MAX_ALL_IN.toFixed(2)}, all beyond ${cap}.</div><details class="folded" open><summary>Show them anyway</summary><ul class="rows">${d.folded.map(rowHtml).join('')}</ul></details>`;
+    // The cheaper rows that already left are stated here too: showing only the
+    // over-limit options would imply this date had nothing better to offer.
+    const goneHere = Number(d.pastCount) || 0;
+    if (goneHere) {
+      body += `<div class="state">${goneHere} cheaper nonstop option${goneHere === 1 ? '' : 's'} on this date already departed.</div>`;
+    }
   } else if (d.status === 'above') {
     // "Nothing under $50" is only useful if it says how far off it was. The
     // cheapest GoWild fare is already measured, so the gap is stated rather than

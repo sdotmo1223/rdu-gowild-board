@@ -13,7 +13,7 @@ import {
 } from '../src/routes.js';
 import { parseRoute, classifyFailure, shouldAbortSweep, mergeSweeps } from './parse.mjs';
 import { appendTransitions, recordObservation, recordFirstSeen } from '../src/history.js';
-import { buildAlert, buildZeroAlert, buildWatchAlert, sendAlert } from '../src/alerts.mjs';
+import { buildAlert, buildZeroAlert, buildWatchAlert, parseWatch, sendAlert } from '../src/alerts.mjs';
 import { recordSchedule } from '../src/schedule.mjs';
 import { recordFares } from '../src/pricing.mjs';
 import { readCookieString, applyCookies } from './cookies.mjs';
@@ -524,7 +524,11 @@ async function main() {
     const fresh = (state.history || []).filter((h) => h.ts === now);
     // The watchlist is answered first because it is the more specific question, and
     // one event must not buzz the phone twice.
-    const watchAlert = buildWatchAlert(state, fresh, process.env.WATCH, now);
+    // Judged against what is bookable right now, not against this run's
+    // transitions: a fare already under the watch price when WATCH was set never
+    // produces a transition, and a send that failed must be retried next tick
+    // instead of being lost with its transition.
+    const watchAlert = buildWatchAlert(state, boardRows, process.env.WATCH, now);
     // Only a delivered watch alert may suppress the digest. Recording the intent
     // instead meant one ntfy outage dropped both pushes for the same fare.
     let watchSent = false;
@@ -543,11 +547,17 @@ async function main() {
         console.error(`watch alert failed: ${err.message}`);
       }
     }
-    const alert = buildAlert(state, fresh, now) || buildZeroAlert(state, now);
-    // A watched fare already got its own push; the generic "N new under $50" would
-    // be the same news twice.
-    const duplicateOfWatch = watchSent && alert && alert.kind === 'fares';
-    if (alert && !duplicateOfWatch) {
+    // The watch already reported its own rows. Drop just those rows from the digest
+    // rather than the whole digest, which would swallow every other fare found in
+    // the same tick.
+    const watched = parseWatch(process.env.WATCH);
+    const digestRows = watchSent
+      ? fresh.filter(
+          (r) => !watched.some((w) => r.dest === w.dest && typeof r.allin === 'number' && r.allin <= w.max),
+        )
+      : fresh;
+    const alert = buildAlert(state, digestRows, now) || buildZeroAlert(state, now);
+    if (alert) {
       try {
         await sendAlert(topic, alert);
         state.lastAlert = { kind: alert.kind, at: now };
