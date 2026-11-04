@@ -515,20 +515,15 @@ async function main() {
   // Push alerts: only on real change, and deduped per error state inside
   // buildAlert so a blocked sweep cannot buzz the phone every 15 minutes.
   const topic = process.env.NTFY_TOPIC;
+  // A standing question that can never be answered is a silent failure, so say it
+  // in the run log where a reader will see it.
+  if (!topic && process.env.WATCH) {
+    console.warn(`WATCH=${process.env.WATCH} is set but NTFY_TOPIC is not, so no watch alert can be sent`);
+  }
   if (topic) {
     const fresh = (state.history || []).filter((h) => h.ts === now);
-    const alert = buildAlert(state, fresh, now) || buildZeroAlert(state, now);
-    if (alert) {
-      try {
-        await sendAlert(topic, alert);
-        state.lastAlert = { kind: alert.kind, at: now };
-        console.log(`alert sent: ${alert.title}`);
-      } catch (err) {
-        console.error(`alert failed: ${err.message}`);
-      }
-    }
-    // WATCH="ATL<=25" is a standing question, so it is answered separately from
-    // the digest and deduped by the exact departures it names.
+    // The watchlist is answered first because it is the more specific question, and
+    // one event must not buzz the phone twice.
     const watchAlert = buildWatchAlert(state, fresh, process.env.WATCH, now);
     if (watchAlert) {
       try {
@@ -542,6 +537,20 @@ async function main() {
         console.log(`watch alert sent: ${watchAlert.title}`);
       } catch (err) {
         console.error(`watch alert failed: ${err.message}`);
+      }
+    }
+    const alert = buildAlert(state, fresh, now) || buildZeroAlert(state, now);
+    // A watched fare already got its own push; the generic "N new under $50" would
+    // be the same news twice.
+    const duplicateOfWatch = Boolean(watchAlert) && alert && alert.kind === 'fares';
+    if (alert && !duplicateOfWatch) {
+      try {
+        await sendAlert(topic, alert);
+        state.lastAlert = { kind: alert.kind, at: now };
+        if (alert.kind === 'zero') state.lastZeroAt = now;
+        console.log(`alert sent: ${alert.title}`);
+      } catch (err) {
+        console.error(`alert failed: ${err.message}`);
       }
     }
   }

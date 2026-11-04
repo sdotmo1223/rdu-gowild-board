@@ -32,8 +32,10 @@ export function buildZeroAlert(state, now) {
   if (!state || state.lastError) return null;
   const z = state.zero;
   if (!z || !(Number(z.count) >= 3) || !z.since) return null;
-  const last = state.lastAlert;
-  if (last && last.kind === 'zero' && now - last.at < ZERO_REPEAT_MS) return null;
+  // Its own timestamp, not state.lastAlert: a blocked alert in between used to
+  // overwrite the record and let the "still nothing" push fire again the same day.
+  const lastAt = Number(state.lastZeroAt) || 0;
+  if (lastAt && now - lastAt < ZERO_REPEAT_MS) return null;
   const hrs = Math.max(1, Math.round((now - z.since) / 3600000));
   return {
     kind: 'zero',

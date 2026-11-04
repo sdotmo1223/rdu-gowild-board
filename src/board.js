@@ -115,6 +115,14 @@ export function buildBoard(state, now = Date.now()) {
     const past = qualified.filter((f) => f.dep && String(f.dep) < stamp);
     const foldedAhead = folded.filter((f) => !f.dep || String(f.dep) >= stamp).map(decorate);
     const foldedPast = folded.filter((f) => f.dep && String(f.dep) < stamp);
+    // Over-ceiling options are departures too, so they decide whether a date is
+    // finished. Without this, a day whose every GoWild fare was above $50 and has
+    // entirely flown still reads "cheapest was $63, over the ceiling" — a future
+    // opportunity that no longer exists.
+    const aboveAll = goWild.filter((f) => f.allin > MAX_ALL_IN);
+    const aboveAhead = aboveAll.filter((f) => !f.dep || String(f.dep) >= stamp);
+    const departedCount = past.length + foldedPast.length + (aboveAll.length - aboveAhead.length);
+    const aheadCount = ahead.length + foldedAhead.length + aboveAhead.length;
 
     // Frontier never announces a blackout; it just inflates the GoWild fare
     // (observed $317.96 on 2026-11-24 vs $15.41 normally). Trust the calendar,
@@ -131,7 +139,9 @@ export function buildBoard(state, now = Date.now()) {
     // Folded-before-departed on purpose: an over-limit option that has not left is
     // still a real answer for this date, so the date is not finished.
     else if (foldedAhead.length) status = 'folded';
-    else if (past.length || foldedPast.length) status = 'departed';
+    // Nothing left ahead, whatever the fare was: this date is finished. Saying
+    // "all above $50" about a day that has flown would be a lie about the future.
+    else if (!aheadCount && departedCount > 0) status = 'departed';
     else if (peak) status = 'peak';
     else if (goWild.length) status = 'above';
     else status = 'nogowild';
@@ -161,6 +171,9 @@ export function buildBoard(state, now = Date.now()) {
       rows: ahead,
       past,
       pastCount: past.length,
+      // One number the page can trust: every departed row on this date, whether it
+      // was bookable, over-limit or over-ceiling.
+      departedCount,
     });
     // The top-level list is the same promise as the per-date one: bookable only.
     rows.push(...ahead);

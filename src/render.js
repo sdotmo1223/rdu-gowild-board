@@ -140,8 +140,8 @@ function dateSection(d, view, now) {
   } else if (d.status === 'error') {
     body = `<div class="state bad">${esc(STATE_COPY.error)}</div>`;
   } else if (d.status === 'departed') {
-    const gone = Number(d.pastCount) || 0;
-    body = `<div class="state warn">All ${gone} bookable departure${gone === 1 ? '' : 's'} on this date already left. Check the next date for what is still ahead.</div>`;
+    const gone = Number(d.departedCount ?? d.pastCount) || 0;
+    body = `<div class="state warn">All ${gone} departure${gone === 1 ? '' : 's'} on this date already left. Check the next date for what is still ahead.</div>`;
   } else if (d.status === 'folded') {
     const cap = `${MAX_STOPS} stop${MAX_STOPS === 1 ? '' : 's'} / ${Math.round(MAX_DURATION_MIN / 60)}h`;
     body = `<div class="state warn">${d.folded.length} GoWild option${d.folded.length === 1 ? '' : 's'} under $${MAX_ALL_IN.toFixed(2)}, all beyond ${cap}.</div><details class="folded" open><summary>Show them anyway</summary><ul class="rows">${d.folded.map(rowHtml).join('')}</ul></details>`;
@@ -354,7 +354,7 @@ export function renderPage(view, state, freq, now = Date.now(), opts = {}) {
 
   const departedDays = Array.isArray(view.departed) ? view.departed : [];
   if (departedDays.length) {
-    const gone = departedDays.reduce((n, d) => n + (Number(d.pastCount) || 0), 0);
+    const gone = departedDays.reduce((n, d) => n + (Number(d.departedCount ?? d.pastCount) || 0), 0);
     const which = departedDays.map((d) => esc(d.date)).join(', ');
     banner += `<div class="banner warn"><strong>That day has flown</strong>
       <span>${gone} departure${gone === 1 ? '' : 's'} on ${which} already left, so ${gone === 1 ? 'it is' : 'they are'} not offered. Everything below is still ahead.</span></div>`;
@@ -363,7 +363,9 @@ export function renderPage(view, state, freq, now = Date.now(), opts = {}) {
     banner += `<div class="banner bad"><strong>No data yet</strong>
       <span>The collector has not written a snapshot. This is not "no flights" — it is a missing run.</span></div>`;
   }
-  if (view.stale && view.dates.length) {
+  // Not gated on view.dates.length: a dead collector must not look like a board
+  // that finished its day, which is exactly what an empty date list means now.
+  if (view.stale) {
     banner += `<div class="banner warn"><strong>Data is stale</strong>
       <span>${esc(ago(view.ageMin))} — collector may have stopped.</span></div>`;
   }

@@ -686,6 +686,74 @@ check('a fare that drops again after rising is a new watch answer', () => {
   assert.ok(cheaper && cheaper.key !== first.key, 'a cheaper fare is a new answer, not a duplicate');
 });
 
+check('a folded-only finished date counts its departures instead of saying zero', () => {
+  const state = {
+    sweeps: [
+      sweep({
+        date: '2026-11-03',
+        flights: [
+          flight({
+            date: '2026-11-03',
+            dest: 'MCO',
+            dep: '2026-11-03 06:30:00',
+            arr: '2026-11-04 05:20:00',
+            stops: '1 Stop MCO',
+            nonstop: false,
+            dur: '22 hrs 50 min',
+            allin: 25.21,
+          }),
+        ],
+      }),
+    ],
+    updatedAt: FIXTURE_NOW,
+    routeCount: 14,
+  };
+  const LATE = Date.UTC(2026, 10, 3, 23, 0); // 18:00 ET, it has gone
+  const view = buildBoard(state, LATE);
+  assert.equal(view.dates.length, 0);
+  assert.equal(view.departed.length, 1);
+  assert.equal(view.departed[0].departedCount, 1, 'the folded row is still a departure that left');
+  assert.equal(view.departed[0].pastCount, 0, 'but it was never bookable');
+  const html = renderPage(view, state, [], LATE);
+  assert.ok(/1 departure on 2026-11-03 already left/.test(html), 'the banner states the real count');
+  assert.ok(!/0 departures on/.test(html), 'never "0 departures already left"');
+});
+
+check('a date whose only fares were above $50 and have flown is finished, not "above"', () => {
+  const state = {
+    sweeps: [
+      sweep({
+        date: '2026-11-03',
+        flights: [flight({ date: '2026-11-03', dep: '2026-11-03 06:30:00', arr: '2026-11-03 08:00:00', allin: 63.4 })],
+      }),
+    ],
+    updatedAt: FIXTURE_NOW,
+    routeCount: 14,
+  };
+  const view = buildBoard(state, Date.UTC(2026, 10, 3, 23, 0));
+  assert.equal(view.dates.length, 0, 'nothing is ahead, so nothing is offered');
+  assert.equal(view.departed[0].status, 'departed');
+  assert.equal(view.departed[0].departedCount, 1);
+});
+
+check('a dead collector still raises the stale banner when no dates are left', () => {
+  const state = {
+    sweeps: [
+      sweep({
+        date: '2026-11-03',
+        flights: [flight({ date: '2026-11-03', dep: '2026-11-03 06:30:00', arr: '2026-11-03 08:00:00' })],
+      }),
+    ],
+    updatedAt: FIXTURE_NOW,
+    routeCount: 14,
+  };
+  const LATE = Date.UTC(2026, 10, 3, 20, 0);
+  const view = buildBoard(state, LATE);
+  assert.equal(view.dates.length, 0, 'nothing is ahead');
+  const html = renderPage(view, state, [], LATE);
+  assert.ok(/Data is stale/.test(html), 'an empty board plus a dead collector must say so');
+});
+
 check('MAX_ALL_IN is the only price gate', () => {
   assert.equal(MAX_ALL_IN, 50);
   const state = { sweeps: [sweep({ flights: [flight({ allin: 50.0 }), flight({ allin: 50.0 + 0.004, dest: 'ATL' })] })], updatedAt: Date.now(), routeCount: 14 };

@@ -51,7 +51,9 @@ jobs:
           npm run stress
 
       - name: Deploy to Cloudflare
-        if: env.DEPLOY_TOKEN != ''
+        # main only: a manual dispatch from a feature branch must not push
+        # unreviewed code to production.
+        if: env.DEPLOY_TOKEN != '' && github.ref == 'refs/heads/main'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ env.DEPLOY_TOKEN }}
@@ -62,7 +64,7 @@ jobs:
       # for a credential the repo does not hold, and a red badge stops meaning
       # "broken". This says exactly what is missing instead.
       - name: Say why nothing was deployed
-        if: env.DEPLOY_TOKEN == ''
+        if: env.DEPLOY_TOKEN == '' || github.ref != 'refs/heads/main'
         run: |
           echo "::notice::Gates passed; no CF_DEPLOY_TOKEN secret, so this run did not deploy."
           echo "CF_API_TOKEN is KV-scoped and cannot upload a Worker. Add a token with Workers Scripts:Edit as CF_DEPLOY_TOKEN to make pushes deploy themselves."

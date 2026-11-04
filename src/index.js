@@ -259,7 +259,9 @@ export default {
 
     const match = url.pathname.match(/^\/s\/([A-Za-z0-9_-]{8,})$/);
     if (match) {
-      if (!env.BOARD_TOKEN || match[1] !== env.BOARD_TOKEN) return new Response('Not found', { status: 404 });
+      // One comparison rule for one secret: sameSecret is constant-time, and the
+      // page must not use a different rule from the API that guards the same data.
+      if (!sameSecret(match[1], env.BOARD_TOKEN)) return new Response('Not found', { status: 404 });
       const view = buildBoard(state, now);
       return html(
         renderPage(view, state, frequencyTable(state, ROUTES), now, {
@@ -306,7 +308,7 @@ export default {
     let asset = null;
     const tokAsset = url.pathname.match(/^\/s\/([A-Za-z0-9_-]{8,})\/(manifest\.webmanifest|sw\.js|icon\.svg)$/);
     if (tokAsset) {
-      if (!env.BOARD_TOKEN || tokAsset[1] !== env.BOARD_TOKEN) return new Response('Not found', { status: 404 });
+      if (!sameSecret(tokAsset[1], env.BOARD_TOKEN)) return new Response('Not found', { status: 404 });
       asset = { base: `/s/${tokAsset[1]}`, name: tokAsset[2], origin: PROFILES[PROFILE].origin };
     } else {
       const pubAsset = url.pathname.match(/^\/([a-z]{3})\/(manifest\.webmanifest|sw\.js|icon\.svg)$/);
