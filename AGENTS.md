@@ -90,6 +90,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `tools/seed-schedule.mjs` | rebuild `state.json` (incl. schedule) from `.sweep/` captures |
 | `PLAN.md` | the current ordered plan and its acceptance criteria |
 | `REVIEW.md` | totality review: scorecard, clash catalogue, bottlenecks, ordered fixes, exam standard |
+| `COLLECTION.md` | collection reliability contract (G1-G5), ordered phases, fixture matrix, next-level brief |
 | `tools/render-local.mjs` | render from interactive `.sweep/` captures |
 | `test/acceptance.mjs` | 25 spec-level checks |
 | `test/profiles.mjs` | 9 multi-origin checks: profile resolution, unserved-vs-refused classification, per-origin rendering |
