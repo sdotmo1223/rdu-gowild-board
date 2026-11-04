@@ -223,7 +223,7 @@ check('staleness turns amber only once a sweep is genuinely missed', () => {
   // Cadence is 15 minutes, so a board ten minutes old is healthy.
   const fresh = buildBoard({ routeCount: 14, updatedAt: Date.now() - 10 * 60000, sweeps: [] });
   const old = buildBoard({ routeCount: 14, updatedAt: Date.now() - (STALE_AFTER_MIN + 10) * 60000, sweeps: [] });
-  assert.equal(STALE_AFTER_MIN, 60, 'an hour of slack over the measured 47-60 min cron gap');
+  assert.equal(STALE_AFTER_MIN, 75, 'the worst measured gap plus slack, so stale means a missed run');
   assert.equal(fresh.stale, false);
   assert.equal(old.stale, true);
   assert.ok(renderPage(old, {}, [], Date.now()).includes('class="stamp stale"'));
@@ -311,9 +311,12 @@ check('a two-stop or day-long-only date still shows something', () => {
       { date: '2026-11-03', dest: 'MCO', city: 'Orlando', dep: '2026-11-03 06:30:00', arr: '2026-11-04 05:20:00', stops: '1 Stop MCO', nonstop: false, dur: '22 hrs 50 min', seats: null, allin: 25.21, goWild: true },
     ] }],
   };
-  const view = buildBoard(state);
+  // A clock before the fixture departure: judged at the real clock this 22-hour
+  // option has already left, which is a different case (departed, not folded).
+  const NOW = Date.UTC(2026, 10, 2, 12, 0);
+  const view = buildBoard(state, NOW);
   assert.equal(view.dates[0].status, 'folded', 'an all-folded date must state that, not render empty');
-  const html = renderPage(view, state, [], Date.now());
+  const html = renderPage(view, state, [], NOW);
   assert.ok(!/<ul class="rows"><\/ul>/.test(html), 'never an empty row list');
   assert.ok(/Show them anyway/.test(html));
 });

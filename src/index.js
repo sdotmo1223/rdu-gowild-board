@@ -54,6 +54,14 @@ function sameSecret(a, b) {
   return diff === 0;
 }
 
+// Exported so the gate can be unit-tested without a Worker, a KV binding or a
+// network: the rule being tested is "who may read the board", not the plumbing.
+export function boardAuthorized(request, env) {
+  const url = new URL(request.url);
+  const presented = bearerToken(request) || url.searchParams.get('token');
+  return Boolean(env && sameSecret(presented, env.BOARD_TOKEN));
+}
+
 function bearerToken(request) {
   const header = (request.headers.get('authorization') || '').trim();
   const m = /^Bearer\s+(\S+)$/i.exec(header);
@@ -191,6 +199,16 @@ export default {
 
     if (url.pathname === '/api/ingest') return handleIngest(request, env, url);
 
+    // Authorised before any storage read: an unauthenticated caller must not be
+    // able to make the Worker touch KV, and must not learn anything from a
+    // storage error either.
+    if (url.pathname === '/api/board' && !boardAuthorized(request, env)) {
+      return json(
+        { ok: false, state: 'unauthorized', message: 'Send ?token=<BOARD_TOKEN> or an Authorization: Bearer header.' },
+        401,
+      );
+    }
+
     let state = null;
     try {
       state = await env.BOARD.get('state', 'json');
@@ -199,20 +217,6 @@ export default {
     }
 
     if (url.pathname === '/api/board') {
-      // Same gate as /s/<token>. The JSON carries every itinerary, so leaving it
-      // open would hand out behind the token's back exactly what the token exists
-      // to withhold.
-      const presented = bearerToken(request) || url.searchParams.get('token');
-      if (!sameSecret(presented, env.BOARD_TOKEN)) {
-        return json(
-          {
-            ok: false,
-            state: 'unauthorized',
-            message: 'Send ?token=<BOARD_TOKEN> or an Authorization: Bearer header.',
-          },
-          401,
-        );
-      }
       if (!state) return json({ ok: false, state: 'no-data', message: 'Collector has never written a snapshot.' });
       const view = buildBoard(state, now);
       return json({
@@ -243,7 +247,7 @@ export default {
             dur: f.dur,
           })),
           past: Array.isArray(d.past) ? d.past.length : 0,
-          rows: Array.isArray(d.ahead) ? d.ahead : d.rows,
+          rows: d.rows,
         })),
         departed: (view.departed || []).map((d) => ({ date: d.date, past: d.pastCount })),
         frequency: frequencyTable(state, ROUTES),

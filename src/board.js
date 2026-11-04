@@ -1,11 +1,11 @@
 import { isBlackout, PEAK_LABEL, MAX_ALL_IN, MAX_STOPS, MAX_DURATION_MIN, easternStamp } from './routes.js';
 
 // Measured, not assumed: GitHub throttles the */15 cron to roughly one run an
-// hour (observed gaps 47-60 min across six green runs), so 45 painted a healthy
-// board amber several times an hour. An hour of slack above the *measured*
-// cadence means stale now only fires when a run is actually missed, which is the
-// whole point of the banner.
-export const STALE_AFTER_MIN = 60;
+// hour, and the observed gaps reach 60 minutes. Setting the threshold AT the worst
+// measured gap still paints a healthy board amber (ageMin rounds up), so the value
+// is the worst gap plus a quarter hour of slack. Stale must mean "a run was
+// missed", or the banner trains the reader to ignore it.
+export const STALE_AFTER_MIN = 75;
 
 // Frontier publishes no check-in deadline, so this is a planning number and the
 // page labels it as one: two hours covers security at RDU plus the gate walk. It
@@ -104,13 +104,17 @@ export function buildBoard(state, now = Date.now()) {
     // Each bookable row carries the time you would have to leave for the airport,
     // so "is this actionable?" is answered on the row instead of in the reader's
     // head. `tight` means the buffer is already gone: still bookable, but only just.
-    const ahead = qualified
-      .filter((f) => !f.dep || String(f.dep) >= stamp)
-      .map((f) => {
-        const leaveBy = minusMinutes(f.dep, AIRPORT_BUFFER_MIN);
-        return { ...f, leaveBy, tight: leaveBy ? leaveBy <= stamp : false };
-      });
+    const decorate = (f) => {
+      const leaveBy = minusMinutes(f.dep, AIRPORT_BUFFER_MIN);
+      return { ...f, leaveBy, tight: leaveBy ? leaveBy <= stamp : false };
+    };
+    // Over-limit options are still real departures, so they get the same treatment:
+    // one that has already gone must not sit under "show them anyway" looking
+    // bookable, and one that is still ahead keeps its date on the board.
+    const ahead = qualified.filter((f) => !f.dep || String(f.dep) >= stamp).map(decorate);
     const past = qualified.filter((f) => f.dep && String(f.dep) < stamp);
+    const foldedAhead = folded.filter((f) => !f.dep || String(f.dep) >= stamp).map(decorate);
+    const foldedPast = folded.filter((f) => f.dep && String(f.dep) < stamp);
 
     // Frontier never announces a blackout; it just inflates the GoWild fare
     // (observed $317.96 on 2026-11-24 vs $15.41 normally). Trust the calendar,
@@ -124,9 +128,11 @@ export function buildBoard(state, now = Date.now()) {
     else if (ahead.length) status = 'ok';
     // Every bookable option already left. Saying that is the difference between a
     // quiet board and a board that looks empty because something broke.
-    else if (past.length) status = 'departed';
+    // Folded-before-departed on purpose: an over-limit option that has not left is
+    // still a real answer for this date, so the date is not finished.
+    else if (foldedAhead.length) status = 'folded';
+    else if (past.length || foldedPast.length) status = 'departed';
     else if (peak) status = 'peak';
-    else if (priced.length) status = 'folded';
     else if (goWild.length) status = 'above';
     else status = 'nogowild';
 
@@ -141,7 +147,8 @@ export function buildBoard(state, now = Date.now()) {
       // lowest GoWild fare seen at all, including ones above the $50 ceiling
       lowest: goWild.length ? Math.min(...goWild.map((f) => f.allin)) : null,
       above: goWild.length - priced.length,
-      folded,
+      folded: foldedAhead,
+      foldedPastCount: foldedPast.length,
       blockedRoutes: forDate.filter((s) => s.blocked).length,
       failedRoutes: failed.length,
       routesScanned: forDate.length,
@@ -155,7 +162,8 @@ export function buildBoard(state, now = Date.now()) {
       past,
       pastCount: past.length,
     });
-    rows.push(...qualified);
+    // The top-level list is the same promise as the per-date one: bookable only.
+    rows.push(...ahead);
   }
 
   // A date whose bookable departures have all left is no longer an answer to "what

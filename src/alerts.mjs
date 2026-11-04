@@ -1,4 +1,4 @@
-import { ORIGIN } from './routes.js';
+import { ORIGIN, MAX_ALL_IN } from './routes.js';
 
 // Zero-cost push notifications via ntfy.sh.
 // No account, no key, no card: the topic name is the only secret and it lives in
@@ -95,7 +95,9 @@ export function buildAlert(state, fresh, now) {
     };
   }
 
-  const rows = (fresh || []).filter((r) => typeof r.allin === 'number' && r.allin <= 50);
+  // The ceiling comes from routes.js, never a literal: the push and the page must
+  // agree the day MAX_ALL_IN moves.
+  const rows = (fresh || []).filter((r) => typeof r.allin === 'number' && r.allin <= MAX_ALL_IN);
   if (!rows.length) return null;
 
   rows.sort((a, b) => String(a.dep).localeCompare(String(b.dep)));
@@ -141,8 +143,11 @@ export function buildWatchAlert(state, fresh, spec, now) {
   if (!hits.length) return null;
 
   const fired = state && state.watchFired && typeof state.watchFired === 'object' ? state.watchFired : {};
+  // The fare is part of the identity. A departure that drops under the watch
+  // price, rises back above it and drops again is a NEW answer; keying on the
+  // departure alone would swallow that second chance for six hours.
   const key = hits
-    .map((r) => `${r.date}|${r.dest}|${r.dep}`)
+    .map((r) => `${r.date}|${r.dest}|${r.dep}|${Number(r.allin).toFixed(2)}`)
     .sort()
     .join(',');
   if (fired[key] && now - Number(fired[key]) < WATCH_REPEAT_MS) return null;

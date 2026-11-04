@@ -12,7 +12,7 @@ import { recordSchedule, weeklyPattern, weekKey } from '../src/schedule.mjs';
 import { mergeSweeps, shouldAbortSweep } from '../collector/parse.mjs';
 import { buildAlert, buildWatchAlert, parseWatch } from '../src/alerts.mjs';
 import { normalizeSeats, parseRoute, extractJourneys, classifyFailure } from '../collector/parse.mjs';
-import worker from '../src/index.js';
+import worker, { boardAuthorized } from '../src/index.js';
 import {
   ROUTES,
   BLACKOUT_DATES,
@@ -594,6 +594,96 @@ check('a watchlist entry alerts once, and only under the watched price', () => {
     null,
     'a fare above the watched price is not a hit',
   );
+});
+
+check('the board JSON is refused without a token and served with one', () => {
+  const env = { BOARD_TOKEN: 'tok-12345678' };
+  assert.equal(boardAuthorized(new Request('https://b.test/api/board'), env), false, 'no credential');
+  assert.equal(boardAuthorized(new Request('https://b.test/api/board?token=nope'), env), false, 'wrong token');
+  assert.equal(boardAuthorized(new Request('https://b.test/api/board?token=tok-12345678'), env), true, 'query token');
+  assert.equal(
+    boardAuthorized(new Request('https://b.test/api/board', { headers: { Authorization: 'Bearer tok-12345678' } }), env),
+    true,
+    'bearer header',
+  );
+  assert.equal(
+    boardAuthorized(new Request('https://b.test/api/board?token=tok-12345678'), {}),
+    false,
+    'an unset server token refuses rather than opening up',
+  );
+});
+
+check('folded options carry the same leave-by advice as listed ones', () => {
+  const state = {
+    sweeps: [
+      sweep({
+        date: '2026-11-03',
+        flights: [
+          flight({ date: '2026-11-03', dep: '2026-11-03 10:12:00', arr: '2026-11-03 12:09:00' }),
+          flight({
+            date: '2026-11-03',
+            dest: 'MCO',
+            dep: '2026-11-03 06:30:00',
+            arr: '2026-11-04 05:20:00',
+            stops: '1 Stop MCO',
+            nonstop: false,
+            dur: '22 hrs 50 min',
+            allin: 25.21,
+          }),
+        ],
+      }),
+    ],
+    updatedAt: FIXTURE_NOW,
+    routeCount: 14,
+  };
+  const view = buildBoard(state, FIXTURE_NOW);
+  assert.equal(view.dates[0].folded.length, 1, 'the 22h option is folded, not dropped');
+  assert.ok(view.dates[0].folded[0].leaveBy, 'an over-limit row still gets a leave time');
+  const html = renderPage(view, state, [], FIXTURE_NOW);
+  const rows = (html.match(/<li class="row"/g) || []).length;
+  const leaves = (html.match(/leave by /g) || []).length;
+  assert.equal(leaves, rows, 'every rendered row says when to leave for the airport');
+});
+
+check('a date is not called finished while a folded option is still ahead', () => {
+  const state = {
+    sweeps: [
+      sweep({
+        date: '2026-11-03',
+        flights: [
+          flight({ date: '2026-11-03', dep: '2026-11-03 06:30:00', arr: '2026-11-03 08:30:00' }),
+          flight({
+            date: '2026-11-03',
+            dest: 'MCO',
+            dep: '2026-11-03 20:00:00',
+            arr: '2026-11-04 18:50:00',
+            stops: '1 Stop MCO',
+            nonstop: false,
+            dur: '22 hrs 50 min',
+            allin: 25.21,
+          }),
+        ],
+      }),
+    ],
+    updatedAt: FIXTURE_NOW,
+    routeCount: 14,
+  };
+  // 18:00 ET: the nonstop has gone, the folded night flight has not.
+  const view = buildBoard(state, Date.UTC(2026, 10, 3, 23, 0));
+  assert.equal(view.departed.length, 0, 'something on this date is still ahead');
+  assert.equal(view.dates[0].status, 'folded');
+  assert.equal(view.dates[0].folded.length, 1);
+});
+
+check('a fare that drops again after rising is a new watch answer', () => {
+  const low = [{ dest: 'ATL', date: '2026-11-03', dep: '2026-11-03 21:30:00', allin: 20 }];
+  const first = buildWatchAlert({}, low, 'ATL<=25', 1);
+  assert.ok(first, 'a fare under the watch price alerts');
+  const fired = { watchFired: { [first.key]: 1000 } };
+  assert.equal(buildWatchAlert(fired, low, 'ATL<=25', 2000), null, 'the same fare is deduped');
+  assert.equal(buildWatchAlert(fired, [{ ...low[0], allin: 30 }], 'ATL<=25', 2000), null, 'above the price is no hit');
+  const cheaper = buildWatchAlert(fired, [{ ...low[0], allin: 18 }], 'ATL<=25', 2000);
+  assert.ok(cheaper && cheaper.key !== first.key, 'a cheaper fare is a new answer, not a duplicate');
 });
 
 check('MAX_ALL_IN is the only price gate', () => {

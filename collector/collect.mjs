@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs';
 import {
   ROUTES,
   ORIGIN,
+  MAX_ALL_IN,
   easternDate,
   frontierDateParam,
   routeShard,
@@ -14,6 +15,7 @@ import { parseRoute, classifyFailure, shouldAbortSweep, mergeSweeps } from './pa
 import { appendTransitions, recordObservation, recordFirstSeen } from '../src/history.js';
 import { buildAlert, buildZeroAlert, buildWatchAlert, sendAlert } from '../src/alerts.mjs';
 import { recordSchedule } from '../src/schedule.mjs';
+import { recordFares } from '../src/pricing.mjs';
 import { readCookieString, applyCookies } from './cookies.mjs';
 
 const KV_KEY = 'state';
@@ -449,7 +451,13 @@ async function main() {
     for (const d of schedDates) recordSchedule(state, d, askedThisSweep, now);
     // One digest for the whole board (both dates). Calling this per-date would
     // overwrite lastRows and re-emit the other date's rows as new transitions.
-    const boardRows = allFlights.filter((f) => f.goWild && f.allin !== null && f.allin <= 50);
+    // Bookable means bookable: a departure that has already left is not a new
+    // opportunity, so it must not create a history transition or a push. Without
+    // this a watchlist could buzz about a flight that left an hour ago.
+    const boardStamp = easternStamp(now);
+    const boardRows = allFlights.filter(
+      (f) => f.goWild && f.allin !== null && f.allin <= MAX_ALL_IN && (!f.dep || String(f.dep) >= boardStamp),
+    );
     // A board that is healthy and empty looks exactly like one nobody is running.
     // Count consecutive empty sweeps so the page can state a verdict instead of
     // repeating "no seats" forever, and so an alert can say "still nothing".
@@ -478,7 +486,6 @@ async function main() {
     // recording only qualifying rows would hide the transition on both sides.
     // allFlights is the fresh response set, so a refused route contributes
     // nothing and cannot be mistaken for "no GoWild seats today".
-    const { recordFares } = await import('../src/pricing.mjs');
     const fareTrack = recordFares(state, allFlights, now);
     console.log(`fares: tracked=${fareTrack.tracked} new=${fareTrack.created}`);
     // Bookability for a date uses every row we hold for it (fresh + carried) so a
@@ -490,7 +497,7 @@ async function main() {
       merged
         .filter((s) => s && s.date === dateISO)
         .flatMap((s) => (Array.isArray(s.flights) ? s.flights : []))
-        .filter((f) => f && f.goWild && f.allin !== null && f.allin <= 50);
+        .filter((f) => f && f.goWild && f.allin !== null && f.allin <= MAX_ALL_IN);
     for (const date of dates) {
       const answered = askedThisSweep.filter((s) => s.date === date && s.ok);
       if (!answered.length) {

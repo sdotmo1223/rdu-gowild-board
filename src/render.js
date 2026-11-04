@@ -103,7 +103,7 @@ const STATE_COPY = {
   departed: 'Every bookable departure on this date has already left.',
 };
 
-function dateSection(d, view) {
+function dateSection(d, view, now) {
   const label = d.blackout || d.peak ? `<span class="badge peak">${esc(PEAK_LABEL)}</span>` : '';
   const freshN = d.freshRoutes == null ? d.routesScanned : d.freshRoutes;
   const carriedNote = d.carriedRoutes
@@ -114,7 +114,7 @@ function dateSection(d, view) {
   if (d.status === 'ok') {
     // Only departures that can still be booked are listed. If some of this date's
     // options have already flown, that is stated rather than left as a silent gap.
-    const live = Array.isArray(d.ahead) ? d.ahead : d.rows;
+    const live = d.rows;
     body = `<ul class="rows">${live.map(rowHtml).join('')}</ul>`;
     const gone = Number(d.pastCount) || 0;
     if (gone) {
@@ -123,6 +123,9 @@ function dateSection(d, view) {
     if (d.folded && d.folded.length) {
       const cap = `${MAX_STOPS} stop${MAX_STOPS === 1 ? '' : 's'} / ${Math.round(MAX_DURATION_MIN / 60)}h`;
       body += `<details class="folded"><summary>${d.folded.length} more under $${MAX_ALL_IN.toFixed(2)} — beyond ${cap}</summary><ul class="rows">${d.folded.map(rowHtml).join('')}</ul></details>`;
+    }
+    if (Number(d.foldedPastCount)) {
+      body += `<div class="state">${d.foldedPastCount} further over-limit option${d.foldedPastCount === 1 ? '' : 's'} on this date already departed.</div>`;
     }
     if (d.peak) {
       body += d.rows.length
@@ -155,7 +158,7 @@ function dateSection(d, view) {
   } else if (d.status === 'noflights') {
     body = `<div class="state">${esc(STATE_COPY.noflights)}</div>`;
   } else if (d.status === 'nogowild' && view && view.zero && Number(view.zero.count) >= 3 && view.zero.since) {
-    const hrs = Math.max(1, Math.round((Date.now() - view.zero.since) / 3600000));
+    const hrs = Math.max(1, Math.round((now - view.zero.since) / 3600000));
     body = `<div class="state warn">${d.total} departure${d.total === 1 ? '' : 's'}, but Frontier released no GoWild seats. <strong>No GoWild from ${esc(PAGE_ORIGIN)} in ${view.zero.count} sweeps over ${hrs}h</strong> &mdash; that reads as a station-level decision, not a quiet day.</div>`;
   } else {
     body = `<div class="state warn">${esc(STATE_COPY.nogowild(d))}</div>`;
@@ -457,7 +460,7 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
   <span class="stamp ${view.stale ? 'stale' : ''}">${esc(ago(view.ageMin))}</span>
 </header>
 ${banner}
-${view.dates.map((d) => dateSection(d, view)).join('')}
+${view.dates.map((d) => dateSection(d, view, now)).join('')}
 ${flipHtml(state)}
 ${scheduleHtml(state)}
 ${heatmapHtml(state)}
