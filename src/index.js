@@ -199,6 +199,20 @@ export default {
     }
 
     if (url.pathname === '/api/board') {
+      // Same gate as /s/<token>. The JSON carries every itinerary, so leaving it
+      // open would hand out behind the token's back exactly what the token exists
+      // to withhold.
+      const presented = bearerToken(request) || url.searchParams.get('token');
+      if (!sameSecret(presented, env.BOARD_TOKEN)) {
+        return json(
+          {
+            ok: false,
+            state: 'unauthorized',
+            message: 'Send ?token=<BOARD_TOKEN> or an Authorization: Bearer header.',
+          },
+          401,
+        );
+      }
       if (!state) return json({ ok: false, state: 'no-data', message: 'Collector has never written a snapshot.' });
       const view = buildBoard(state, now);
       return json({
@@ -217,6 +231,17 @@ export default {
           goWild: d.goWild,
           above50: d.above,
           folded: d.folded ? d.folded.length : 0,
+          // The count alone was a dead end: a caller could see four folded options
+          // and had no way to ask what they were.
+          foldedRows: (d.folded || []).map((f) => ({
+            dest: f.dest,
+            city: f.city,
+            dep: f.dep,
+            arr: f.arr,
+            allin: f.allin,
+            stops: f.stops,
+            dur: f.dur,
+          })),
           past: Array.isArray(d.past) ? d.past.length : 0,
           rows: Array.isArray(d.ahead) ? d.ahead : d.rows,
         })),

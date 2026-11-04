@@ -1,0 +1,53 @@
+name: gowild-deploy
+
+# The collector and the Worker were two halves that could drift: CI wrote fresh
+# snapshots every tick, while the code that renders them only went live when
+# somebody ran wrangler deploy by hand. A merged fix could sit unshipped for days
+# while the board kept serving the old logic. This closes that gap and, because it
+# runs the gates first, it cannot deploy a red tree either.
+#
+# No new secret: CF_API_TOKEN and CF_ACCOUNT_ID already exist for the collector.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'collector/**'
+      - 'wrangler.toml'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+concurrency:
+  group: gowild-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # --ignore-scripts: the suites are pure Node and never launch a browser, so
+      # downloading Chromium here would add a minute to every deploy for nothing.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Gates (a red tree must not deploy)
+        run: |
+          set -e
+          npm test
+          npm run stress
+
+      - name: Deploy to Cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          command: deploy

@@ -112,6 +112,56 @@ export function buildAlert(state, fresh, now) {
   };
 }
 
+// A watchlist is a promise, so it is its own alert: "tell me when ATL is under
+// $25" is not the same question as "tell me when the board changed". Parsed from
+// WATCH="ATL<=25,MCO<=30"; a malformed entry is dropped, never guessed at.
+export function parseWatch(spec) {
+  return String(spec || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => {
+      const m = /^([A-Z]{3})\s*<=?\s*(\d+(?:\.\d+)?)$/i.exec(s);
+      return m ? { dest: m[1].toUpperCase(), max: Number(m[2]) } : null;
+    })
+    .filter(Boolean);
+}
+
+// Long enough that a fare sitting under the watch price all evening buzzes once,
+// short enough that a genuinely new departure is still reported the same night.
+export const WATCH_REPEAT_MS = 6 * 3600 * 1000;
+
+export function buildWatchAlert(state, fresh, spec, now) {
+  const want = parseWatch(spec);
+  if (!want.length) return null;
+
+  const hits = (fresh || []).filter((r) =>
+    want.some((w) => r && r.dest === w.dest && typeof r.allin === 'number' && r.allin <= w.max),
+  );
+  if (!hits.length) return null;
+
+  const fired = state && state.watchFired && typeof state.watchFired === 'object' ? state.watchFired : {};
+  const key = hits
+    .map((r) => `${r.date}|${r.dest}|${r.dep}`)
+    .sort()
+    .join(',');
+  if (fired[key] && now - Number(fired[key]) < WATCH_REPEAT_MS) return null;
+
+  hits.sort((a, b) => String(a.dep).localeCompare(String(b.dep)));
+  const lines = hits
+    .slice(0, 8)
+    .map((r) => `${r.dest} ${shortDate(r.date)} ${clockOf(r.dep)} ${money(r.allin)}`);
+  if (hits.length > 8) lines.push(`+${hits.length - 8} more`);
+
+  return {
+    kind: 'watch',
+    key,
+    title: `GoWild watch: ${hits[0].dest} at ${money(hits[0].allin)}`,
+    message: lines.join('\n'),
+    priority: 'high',
+  };
+}
+
 export async function sendAlert(topic, alert) {
   if (!topic || !alert) return { sent: false, reason: 'no-topic-or-alert' };
   const res = await fetch(`https://ntfy.sh/${encodeURIComponent(topic)}`, {

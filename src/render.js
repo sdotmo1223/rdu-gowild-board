@@ -77,6 +77,7 @@ function rowHtml(r) {
       </div>
       <div class="line3">
         <span>${esc(fmtDuration(r.dur))}</span>
+        ${r.leaveBy ? `<span class="${r.tight ? 'tight' : ''}">leave by ${fmtTime(r.leaveBy)}${r.tight ? ' &middot; leave now' : ''}</span>` : ''}
         <span>${r.seats === 0 ? 'sold out' : r.seats ? `${r.seats} seat${r.seats === 1 ? '' : 's'} left` : 'seats unknown'}</span>
       </div>
       <div class="acts">
@@ -142,7 +143,15 @@ function dateSection(d, view) {
     const cap = `${MAX_STOPS} stop${MAX_STOPS === 1 ? '' : 's'} / ${Math.round(MAX_DURATION_MIN / 60)}h`;
     body = `<div class="state warn">${d.folded.length} GoWild option${d.folded.length === 1 ? '' : 's'} under $${MAX_ALL_IN.toFixed(2)}, all beyond ${cap}.</div><details class="folded" open><summary>Show them anyway</summary><ul class="rows">${d.folded.map(rowHtml).join('')}</ul></details>`;
   } else if (d.status === 'above') {
-    body = `<div class="state warn">${esc(STATE_COPY.above(d))}</div>`;
+    // "Nothing under $50" is only useful if it says how far off it was. The
+    // cheapest GoWild fare is already measured, so the gap is stated rather than
+    // leaving the reader to guess whether it was $51 or $300.
+    const gap = typeof d.lowest === 'number' ? d.lowest - MAX_ALL_IN : null;
+    const detail =
+      gap === null
+        ? ''
+        : ` Cheapest was <strong>$${d.lowest.toFixed(2)}</strong>, $${gap.toFixed(2)} over the ceiling.`;
+    body = `<div class="state warn">${esc(STATE_COPY.above(d))}${detail}</div>`;
   } else if (d.status === 'noflights') {
     body = `<div class="state">${esc(STATE_COPY.noflights)}</div>`;
   } else if (d.status === 'nogowild' && view && view.zero && Number(view.zero.count) >= 3 && view.zero.since) {
@@ -152,8 +161,8 @@ function dateSection(d, view) {
     body = `<div class="state warn">${esc(STATE_COPY.nogowild(d))}</div>`;
   }
 
-  return `<section class="date">
-    <h2>${esc(shortDay(d.date))} ${label}</h2>
+  return `<section class="date" id="d-${esc(d.date)}">
+    <h2>${esc(shortDay(d.date))} ${label}<a class="perm" href="#d-${esc(d.date)}" aria-label="Link to ${esc(d.date)}">#</a></h2>
     ${body}
     <p class="meta">${
       d.carriedReason === 'day-over' && !freshN
@@ -243,6 +252,19 @@ function timingHtml(state) {
     .join('');
   return `<details><summary>When seats appear</summary><table>${body}</table>
     <p class="note">A route needs ${MIN_SAMPLES}+ observations before this claims a time of day.</p></details>`;
+}
+
+// Visible, not buried in a details block: "when do fares actually flip" is the one
+// piece of advice a departures board can give that a timetable cannot.
+function flipHtml(state) {
+  const m = fareMechanics(state);
+  if (!m.instances) return '';
+  if (m.preFlipObserved < FARE_MIN) {
+    return `<p class="note">Fare-flip timing: ${m.preFlipObserved} flip${m.preFlipObserved === 1 ? '' : 's'} watched of ${FARE_MIN} needed, so no time of day is claimed yet.</p>`;
+  }
+  const lead =
+    m.medianLeadHours === null || m.medianLeadHours === undefined ? '' : `, about ${m.medianLeadHours}h before departure`;
+  return `<p class="note">Fare-flip timing: fares watched turning GoWild around <strong>${esc(hourLabel(m.medianFlipHour))} local</strong>${lead} (${m.preFlipObserved} flips out of ${m.instances} itineraries tracked).</p>`;
 }
 
 function pct(part, whole) {
@@ -383,6 +405,8 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
   .price { font-weight:700; color:var(--go); font-size:16px; }
   .leg { font-variant-numeric:tabular-nums; color:#c4ccd8; font-size:13px; }
   .line3 { color:var(--dim); font-size:12px; }
+  .line3 .tight { color:var(--warn); font-weight:600; }
+  .perm { color:#4a5260; text-decoration:none; font-size:11px; margin-left:4px; }
   .badge { font-size:10px; font-weight:700; letter-spacing:.4px; padding:2px 6px; border-radius:5px; text-transform:uppercase; }
   .badge.nonstop { background:#12331c; color:#5fd67a; border:1px solid #235c33; }
   .badge.stops { background:#1b2029; color:#93a0b2; border:1px solid #2b3441; }
@@ -434,6 +458,7 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
 </header>
 ${banner}
 ${view.dates.map((d) => dateSection(d, view)).join('')}
+${flipHtml(state)}
 ${scheduleHtml(state)}
 ${heatmapHtml(state)}
 ${timingHtml(state)}

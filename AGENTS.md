@@ -80,7 +80,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `src/schedule.mjs` | per-date operating matrix + week-over-week stable-vs-rotating verdict |
 | `src/alerts.mjs` | ntfy.sh push, deduped per error state to once / 6 h |
 | `.github/workflows/sweep.yml` | the only collector cron: every origin, sequential, per-profile request budget |
-| `src/index.js` | Worker router: `/s/<TOKEN>`, `/api/board`, `/api/ingest` (token-gated snapshot write), PWA assets |
+| `src/index.js` | Worker router: `/s/<TOKEN>`, `/api/board` (token-gated), `/api/ingest` (token-gated snapshot write), PWA assets |
 | `collector/collect.mjs` | Playwright sweep → KV (or `state.json` with no credentials) |
 | `collector/parse.mjs` | `extractJourneys`, `normalizeFlight`, `parseRoute`, `classifyFailure` |
 | `collector/cookies.mjs` | optional cookie loading, never logs the value |
@@ -131,6 +131,7 @@ npx wrangler deploy
 | `CF_API_TOKEN`, `CF_ACCOUNT_ID`, `CF_KV_NAMESPACE_ID` | write to KV; absent ⇒ writes `state.json` |
 | `HEADLESS=0` | run headed, offscreen (for a local scheduler) |
 | `NTFY_TOPIC` | optional phone push, no account needed |
+| `WATCH` | optional standing question, e.g. `ATL<=25,MCO<=30`; alerts once per 6 h per matching departure set |
 | `WARMUP_URL` | defaults to `https://booking.flyfrontier.com/` — do not change blindly |
 | `STATE_OUT`, `STATE_IN` | snapshot paths |
 | `SWEEP_DAYS` | dates per sweep, default 2. Do not raise it in the normal cadence: 7 routes × N dates is the burst, and one refusal aborts the sweep. |

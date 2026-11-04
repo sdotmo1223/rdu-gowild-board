@@ -1,9 +1,29 @@
 import { isBlackout, PEAK_LABEL, MAX_ALL_IN, MAX_STOPS, MAX_DURATION_MIN, easternStamp } from './routes.js';
 
-// Three missed 15-minute sweeps is a real fault, not jitter. Tighter than this
-// would paint the board amber during one slow GitHub runner start; looser would
-// let a dead cron look healthy for an hour.
-export const STALE_AFTER_MIN = 45;
+// Measured, not assumed: GitHub throttles the */15 cron to roughly one run an
+// hour (observed gaps 47-60 min across six green runs), so 45 painted a healthy
+// board amber several times an hour. An hour of slack above the *measured*
+// cadence means stale now only fires when a run is actually missed, which is the
+// whole point of the banner.
+export const STALE_AFTER_MIN = 60;
+
+// Frontier publishes no check-in deadline, so this is a planning number and the
+// page labels it as one: two hours covers security at RDU plus the gate walk. It
+// is never presented as a Frontier rule.
+export const AIRPORT_BUFFER_MIN = 120;
+
+// Wall-clock subtraction on the New York timestamp string, which is how the rest
+// of this file already compares departures. The 02:00-03:00 DST hour is not
+// treated specially: no departure in this dataset falls inside it, and parsing to
+// epoch would need the zone offset a second time for no extra accuracy.
+function minusMinutes(dep, mins) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(dep || ''));
+  if (!m) return null;
+  const t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5])) - mins * 60000;
+  const dt = new Date(t);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())} ${p(dt.getUTCHours())}:${p(dt.getUTCMinutes())}`;
+}
 
 const byDep = (a, b) => String(a.dep).localeCompare(String(b.dep));
 
@@ -81,7 +101,15 @@ export function buildBoard(state, now = Date.now()) {
     // list looking like an option. It is kept and counted, never deleted: "everything
     // shown is actionable" is only honest if the departed ones are stated out loud.
     // A missing departure time is kept, because an unknown is not a gone one.
-    const ahead = qualified.filter((f) => !f.dep || String(f.dep) >= stamp);
+    // Each bookable row carries the time you would have to leave for the airport,
+    // so "is this actionable?" is answered on the row instead of in the reader's
+    // head. `tight` means the buffer is already gone: still bookable, but only just.
+    const ahead = qualified
+      .filter((f) => !f.dep || String(f.dep) >= stamp)
+      .map((f) => {
+        const leaveBy = minusMinutes(f.dep, AIRPORT_BUFFER_MIN);
+        return { ...f, leaveBy, tight: leaveBy ? leaveBy <= stamp : false };
+      });
     const past = qualified.filter((f) => f.dep && String(f.dep) < stamp);
 
     // Frontier never announces a blackout; it just inflates the GoWild fare

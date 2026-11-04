@@ -10,7 +10,7 @@ import { bookabilityHeatmap } from '../src/heatmap.mjs';
 import { releaseTiming, departureUtcMs, etOffsetHours } from '../src/timing.mjs';
 import { recordSchedule, weeklyPattern, weekKey } from '../src/schedule.mjs';
 import { mergeSweeps, shouldAbortSweep } from '../collector/parse.mjs';
-import { buildAlert } from '../src/alerts.mjs';
+import { buildAlert, buildWatchAlert, parseWatch } from '../src/alerts.mjs';
 import { normalizeSeats, parseRoute, extractJourneys, classifyFailure } from '../collector/parse.mjs';
 import worker from '../src/index.js';
 import {
@@ -151,7 +151,9 @@ check('a 30-date, 840-flight board renders without throwing', () => {
     }
   }
   const state = { sweeps, updatedAt: Date.now(), routeCount: ROUTES.length };
-  const view = buildBoard(state);
+  // Pinned before the fixture window: on the real clock the early dates are
+  // correctly dropped as finished, and this check is about volume, not the clock.
+  const view = buildBoard(state, FIXTURE_NOW);
   assert.equal(view.dates.length, 30);
   const t0 = Date.now();
   const html = renderPage(view, state, frequencyTable(state, ROUTES), Date.now());
@@ -530,6 +532,68 @@ check('an all-blocked state keeps the board and raises the banner', () => {
   assert.equal(d.status, 'blocked');
   const html = renderPage(buildBoard(state), state, [], Date.now());
   assert.ok(/bot protection/i.test(html));
+});
+
+check('each bookable row says when to leave for the airport', () => {
+  const state = {
+    sweeps: [
+      sweep({
+        date: '2026-11-03',
+        flights: [flight({ date: '2026-11-03', dep: '2026-11-03 21:30:00', arr: '2026-11-03 23:40:00' })],
+      }),
+    ],
+    updatedAt: FIXTURE_NOW,
+    routeCount: 14,
+  };
+  const d = buildBoard(state, FIXTURE_NOW).dates[0];
+  assert.equal(d.rows.length, 1);
+  assert.equal(d.rows[0].leaveBy, '2026-11-03 19:30', 'two hours of buffer before departure');
+  assert.equal(d.rows[0].tight, false, 'plenty of time, so it is not flagged');
+  const html = renderPage(buildBoard(state, FIXTURE_NOW), state, [], FIXTURE_NOW);
+  assert.ok(/leave by 7:30 PM/.test(html), 'the row states the leave time, not just the departure');
+});
+
+check('a departure inside the check-in buffer is flagged, never dropped', () => {
+  const state = {
+    sweeps: [
+      sweep({
+        date: '2026-11-03',
+        flights: [flight({ date: '2026-11-03', dep: '2026-11-03 21:30:00', arr: '2026-11-03 23:40:00' })],
+      }),
+    ],
+    updatedAt: FIXTURE_NOW,
+    routeCount: 14,
+  };
+  // 21:00 ET: the flight still has not left, but the two-hour buffer has.
+  const d = buildBoard(state, Date.UTC(2026, 10, 4, 1, 0)).dates[0];
+  assert.equal(d.rows.length, 1, 'it is still bookable, so it is still listed');
+  assert.equal(d.rows[0].tight, true, 'and it says the buffer is gone');
+});
+
+check('a date with only above-ceiling fares names the cheapest and the gap', () => {
+  const state = {
+    sweeps: [sweep({ date: '2026-11-03', flights: [flight({ allin: 63.4 })] })],
+    updatedAt: FIXTURE_NOW,
+    routeCount: 14,
+  };
+  const view = buildBoard(state, FIXTURE_NOW);
+  assert.equal(view.dates[0].status, 'above');
+  const html = renderPage(view, state, [], FIXTURE_NOW);
+  assert.ok(/\$63\.40/.test(html), 'the cheapest fare is stated');
+  assert.ok(/over the ceiling/.test(html), 'and how far over it was');
+});
+
+check('a watchlist entry alerts once, and only under the watched price', () => {
+  assert.equal(parseWatch('ATL<=25, mco<=30, junk').length, 2, 'malformed entries are dropped, not guessed');
+  const fresh = [{ dest: 'ATL', date: '2026-11-03', dep: '2026-11-03 21:30:00', allin: 15.41 }];
+  const a = buildWatchAlert({}, fresh, 'ATL<=25', 1);
+  assert.ok(a && /ATL/.test(a.title), 'a hit under the watched price alerts');
+  assert.equal(buildWatchAlert({ watchFired: { [a.key]: 1000 } }, fresh, 'ATL<=25', 2000), null, 'deduped');
+  assert.equal(
+    buildWatchAlert({}, [{ ...fresh[0], allin: 40 }], 'ATL<=25', 1),
+    null,
+    'a fare above the watched price is not a hit',
+  );
 });
 
 check('MAX_ALL_IN is the only price gate', () => {

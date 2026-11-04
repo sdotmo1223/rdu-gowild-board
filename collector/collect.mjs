@@ -12,7 +12,7 @@ import {
 } from '../src/routes.js';
 import { parseRoute, classifyFailure, shouldAbortSweep, mergeSweeps } from './parse.mjs';
 import { appendTransitions, recordObservation, recordFirstSeen } from '../src/history.js';
-import { buildAlert, buildZeroAlert, sendAlert } from '../src/alerts.mjs';
+import { buildAlert, buildZeroAlert, buildWatchAlert, sendAlert } from '../src/alerts.mjs';
 import { recordSchedule } from '../src/schedule.mjs';
 import { readCookieString, applyCookies } from './cookies.mjs';
 
@@ -518,6 +518,23 @@ async function main() {
         console.log(`alert sent: ${alert.title}`);
       } catch (err) {
         console.error(`alert failed: ${err.message}`);
+      }
+    }
+    // WATCH="ATL<=25" is a standing question, so it is answered separately from
+    // the digest and deduped by the exact departures it names.
+    const watchAlert = buildWatchAlert(state, fresh, process.env.WATCH, now);
+    if (watchAlert) {
+      try {
+        await sendAlert(topic, watchAlert);
+        const fired =
+          state.watchFired && typeof state.watchFired === 'object' ? state.watchFired : {};
+        fired[watchAlert.key] = now;
+        const keys = Object.keys(fired).sort((a, b) => Number(fired[b]) - Number(fired[a]));
+        for (const k of keys.slice(200)) delete fired[k];
+        state.watchFired = fired;
+        console.log(`watch alert sent: ${watchAlert.title}`);
+      } catch (err) {
+        console.error(`watch alert failed: ${err.message}`);
       }
     }
   }
