@@ -583,6 +583,35 @@ check('a date with only above-ceiling fares names the cheapest and the gap', () 
   assert.ok(/over the ceiling/.test(html), 'and how far over it was');
 });
 
+check('"all above" counts only what is still ahead, never a departed cheap fare', () => {
+  // Observed live on PHL 2026-11-05: "11 GoWild departures, all above $50.00. Cheapest
+  // was $15.41, $-34.59 over the ceiling." The cheap fare had already flown.
+  const state = {
+    sweeps: [
+      sweep({
+        date: '2026-11-03',
+        flights: [
+          flight({ date: '2026-11-03', dep: '2026-11-03 06:05:00', allin: 15.41 }),
+          flight({ date: '2026-11-03', dep: '2026-11-03 21:30:00', allin: 114.39 }),
+        ],
+      }),
+    ],
+    updatedAt: FIXTURE_NOW,
+    routeCount: 14,
+  };
+  const view = buildBoard(state, FIXTURE_NOW);
+  const d = view.dates[0];
+  assert.equal(d.status, 'above', 'only over-ceiling fares are still ahead');
+  assert.equal(d.aboveAhead, 1, 'the departed cheap fare is not counted as ahead');
+  assert.equal(d.lowestAbove, 114.39, 'nor does it set the ceiling gap');
+  assert.equal(d.cheapDeparted, 1, 'it is counted as departed instead');
+  const html = renderPage(view, state, [], FIXTURE_NOW);
+  assert.ok(!/\$-/.test(html), 'no negative money is ever printed');
+  assert.ok(/still ahead, all above \$50\.00/.test(html), 'the claim is scoped to what is ahead');
+  assert.ok(/\$64\.39 over the ceiling/.test(html), 'the gap uses the cheapest fare still ahead');
+  assert.ok(/1 cheaper option on this date already departed/.test(html), 'and the departed one is said out loud');
+});
+
 check('a watchlist entry alerts once, and only under the watched price', () => {
   assert.equal(parseWatch('ATL<=25, mco<=30, junk').length, 2, 'malformed entries are dropped, not guessed');
   const fresh = [{ dest: 'ATL', date: '2026-11-03', dep: '2026-11-03 21:30:00', allin: 15.41 }];
