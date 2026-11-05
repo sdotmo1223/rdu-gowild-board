@@ -21,6 +21,8 @@ here, update its entry in the same commit.
 | F8 | `"?row=null"` read as a valid price | `null <= 0` is true in JavaScript |
 | F9 | A dispatch YAML broke after a scripted edit | The edit tool was trusted instead of the artifact |
 | F10 | Coverage figure inverted (8/14 read as 6/14) | Binomial probability was estimated instead of computed |
+| F11 | A proven alert reported as broken | The harness passed the topic as an argv, not an env var |
+| F12 | Three tests failed against correct code | The assertions were written from the plan, not from the contract |
 
 ### F1 — a green pipeline that shipped nothing
 
@@ -115,7 +117,30 @@ the error flattered the system.
 **Fix:** compute it, and print the denominator. **Rule:** no probability, rate or
 percentage without its denominator and the code that produced it.
 
-## The four patterns behind all ten
+### F11 — the harness lied about the system
+
+The end-to-end proof delivered zero pushes. The code was right: `node -e '...' T="$TOPIC"`
+passes an argv, not an environment variable, so the payload carried no topic and the
+Worker correctly refused to send. Reading the KV afterwards showed the dedupe marker
+from an earlier run, which is what made "no push" look like a code defect.
+
+**Fix:** pass values as real environment or arguments, and print the payload you actually
+sent. **Rule:** when a test fails, suspect the instrument before the subject; a harness
+without its own assertions is a second unverified system.
+
+### F12 — tests written from intent
+
+Three assertions in one session failed against correct code: a date with no rows was
+expected to report an age, a write token was expected to satisfy the legacy fallback, and
+a bootstrap payload was expected to be assembled by the shell. Each expectation came from
+the plan in my head rather than from the contract in the file.
+
+**Fix:** write the assertion after reading the branch it covers, and prefer a message
+that states the contract ("a date with no rows has no provenance to age"). **Rule:** a
+failing test is a claim about two things; establish which one is wrong before editing
+either.
+
+## The four patterns behind all twelve
 
 1. **Trusted the badge, not the artifact.** A green job, a "success" response, a header
    saying "updated 12 min ago". Each was a claim about a process; none was a claim about
