@@ -112,7 +112,7 @@ export function buildBoard(state, now = Date.now()) {
       }
     }
     const dateStamps = [...seenAt.values()].filter((n) => Number.isFinite(n) && n > 0);
-    const oldestAt = dateStamps.length ? Math.min(...dateStamps) : null;
+    const oldestFetchedAt = dateStamps.length ? Math.min(...dateStamps) : null;
     // A row older than the ceiling is a memory of a seat, not evidence of one.
     const tooOld = (f) => {
       const at = seenAt.get(f);
@@ -137,7 +137,14 @@ export function buildBoard(state, now = Date.now()) {
     // one that has already gone must not sit under "show them anyway" looking
     // bookable, and one that is still ahead keeps its date on the board.
     const aheadRaw = qualified.filter((f) => !f.dep || String(f.dep) >= stamp);
-    const ahead = aheadRaw.filter((f) => !tooOld(f)).map(decorate);
+    const aheadFreshRaw = aheadRaw.filter((f) => !tooOld(f));
+    const ahead = aheadFreshRaw.map(decorate);
+    // The header reports the age of what is actually offered, not of the oldest
+    // thing in the blob: withheld rows must not make fresh fares look old.
+    const shownStamps = aheadFreshRaw
+      .map((f) => seenAt.get(f))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    const oldestAt = shownStamps.length ? Math.min(...shownStamps) : oldestFetchedAt;
     // Withheld, never deleted: the date still states how many options it has and
     // when they were last checked, so an old board reads as old instead of empty.
     const withheld = aheadRaw.filter(tooOld);
