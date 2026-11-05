@@ -246,6 +246,9 @@ export function buildBoard(state, now = Date.now()) {
     // The worst row provenance across the visible dates, so the header cannot claim
     // a freshness the fares under it do not have.
     oldestAgeMin: offeredAge ?? fetchedAge,
+    // True when that age describes fares on offer. False means nothing is offered
+    // and the number is the age of the stored data, which is a different claim.
+    oldestOffered: Boolean(offeredAge),
     stale: ageMin === null || ageMin > STALE_AFTER_MIN,
     error: src.lastError || null,
     routeCount: src.routeCount || 0,

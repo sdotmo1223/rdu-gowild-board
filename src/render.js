@@ -179,7 +179,7 @@ function dateSection(d, view, now) {
     <p class="meta">${
       d.carriedReason === 'day-over' && !freshN
         ? `${d.routesScanned} routes carried${d.carriedAt ? ` from ${esc(hhmm(d.carriedAt))} ET` : ''} &middot; departures for this date have finished`
-        : `${freshN}/${d.routesScanned} routes re-checked${d.failedRoutes ? ` &middot; ${d.failedRoutes} failed` : ''}${d.blockedRoutes ? ` &middot; ${d.blockedRoutes} blocked` : ''}${carriedNote}${Number(d.oldestAgeMin) > 60 ? ` &middot; oldest fare ${esc(ago(d.oldestAgeMin))}` : ''}`
+        : `${freshN}/${d.routesScanned} routes re-checked${d.failedRoutes ? ` &middot; ${d.failedRoutes} failed` : ''}${d.blockedRoutes ? ` &middot; ${d.blockedRoutes} blocked` : ''}${carriedNote}${d.rows.length && Number(d.oldestAgeMin) > 60 ? ` &middot; oldest fare ${esc(ago(d.oldestAgeMin))}` : ''}`
     }</p>
   </section>`;
 }
@@ -471,7 +471,7 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
 <body>
 <header>
   <h1>{ORIGIN} <span>GoWild</span></h1>
-  <span class="stamp ${view.stale ? 'stale' : ''}">${esc(ago(view.ageMin))}${Number(view.oldestAgeMin) > Number(view.ageMin) ? ` &middot; oldest fare ${esc(ago(view.oldestAgeMin))}` : ''}</span>
+  <span class="stamp ${view.stale ? 'stale' : ''}">${esc(ago(view.ageMin))}${Number(view.oldestAgeMin) > Number(view.ageMin) ? ` &middot; ${view.oldestOffered ? 'oldest fare' : 'oldest data'} ${esc(ago(view.oldestAgeMin))}` : ''}</span>
 </header>
 ${banner}
 ${view.dates.map((d) => dateSection(d, view, now)).join('')}

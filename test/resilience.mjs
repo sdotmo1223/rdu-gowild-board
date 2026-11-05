@@ -86,7 +86,7 @@ ok(d.oldestAgeMin >= MAX_ROW_AGE_MIN, `oldest age ${d.oldestAgeMin} should excee
 ok(view.oldestAgeMin >= MAX_ROW_AGE_MIN, 'the header must inherit the worst row age');
 html = renderPage(view, state, [], now);
 ok(/more than 3 hours/.test(html), 'the page must say why nothing is offered');
-ok(/oldest fare/.test(html), 'the header must state the oldest fare age');
+ok(/oldest data/.test(html), 'with nothing offered the header states the data age');
 
 // Mixed: one fresh route and one stale route. The fresh one is shown, the stale one
 // is named rather than silently dropped or silently priced.
@@ -105,6 +105,7 @@ ok(d.rows.length === 1 && d.rows[0].dest === 'ATL', 'only the fresh row is offer
 ok(d.withheld === 1, 'the stale row is counted');
 html = renderPage(view, state, [], now);
 ok(/1 older option withheld/.test(html), 'the withheld row is stated, not hidden');
+ok(/oldest fare/.test(html), 'an offered row makes the age a fare age');
 
 // A stampless snapshot (older collector) must not be treated as infinitely old:
 // unknown age is not the same as bad age, and hiding everything on upgrade would
@@ -112,5 +113,19 @@ ok(/1 older option withheld/.test(html), 'the withheld row is stated, not hidden
 state = { sweeps: [sweep('ATL', null)], updatedAt: now, routeCount: 14 };
 view = buildBoard(state, now);
 ok(view.dates[0].rows.length === 1, 'a row with no stamp is shown, not withheld');
+
+// A date with no fares on offer has no "oldest fare". Quoting one would be an age
+// for something that does not exist, and the header must downgrade to data age.
+state = {
+  sweeps: [{ date: DATE, dest: 'ATL', ok: true, blocked: false, reason: 'no-flights', flights: [], at: staleAt }],
+  updatedAt: now,
+  routeCount: 14,
+};
+view = buildBoard(state, now);
+ok(view.dates[0].status === 'noflights', `an empty date should read noflights, got ${view.dates[0].status}`);
+ok(view.oldestOffered === false, 'nothing offered means the header reports data age');
+html = renderPage(view, state, [], now);
+ok(!/oldest fare/.test(html), 'an empty date must not claim an oldest fare');
+ok(view.oldestAgeMin === null, 'a date with no rows has no provenance to age');
 
 console.log(`resilience: ${checks} checks passed`);
