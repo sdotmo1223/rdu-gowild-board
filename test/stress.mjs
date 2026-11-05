@@ -586,6 +586,8 @@ check('a date with only above-ceiling fares names the cheapest and the gap', () 
 check('"all above" counts only what is still ahead, never a departed cheap fare', () => {
   // Observed live on PHL 2026-11-05: "11 GoWild departures, all above $50.00. Cheapest
   // was $15.41, $-34.59 over the ceiling." The cheap fare had already flown.
+  // 21:00 ET on the fixture date: 06:05 has gone, 21:30 has not.
+  const NOW = Date.UTC(2026, 10, 4, 1, 0);
   const state = {
     sweeps: [
       sweep({
@@ -596,16 +598,16 @@ check('"all above" counts only what is still ahead, never a departed cheap fare'
         ],
       }),
     ],
-    updatedAt: FIXTURE_NOW,
+    updatedAt: NOW,
     routeCount: 14,
   };
-  const view = buildBoard(state, FIXTURE_NOW);
+  const view = buildBoard(state, NOW);
   const d = view.dates[0];
   assert.equal(d.status, 'above', 'only over-ceiling fares are still ahead');
   assert.equal(d.aboveAhead, 1, 'the departed cheap fare is not counted as ahead');
   assert.equal(d.lowestAbove, 114.39, 'nor does it set the ceiling gap');
   assert.equal(d.cheapDeparted, 1, 'it is counted as departed instead');
-  const html = renderPage(view, state, [], FIXTURE_NOW);
+  const html = renderPage(view, state, [], NOW);
   assert.ok(!/\$-/.test(html), 'no negative money is ever printed');
   assert.ok(/still ahead, all above \$50\.00/.test(html), 'the claim is scoped to what is ahead');
   assert.ok(/\$64\.39 over the ceiling/.test(html), 'the gap uses the cheapest fare still ahead');
