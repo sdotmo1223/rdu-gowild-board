@@ -106,16 +106,24 @@ const addParam = (u, p) => u + (u.includes('?') ? '&' : '?') + p;
 
 function ingestEnv() {
   const url = process.env.BOARD_INGEST_URL;
-  const token = (process.env.BOARD_WRITE_TOKEN || process.env.BOARD_TOKEN);
-  if (!url || !token) return null;
+  // Two credentials, two directions. GET /api/ingest accepts only BOARD_TOKEN and
+  // POST /api/ingest accepts only BOARD_WRITE_TOKEN. One shared variable here is
+  // what broke every sweep on 2026-11-05: the pre-flight read presented the write
+  // token, was refused with 401, and the run died before a single Frontier request.
+  const readToken = process.env.BOARD_TOKEN;
+  const writeToken = process.env.BOARD_WRITE_TOKEN || process.env.BOARD_TOKEN;
+  if (!url || !readToken || !writeToken) return null;
   // A second origin writes its own KV key through the same Worker, so CI needs
   // no new secret and no second endpoint: only the profile name changes where
   // the snapshot lands.
-  return { url: PROFILE === 'rdu' ? url : addParam(url, `profile=${PROFILE}`), token };
+  return { url: PROFILE === 'rdu' ? url : addParam(url, `profile=${PROFILE}`), readToken, writeToken };
 }
 
-async function ingestFetch(env, url, { method = 'GET', body } = {}) {
-  const headers = { Authorization: `Bearer ${env.token}` };
+async function ingestFetch(env, url, { method = 'GET', body, token } = {}) {
+  // The caller names the credential; there is no default, so a new call site cannot
+  // silently borrow the wrong one.
+  if (!token) throw new Error(`ingest ${method} has no token — refusing to borrow one`);
+  const headers = { Authorization: `Bearer ${token}` };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   const res = await fetch(url, { method, headers, body });
   const text = await res.text();
@@ -220,13 +228,13 @@ async function main() {
   const kv = dry || ingest ? null : kvEnv();
   let previous = null;
   if (ingest) {
-    const probe = await ingestFetch(ingest, addParam(ingest.url, 'dryRun=1'), { method: 'POST', body: '{}' });
+    const probe = await ingestFetch(ingest, addParam(ingest.url, 'dryRun=1'), { method: 'POST', body: '{}', token: ingest.writeToken });
     if (!probe.ok) {
       throw new Error(
         `ingest dry run rejected (HTTP ${probe.status}): ${probe.text.slice(0, 200)} — no Frontier requests were made`,
       );
     }
-    const got = await ingestFetch(ingest, ingest.url, { method: 'GET' });
+    const got = await ingestFetch(ingest, ingest.url, { method: 'GET', token: ingest.readToken });
     if (!got.ok) throw new Error(`ingest read failed (HTTP ${got.status}) — no Frontier requests were made`);
     previous = got.parsed && got.parsed.state ? got.parsed.state : null;
     console.log('write path: worker-ingest (dry run + read ok)');
@@ -722,7 +730,7 @@ async function main() {
     // second secret the owner cannot read back. The Worker strips it before storing.
     const notifyTopic = process.env.NTFY_TOPIC;
     const blob = JSON.stringify(notifyTopic ? { ...state, notifyTopic } : state);
-    const res = await ingestFetch(ingest, ingest.url, { method: 'POST', body: blob });
+    const res = await ingestFetch(ingest, ingest.url, { method: 'POST', body: blob, token: ingest.writeToken });
     if (!res.ok) throw new Error(`ingest write failed (HTTP ${res.status}): ${res.text.slice(0, 200)}`);
     console.log(`ingest write complete: ${blob.length} bytes via the Worker.`);
     return;

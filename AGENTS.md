@@ -98,7 +98,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `test/rotation.mjs` | 53 checks: tick-driven shard alternation, two-tick and budgeted coverage |
 | `test/carry.mjs` | 7 checks: a carried row keeps its real fetch time, never re-stamps |
 | `test/resilience.mjs` | 34 checks: one refusal must not end a sweep, three strikes retire a route, and a fare older than 3 h is withheld |
-| `test/health.mjs` | 29 checks: heartbeat, Worker-side stale alert, the collector-to-Worker topic bootstrap, and the read/write token split |
+| `test/health.mjs` | 34 checks: heartbeat, Worker-side stale alert, the collector-to-Worker topic bootstrap, and the read/write token split — including which credential each collector call site presents |
 | `test/stress.mjs` | 48 adversarial checks (hostile input, malformed state, volume, budget, fare retention) |
 
 ---

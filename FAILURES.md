@@ -23,6 +23,7 @@ here, update its entry in the same commit.
 | F10 | Coverage figure inverted (8/14 read as 6/14) | Binomial probability was estimated instead of computed |
 | F11 | A proven alert reported as broken | The harness passed the topic as an argv, not an env var |
 | F12 | Three tests failed against correct code | The assertions were written from the plan, not from the contract |
+| F13 | 21 hours of sweeps died at the pre-flight read | One token variable served both directions of a split endpoint |
 
 ### F1 — a green pipeline that shipped nothing
 
@@ -140,7 +141,23 @@ that states the contract ("a date with no rows has no provenance to age"). **Rul
 failing test is a claim about two things; establish which one is wrong before editing
 either.
 
-## The four patterns behind all twelve
+### F13 — the split broke the caller it was protecting
+
+`GET /api/ingest` was taught to accept only `BOARD_TOKEN`; the collector was given
+`BOARD_WRITE_TOKEN || BOARD_TOKEN` as a single `token` used for both the pre-flight read
+and the write. In CI both secrets exist, so the read presented the write token, got 401,
+and the sweep aborted **before any Frontier request** — politely, with exit code 1, every
+15 minutes for 21 hours while the board served a day-old snapshot.
+
+It was found by the board's own header (`updated 21h 41m ago`), not by any gate: the
+handler tests proved the handler was right, and nothing proved the caller was.
+
+**Fix:** the credential is now named per call site, `ingestFetch` refuses to default one,
+and `test/health.mjs` reads the collector source to assert read-token-on-GET,
+write-token-on-POST. **Rule:** when you split a contract, the caller is half the change;
+gate the caller, and make the compiler/limits refuse to pick for you.
+
+## The four patterns behind all thirteen
 
 1. **Trusted the badge, not the artifact.** A green job, a "success" response, a header
    saying "updated 12 min ago". Each was a claim about a process; none was a claim about

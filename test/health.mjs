@@ -1,6 +1,7 @@
 // Liveness and capability: the board must be able to say that nothing is writing to
 // it, and a shared read link must not be able to replace what it reads.
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   buildHeartbeatAlert,
   shouldSendStaleAlert,
@@ -67,5 +68,17 @@ ok(ingestAuthorized(post(''), split) === false, 'no token cannot write');
 ok(ingestAuthorized(post('read-token-aaaaaaaa'), { BOARD_TOKEN: 'read-token-aaaaaaaa' }) === true, 'before the split the old token still writes, so the deploy cannot break the cron');
 ok(ingestAuthorized(post('wrong'), { BOARD_TOKEN: 'read-token-aaaaaaaa' }) === false, 'the fallback still checks the value');
 ok(ingestAuthorized(post('read-token-aaaaaaaa'), {}) === false, 'no configuration cannot write');
+
+// The handler was right and the collector was wrong: both were "the token", and only
+// one of them is accepted in each direction. This reads the collector, because the
+// defect lived in its choice of credential, not in any response it got.
+const collectorSrc = readFileSync(new URL('../collector/collect.mjs', import.meta.url), 'utf8');
+ok(/method: 'GET', token: ingest\.readToken/.test(collectorSrc), 'the pre-flight read presents the read token');
+ok(/method: 'POST', body: blob, token: ingest\.writeToken/.test(collectorSrc), 'the snapshot write presents the write token');
+// Scoped to the ingest helper: the KV path legitimately carries one credential.
+const ingestRegion = collectorSrc.slice(collectorSrc.indexOf('async function ingestFetch'), collectorSrc.indexOf('async function openFaresPage'));
+ok(ingestRegion.length > 100 && !/env\.token/.test(ingestRegion), 'the ingest helper has no shared token to borrow');
+ok(!/const token = \(process\.env\.BOARD_WRITE_TOKEN/.test(collectorSrc), 'the ingest credential is not collapsed into one variable');
+ok(/readToken = process\.env\.BOARD_TOKEN/.test(collectorSrc), 'the read credential is BOARD_TOKEN, never the write token');
 
 console.log(`health: ${checks} checks passed`);
