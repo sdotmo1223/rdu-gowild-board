@@ -69,6 +69,33 @@ jobs:
           echo "Until then, every change under src/ is invisible to the live board."
           exit 1
 
+      # "No access to the specified service" is Cloudflare's answer for a token with
+      # the wrong scope, a token in the wrong account, and a script that does not
+      # exist alike. Ask the API first so the run names which one it is, and print
+      # the token's own permission list (never the token).
+      - name: Check the deploy token can see this Worker
+        if: steps.token.outputs.have == 'true' && github.ref == 'refs/heads/main'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_DEPLOY_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          set -u
+          echo "::group::token permissions"
+          npx --yes wrangler@4 whoami 2>&1 | sed -n '/Token Permissions/,$p' || true
+          echo "::endgroup::"
+          code=$(curl -sS -o /tmp/svc.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/workers/scripts/rdu-gowild-board" || echo 000)
+          if [ "$code" = "200" ]; then
+            echo "token can read worker rdu-gowild-board (HTTP 200)"
+            exit 0
+          fi
+          echo "::error::Deploy token cannot see worker rdu-gowild-board (HTTP $code)."
+          head -c 400 /tmp/svc.json || true; echo
+          echo "Needs: Account > Workers Scripts > Edit, on account ${CF_ACCOUNT_ID}."
+          exit 1
+
       - name: Deploy to Cloudflare
         # main only: a manual dispatch from a feature branch must not push
         # unreviewed code to production.
@@ -77,6 +104,9 @@ jobs:
         with:
           apiToken: ${{ secrets.CF_DEPLOY_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          # The action defaults to an old v3, which cannot read this config's
+          # preview_urls and warns on every deploy. Match the local toolchain.
+          wranglerVersion: '4'
           command: deploy
 
       # The upload can succeed while the edge keeps serving the previous script, and
