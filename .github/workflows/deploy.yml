@@ -55,6 +55,20 @@ jobs:
         id: token
         run: echo "have=${{ secrets.CF_DEPLOY_TOKEN != '' }}" >> $GITHUB_OUTPUT
 
+      # A green run that shipped nothing is worse than a red one: it is a false
+      # claim that the fix is live. This fails instead, so a green badge means the
+      # Worker on the edge is this commit. The one way to silence it is to give the
+      # repo a deploy token.
+      - name: Fail if this push cannot ship
+        if: steps.token.outputs.have != 'true' && github.ref == 'refs/heads/main'
+        run: |
+          echo "::error::CF_DEPLOY_TOKEN is missing, so this push did NOT reach Cloudflare."
+          echo "CF_API_TOKEN is KV-scoped and Cloudflare refuses it for a Worker upload."
+          echo "Create a token with Account > Workers Scripts > Edit, then run:"
+          echo "  gh secret set CF_DEPLOY_TOKEN --repo ${{ github.repository }}"
+          echo "Until then, every change under src/ is invisible to the live board."
+          exit 1
+
       - name: Deploy to Cloudflare
         # main only: a manual dispatch from a feature branch must not push
         # unreviewed code to production.
@@ -65,11 +79,24 @@ jobs:
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
           command: deploy
 
-      # A deploy step that always fails is worse than none: it makes every push red
-      # for a credential the repo does not hold, and a red badge stops meaning
-      # "broken". This says exactly what is missing instead.
-      - name: Say why nothing was deployed
-        if: steps.token.outputs.have != 'true' || github.ref != 'refs/heads/main'
+      # The upload can succeed while the edge keeps serving the previous script, and
+      # a skipped step used to look exactly like a shipped one. Ask the account what
+      # it actually has, and fail if no deployment is dated today.
+      - name: Prove the edge took it
+        if: steps.token.outputs.have == 'true' && github.ref == 'refs/heads/main'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_DEPLOY_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         run: |
-          echo "::notice::Gates passed; no CF_DEPLOY_TOKEN secret, so this run did not deploy."
-          echo "CF_API_TOKEN is KV-scoped and cannot upload a Worker. Add a token with Workers Scripts:Edit as CF_DEPLOY_TOKEN to make pushes deploy themselves."
+          set -u
+          out=$(npx --yes wrangler@4 deployments list --name rdu-gowild-board 2>&1 || true)
+          echo "$out" | head -c 800; echo
+          if ! echo "$out" | grep -q "$(date -u +%Y-%m-%d)"; then
+            echo "::error::No deployment dated today (UTC): the upload did not land."
+            exit 1
+          fi
+          echo "edge reports a deployment created today"
+
+      - name: Note why a non-main ref did not deploy
+        if: github.ref != 'refs/heads/main'
+        run: echo "::notice::Not main; gates ran, nothing deployed."
