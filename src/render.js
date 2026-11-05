@@ -98,7 +98,11 @@ const STATE_COPY = {
   blocked: 'Blocked — Frontier bot protection returned a challenge page. Last known data shown.',
   error: 'Collector error for this date. No data was returned.',
   noflights: 'No Frontier departures from {ORIGIN} on this date.',
-  above: (d) => `${d.goWild} GoWild departure${d.goWild === 1 ? '' : 's'}, all above $${MAX_ALL_IN.toFixed(2)}.`,
+  above: (d) => {
+    // Only departures still ahead can be "all above" the ceiling.
+    const n = d.aboveAhead || d.goWild;
+    return `${n} GoWild departure${n === 1 ? '' : 's'} still ahead, all above $${MAX_ALL_IN.toFixed(2)}.`;
+  },
   nogowild: (d) => `${d.total} departure${d.total === 1 ? '' : 's'}, but Frontier released no GoWild seats.`,
 };
 
@@ -158,11 +162,17 @@ function dateSection(d, view, now) {
     // "Nothing under $50" is only useful if it says how far off it was. The
     // cheapest GoWild fare is already measured, so the gap is stated rather than
     // leaving the reader to guess whether it was $51 or $300.
-    const gap = typeof d.lowest === 'number' ? d.lowest - MAX_ALL_IN : null;
-    const detail =
-      gap === null
-        ? ''
-        : ` Cheapest was <strong>$${d.lowest.toFixed(2)}</strong>, $${gap.toFixed(2)} over the ceiling.`;
+    // The gap is measured against the cheapest fare still ahead; the overall cheapest
+    // may be a departure that already left, which would make the gap negative and the
+    // sentence nonsense.
+    const gap = typeof d.lowestAbove === 'number' ? d.lowestAbove - MAX_ALL_IN : null;
+    let detail = '';
+    if (gap !== null && gap > 0) {
+      detail = ` Cheapest still ahead was <strong>$${d.lowestAbove.toFixed(2)}</strong>, $${gap.toFixed(2)} over the ceiling.`;
+    }
+    if (Number(d.cheapDeparted)) {
+      detail += ` ${d.cheapDeparted} cheaper option${d.cheapDeparted === 1 ? '' : 's'} on this date already departed.`;
+    }
     body = `<div class="state warn">${esc(STATE_COPY.above(d))}${detail}</div>`;
   } else if (d.status === 'noflights') {
     body = `<div class="state">${esc(STATE_COPY.noflights)}</div>`;

@@ -196,6 +196,13 @@ export function buildBoard(state, now = Date.now()) {
       // lowest GoWild fare seen at all, including ones above the $50 ceiling
       lowest: goWild.length ? Math.min(...goWild.map((f) => f.allin)) : null,
       above: goWild.length - priced.length,
+      // `above` counts every over-ceiling fare, including ones that already flew. The
+      // claim "all above $50" and the gap over the ceiling may only use what is still
+      // ahead: a $15.41 that departed at 06:05 made the old copy say "11 departures,
+      // all above $50, cheapest $15.41, $-34.59 over the ceiling" (observed 2026-11-05).
+      aboveAhead: aboveAhead.length,
+      lowestAbove: aboveAhead.length ? Math.min(...aboveAhead.map((f) => f.allin)) : null,
+      cheapDeparted: past.length,
       folded: foldedAhead,
       foldedPastCount: foldedPast.length,
       blockedRoutes: forDate.filter((s) => s.blocked).length,
