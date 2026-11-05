@@ -12,7 +12,14 @@ import {
   easternStamp,
   PROFILE,
 } from '../src/routes.js';
-import { parseRoute, classifyFailure, shouldAbortSweep, mergeSweeps } from './parse.mjs';
+import {
+  parseRoute,
+  classifyFailure,
+  shouldAbortSweep,
+  refusalEndsSweep,
+  routeRetired,
+  mergeSweeps,
+} from './parse.mjs';
 import { appendTransitions, recordObservation, recordFirstSeen } from '../src/history.js';
 import { buildAlert, buildZeroAlert, buildWatchAlert, parseWatch, sendAlert } from '../src/alerts.mjs';
 import { recordSchedule } from '../src/schedule.mjs';
@@ -20,10 +27,8 @@ import { recordFares } from '../src/pricing.mjs';
 import { readCookieString, applyCookies } from './cookies.mjs';
 
 const KV_KEY = 'state';
-// A city pair retired after this many "not sold" answers...
-const QUARANTINE_AFTER = 3;
-// ...but not forever: a route Frontier restarts must come back by itself.
-const QUARANTINE_RETRY_MS = 7 * 24 * 3600 * 1000;
+// QUARANTINE_AFTER / QUARANTINE_RETRY_MS live in parse.mjs with routeRetired(), so
+// the retirement rule is testable without a browser.
 // The largest burst this project has evidence for is 28 requests (28/28 clean on
 // 2026-11-03). "Ask everything" on a 22-route profile would be 44, so forced
 // sweeps are capped and the remainder is deferred to the rotation.
@@ -271,13 +276,7 @@ async function main() {
   // must not be paid for forever. Three sightings retire it; FULL_SWEEP=1 or
   // SWEEP_ONLY=CODE puts it back deliberately.
   const watch = previous && previous.routeWatch && typeof previous.routeWatch === 'object' ? previous.routeWatch : {};
-  const quarantined = Object.keys(watch).filter((c) => {
-    const w = watch[c] && typeof watch[c] === 'object' ? watch[c] : null;
-    if (!w || Number(w.notServed) < QUARANTINE_AFTER) return false;
-    // Retired, but re-checkable: after a week the pair is asked again in case
-    // Frontier restarted it. Permanent removal would hide a real route forever.
-    return !(w.lastAt && startedAt - Number(w.lastAt) >= QUARANTINE_RETRY_MS);
-  });
+  const quarantined = Object.keys(watch).filter((c) => routeRetired(watch[c], startedAt));
   const forced = onlyCodes.length > 0 || process.env.FULL_SWEEP === '1';
   let routePool = onlyCodes.length ? ROUTES.filter((r) => onlyCodes.includes(r.code)) : ROUTES.slice();
   if (quarantined.length && !forced) routePool = routePool.filter((r) => !quarantined.includes(r.code));
@@ -343,6 +342,7 @@ async function main() {
 
   const sweeps = [];
   const notServedHits = [];
+  const refusedHits = [];
   const servedHits = [];
   const total = dates.length * plannedRoutes.length;
   let requests = 0;
@@ -351,6 +351,8 @@ async function main() {
   // Labelled so a refusal can end both loops at once: there is no point asking
   // the remaining routes once Frontier has started refusing the burst.
   outer: for (const date of dates) {
+    // Consecutive refusals on this date. Reset by any usable answer.
+    let refusals = 0;
     for (const route of plannedRoutes) {
       const path = `/Flight/InternalSelect?o1=${ORIGIN}&d1=${route.code}&dd1=${frontierDateParam(date)}&ADT=1&mon=true&promo=`;
       let response = null;
@@ -384,12 +386,30 @@ async function main() {
       else if (parsed.ok && watch[route.code]) servedHits.push(route.code);
       console.log(`${date} ${route.code}: ${parsed.reason} flights=${parsed.flights.length} blocked=${parsed.blocked}`);
       if (shouldAbortSweep(parsed)) {
-        abortedAt = { date, dest: route.code, reason: parsed.reason, attempts: sweeps.length };
-        console.error(
-          `${route.code} was refused (${parsed.reason}); stopping after ${sweeps.length}/${total} requests. ` +
-            'Once one fare request is refused, the rest of the burst is refused too.',
+        refusedHits.push(route.code);
+        refusals += 1;
+        // One refusal is not proof the burst is blocked: a single route can answer
+        // without a journeys array while the rest of the sweep is fine. PHL died at
+        // MYR on every tick because of this, never reaching the seven routes after it.
+        if (refusalEndsSweep(refusals)) {
+          abortedAt = {
+            date,
+            dest: route.code,
+            reason: parsed.reason,
+            attempts: sweeps.length,
+            streak: refusals,
+          };
+          console.error(
+            `${route.code} refused twice in a row (${parsed.reason}); stopping after ${sweeps.length}/${total} requests. ` +
+              'Two consecutive refusals read as a burst-level block; continuing spends the budget being told no.',
+          );
+          break outer;
+        }
+        console.warn(
+          `${route.code} refused (${parsed.reason}); continuing, one route is not yet a burst block.`,
         );
-        break outer;
+      } else {
+        refusals = 0;
       }
       await sleep(jitter());
     }
@@ -412,6 +432,17 @@ async function main() {
         ? state.routeWatch[code]
         : { notServed: 0, firstAt: now };
     w.notServed = Number(w.notServed || 0) + 1;
+    w.lastAt = now;
+    state.routeWatch[code] = w;
+  }
+  // A route that refuses repeatedly is retired exactly like a pair Frontier does
+  // not fly: three strikes, then a week off before it is asked again.
+  for (const code of new Set(refusedHits)) {
+    const w =
+      state.routeWatch[code] && typeof state.routeWatch[code] === 'object'
+        ? state.routeWatch[code]
+        : { refused: 0, firstAt: now };
+    w.refused = Number(w.refused || 0) + 1;
     w.lastAt = now;
     state.routeWatch[code] = w;
   }

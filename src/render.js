@@ -119,6 +119,9 @@ function dateSection(d, view, now) {
     if (gone) {
       body += `<div class="state">${gone} more under $${MAX_ALL_IN.toFixed(2)} on this date already departed and cannot be booked.</div>`;
     }
+    if (Number(d.withheld)) {
+      body += `<div class="state warn">${d.withheld} older option${d.withheld === 1 ? '' : 's'} withheld: last checked more than 3 hours ago.</div>`;
+    }
     if (d.folded && d.folded.length) {
       const cap = `${MAX_STOPS} stop${MAX_STOPS === 1 ? '' : 's'} / ${Math.round(MAX_DURATION_MIN / 60)}h`;
       body += `<details class="folded"><summary>${d.folded.length} more under $${MAX_ALL_IN.toFixed(2)} — beyond ${cap}</summary><ul class="rows">${d.folded.map(rowHtml).join('')}</ul></details>`;
@@ -138,6 +141,10 @@ function dateSection(d, view, now) {
     body = `<div class="state bad">${esc(STATE_COPY.blocked)}</div>`;
   } else if (d.status === 'error') {
     body = `<div class="state bad">${esc(STATE_COPY.error)}</div>`;
+  } else if (d.status === 'stale') {
+    // The rows exist and are priced, but their provenance is older than the board
+    // will stand behind. Withholding them is the only honest option.
+    body = `<div class="state warn">Every option on this date was last checked more than 3 hours ago${d.carriedAt ? ` (${esc(hhmm(d.carriedAt))} ET)` : ''}, so none is offered as bookable. A re-check is pending.</div>`;
   } else if (d.status === 'folded') {
     const cap = `${MAX_STOPS} stop${MAX_STOPS === 1 ? '' : 's'} / ${Math.round(MAX_DURATION_MIN / 60)}h`;
     body = `<div class="state warn">${d.folded.length} GoWild option${d.folded.length === 1 ? '' : 's'} under $${MAX_ALL_IN.toFixed(2)}, all beyond ${cap}.</div><details class="folded" open><summary>Show them anyway</summary><ul class="rows">${d.folded.map(rowHtml).join('')}</ul></details>`;
@@ -172,7 +179,7 @@ function dateSection(d, view, now) {
     <p class="meta">${
       d.carriedReason === 'day-over' && !freshN
         ? `${d.routesScanned} routes carried${d.carriedAt ? ` from ${esc(hhmm(d.carriedAt))} ET` : ''} &middot; departures for this date have finished`
-        : `${freshN}/${d.routesScanned} routes re-checked${d.failedRoutes ? ` &middot; ${d.failedRoutes} failed` : ''}${d.blockedRoutes ? ` &middot; ${d.blockedRoutes} blocked` : ''}${carriedNote}`
+        : `${freshN}/${d.routesScanned} routes re-checked${d.failedRoutes ? ` &middot; ${d.failedRoutes} failed` : ''}${d.blockedRoutes ? ` &middot; ${d.blockedRoutes} blocked` : ''}${carriedNote}${Number(d.oldestAgeMin) > 60 ? ` &middot; oldest fare ${esc(ago(d.oldestAgeMin))}` : ''}`
     }</p>
   </section>`;
 }
@@ -464,7 +471,7 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
 <body>
 <header>
   <h1>{ORIGIN} <span>GoWild</span></h1>
-  <span class="stamp ${view.stale ? 'stale' : ''}">${esc(ago(view.ageMin))}</span>
+  <span class="stamp ${view.stale ? 'stale' : ''}">${esc(ago(view.ageMin))}${Number(view.oldestAgeMin) > Number(view.ageMin) ? ` &middot; oldest fare ${esc(ago(view.oldestAgeMin))}` : ''}</span>
 </header>
 ${banner}
 ${view.dates.map((d) => dateSection(d, view, now)).join('')}

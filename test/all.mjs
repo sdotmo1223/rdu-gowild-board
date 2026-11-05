@@ -11,6 +11,7 @@ const suites = [
   ['merge', 'test/merge.mjs'],
   ['rotation', 'test/rotation.mjs'],
   ['carry', 'test/carry.mjs'],
+  ['resilience', 'test/resilience.mjs'],
 ];
 
 let failed = 0;

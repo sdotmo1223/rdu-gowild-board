@@ -7,6 +7,15 @@ import { isBlackout, PEAK_LABEL, MAX_ALL_IN, MAX_STOPS, MAX_DURATION_MIN, easter
 // missed", or the banner trains the reader to ignore it.
 export const STALE_AFTER_MIN = 75;
 
+// How old a fare may be and still be offered as bookable.
+//
+// The snapshot's age is not the row's age: a rotating sweep carries half the routes
+// every tick, so a single route can be re-checked hours after the snapshot was
+// written (measured 2026-11-05: PHL served a 29-hour-old fare under a header that
+// read "updated 47 min ago"). Past this ceiling the row is withheld and the date
+// says when it was last checked, because a price of unknown age is not an offer.
+export const MAX_ROW_AGE_MIN = 180;
+
 // Frontier publishes no check-in deadline, so this is a planning number and the
 // page labels it as one: two hours covers security at RDU plus the gate walk. It
 // is never presented as a Frontier rule.
@@ -90,9 +99,25 @@ export function buildBoard(state, now = Date.now()) {
           ? 'rotated'
           : 'aborted'
       : null;
-    const flights = forDate
-      .flatMap((s) => (Array.isArray(s.flights) ? s.flights : []))
-      .filter((f) => f && typeof f === 'object');
+    // Provenance per row: when the sweep carrying it actually reached Frontier.
+    // Keyed by object identity so the decorated copies downstream keep the link.
+    const seenAt = new Map();
+    const flights = [];
+    for (const s of forDate) {
+      const at = Number(s.carriedAt) || Number(s.at) || null;
+      for (const f of Array.isArray(s.flights) ? s.flights : []) {
+        if (!f || typeof f !== 'object') continue;
+        flights.push(f);
+        seenAt.set(f, at);
+      }
+    }
+    const dateStamps = [...seenAt.values()].filter((n) => Number.isFinite(n) && n > 0);
+    const oldestAt = dateStamps.length ? Math.min(...dateStamps) : null;
+    // A row older than the ceiling is a memory of a seat, not evidence of one.
+    const tooOld = (f) => {
+      const at = seenAt.get(f);
+      return Number.isFinite(at) && at > 0 && now - at > MAX_ROW_AGE_MIN * 60000;
+    };
     const goWild = flights.filter((f) => f.goWild && typeof f.allin === 'number' && f.allin > 0);
     const priced = goWild.filter((f) => f.allin <= MAX_ALL_IN);
     const qualified = priced.filter(withinLimits).sort(rank);
@@ -111,7 +136,11 @@ export function buildBoard(state, now = Date.now()) {
     // Over-limit options are still real departures, so they get the same treatment:
     // one that has already gone must not sit under "show them anyway" looking
     // bookable, and one that is still ahead keeps its date on the board.
-    const ahead = qualified.filter((f) => !f.dep || String(f.dep) >= stamp).map(decorate);
+    const aheadRaw = qualified.filter((f) => !f.dep || String(f.dep) >= stamp);
+    const ahead = aheadRaw.filter((f) => !tooOld(f)).map(decorate);
+    // Withheld, never deleted: the date still states how many options it has and
+    // when they were last checked, so an old board reads as old instead of empty.
+    const withheld = aheadRaw.filter(tooOld);
     const past = qualified.filter((f) => f.dep && String(f.dep) < stamp);
     const foldedAhead = folded.filter((f) => !f.dep || String(f.dep) >= stamp).map(decorate);
     const foldedPast = folded.filter((f) => f.dep && String(f.dep) < stamp);
@@ -122,7 +151,7 @@ export function buildBoard(state, now = Date.now()) {
     const aboveAll = goWild.filter((f) => f.allin > MAX_ALL_IN);
     const aboveAhead = aboveAll.filter((f) => !f.dep || String(f.dep) >= stamp);
     const departedCount = past.length + foldedPast.length + (aboveAll.length - aboveAhead.length);
-    const aheadCount = ahead.length + foldedAhead.length + aboveAhead.length;
+    const aheadCount = ahead.length + withheld.length + foldedAhead.length + aboveAhead.length;
 
     // Frontier never announces a blackout; it just inflates the GoWild fare
     // (observed $317.96 on 2026-11-24 vs $15.41 normally). Trust the calendar,
@@ -134,6 +163,9 @@ export function buildBoard(state, now = Date.now()) {
     else if (!flights.length && failed.length) status = 'error';
     else if (!flights.length) status = peak ? 'peak' : 'noflights';
     else if (ahead.length) status = 'ok';
+    // Nothing bookable is fresh enough to stand behind. Saying that is an answer;
+    // an old fare presented as an offer is not.
+    else if (withheld.length) status = 'stale';
     // Every bookable option already left. Saying that is the difference between a
     // quiet board and a board that looks empty because something broke.
     // Folded-before-departed on purpose: an over-limit option that has not left is
@@ -166,6 +198,9 @@ export function buildBoard(state, now = Date.now()) {
       carriedRoutes: carriedRows.length,
       carriedAt,
       carriedReason,
+      oldestAt,
+      oldestAgeMin: oldestAt ? Math.max(0, Math.round((now - oldestAt) / 60000)) : null,
+      withheld: withheld.length,
       // `rows` is exactly what the page offers: departures that can still be booked.
       // Anything already gone is in `past`, counted by `pastCount`, never listed.
       rows: ahead,
@@ -194,6 +229,10 @@ export function buildBoard(state, now = Date.now()) {
     rows,
     updatedAt,
     ageMin,
+    // The worst row provenance across the visible dates, so the header cannot claim
+    // a freshness the fares under it do not have.
+    oldestAgeMin:
+      visibleDates.reduce((n, d) => Math.max(n, Number(d.oldestAgeMin) || 0), 0) || null,
     stale: ageMin === null || ageMin > STALE_AFTER_MIN,
     error: src.lastError || null,
     routeCount: src.routeCount || 0,

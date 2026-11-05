@@ -131,6 +131,9 @@ export function classifyFailure(sweeps) {
 // is refused too — 28 requests produced 14 refusals in a row. Continuing spends
 // the remaining budget and deepens the throttle for nothing, so one refusal is
 // treated as the end of the sweep rather than as a single unlucky route.
+// True when this single result is refusal-class. It no longer ends the sweep by
+// itself: the collector counts a streak (see refusalEndsSweep), because one route
+// with an odd payload was starving whole profiles.
 export function shouldAbortSweep(result) {
   // A city pair Frontier does not fly is NOT a refusal. Measured 2026-11-03: an
   // unserved pair returns a full app shell (~596 KB) with no journeys array,
@@ -139,6 +142,35 @@ export function shouldAbortSweep(result) {
   // sweep and look exactly like bot protection.
   if (!result || result.ok !== false) return false;
   return result.notServed !== true;
+}
+
+// How many refusals in a row end a sweep.
+//
+// One is not enough. Measured 2026-11-05: PHL answered `no-journeys-key` at MYR on
+// every tick, the sweep ended there, and the seven routes after MYR were never
+// asked — the profile served two-day-old fares while reporting a 47-minute snapshot.
+// Two in a row is still a burst-level signal (a refused burst refuses everything
+// after it), and it costs exactly one extra request to find out which one it is.
+export const REFUSAL_ABORT_STREAK = 2;
+
+export function refusalEndsSweep(streak) {
+  return Number(streak) >= REFUSAL_ABORT_STREAK;
+}
+
+// A route is retired after this many answers of the same unhelpful kind...
+export const QUARANTINE_AFTER = 3;
+// ...but not forever: a route Frontier restarts must come back by itself.
+export const QUARANTINE_RETRY_MS = 7 * 24 * 3600 * 1000;
+
+// Retirement counts BOTH kinds of strike: a city pair Frontier does not fly
+// (`notServed`) and a route whose payload never parses (`refused`). They cost the
+// same two requests per tick forever if nothing retires them, and a standing MYR
+// refusal is the difference between two routes checked per tick and eight.
+export function routeRetired(w, now = Date.now()) {
+  const strikes = (Number(w && w.notServed) || 0) + (Number(w && w.refused) || 0);
+  if (strikes < QUARANTINE_AFTER) return false;
+  const lastAt = Number(w && w.lastAt) || 0;
+  return !(lastAt && now - lastAt >= QUARANTINE_RETRY_MS);
 }
 
 // Decide what gets written when only part of a sweep produced usable data.
