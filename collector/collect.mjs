@@ -718,7 +718,10 @@ async function main() {
   );
 
   if (ingest) {
-    const blob = JSON.stringify(state);
+    // The topic rides along with the snapshot so the Worker can push without a
+    // second secret the owner cannot read back. The Worker strips it before storing.
+    const notifyTopic = process.env.NTFY_TOPIC;
+    const blob = JSON.stringify(notifyTopic ? { ...state, notifyTopic } : state);
     const res = await ingestFetch(ingest, ingest.url, { method: 'POST', body: blob });
     if (!res.ok) throw new Error(`ingest write failed (HTTP ${res.status}): ${res.text.slice(0, 200)}`);
     console.log(`ingest write complete: ${blob.length} bytes via the Worker.`);

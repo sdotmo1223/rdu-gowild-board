@@ -5,7 +5,7 @@ import { bookabilityHeatmap } from './heatmap.mjs';
 import { releaseTiming } from './timing.mjs';
 import { weeklyPattern } from './schedule.mjs';
 import { ROUTES, PROFILES, PROFILE } from './routes.js';
-import { shouldSendStaleAlert } from './alerts.mjs';
+import { shouldSendStaleAlert, validTopic } from './alerts.mjs';
 
 // Minimal offline shell. Cached per token path so the secret link is never
 // registered at the origin root.
@@ -86,8 +86,13 @@ const STALE_ALERT_KEY = 'alert:stale';
 // the Worker, which still answers when the cron is dead, and is deduped in KV so
 // opening the board ten times does not send ten pushes.
 async function maybeStaleAlert(env, now) {
-  if (!env || !env.BOARD || !env.NTFY_TOPIC) return null;
+  if (!env || !env.BOARD) return null;
   try {
+    // The topic may arrive as a Worker secret, or from the collector's own write.
+    // The second path exists so the alert works without the owner copying a value
+    // they cannot read back out of GitHub secrets: CI already holds it.
+    const configured = env.NTFY_TOPIC || (await env.BOARD.get('notify:topic'));
+    if (!validTopic(configured)) return null;
     const last = Number(await env.BOARD.get(STALE_ALERT_KEY)) || 0;
     if (last && now - last < 6 * 3600 * 1000) return null;
     const stored = await env.BOARD.get('state', 'json');
@@ -96,7 +101,7 @@ async function maybeStaleAlert(env, now) {
     if (!shouldSendStaleAlert(view.ageMin, last, now)) return null;
     await env.BOARD.put(STALE_ALERT_KEY, String(now));
     const hours = Math.max(1, Math.round((view.ageMin || 0) / 60));
-    await fetch(`https://ntfy.sh/${encodeURIComponent(env.NTFY_TOPIC)}`, {
+    await fetch(`https://ntfy.sh/${encodeURIComponent(configured)}`, {
       method: 'POST',
       headers: {
         Title: `GoWild board: collector silent ${hours}h`,
@@ -217,15 +222,22 @@ async function handleIngest(request, env, url) {
     );
   }
 
+  // The collector sends the notification topic alongside the snapshot, because it is
+  // the only component that knows it and a Worker secret cannot be read back. It is
+  // stripped before storage: the snapshot is served by GET /api/ingest, and a push
+  // channel does not belong in it.
+  const { notifyTopic, ...snapshot } = payload;
+  const body = notifyTopic === undefined ? raw : JSON.stringify(snapshot);
   try {
-    await env.BOARD.put(key, raw);
+    await env.BOARD.put(key, body);
+    if (validTopic(notifyTopic) && notifyTopic !== env.NTFY_TOPIC) await env.BOARD.put('notify:topic', notifyTopic);
   } catch (err) {
     return json({ ok: false, state: 'kv-error', message: String(err && err.message) }, 500);
   }
   return json({
     ok: true,
     profile: wanted,
-    stored: raw.length,
+    stored: body.length,
     updatedAt: payload.updatedAt || null,
     sweeps: payload.sweeps.length,
   });

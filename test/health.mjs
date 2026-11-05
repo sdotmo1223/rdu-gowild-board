@@ -7,6 +7,7 @@ import {
   STALE_ALERT_AFTER_MIN,
   HEARTBEAT_REPEAT_MS,
 } from '../src/alerts.mjs';
+import { validTopic } from '../src/alerts.mjs';
 import { ingestAuthorized } from '../src/index.js';
 import { STALE_AFTER_MIN } from '../src/board.js';
 
@@ -45,6 +46,13 @@ ok(shouldSendStaleAlert(200, now - HEARTBEAT_REPEAT_MS - 1, now) === true, 're-f
 ok(shouldSendStaleAlert(null, 0, now) === false, 'no age, no claim');
 ok(shouldSendStaleAlert(Number.NaN, 0, now) === false, 'NaN is not an age');
 ok(STALE_ALERT_AFTER_MIN === STALE_AFTER_MIN, 'alert and banner share a threshold, or one of them lies');
+
+// The topic bootstrap: a value that is not a topic is ignored, never posted.
+ok(validTopic('gowild-rdu-abc123') === true, 'a plain topic is accepted');
+ok(validTopic('has space') === false, 'a topic with a space is refused');
+ok(validTopic('') === false, 'an empty topic is refused');
+ok(validTopic('x'.repeat(65)) === false, 'an over-long topic is refused');
+ok(validTopic(null) === false && validTopic(undefined) === false, 'absence is not a topic');
 
 // Read and write are different capabilities.
 const post = (token) =>

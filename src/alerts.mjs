@@ -221,6 +221,12 @@ export function buildHeartbeatAlert(state, now, thresholdMin = STALE_ALERT_AFTER
 
 // Worker side: the only component still running when the cron is dead. Pure, so the
 // decision is testable without a KV binding or a network call.
+// ntfy topics are a name, not a URL: keep it to something a URL can carry and a
+// reader can retype. A value that fails this is ignored, never posted.
+export function validTopic(t) {
+  return typeof t === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(t);
+}
+
 export function shouldSendStaleAlert(ageMin, lastAt, now, thresholdMin = STALE_ALERT_AFTER_MIN) {
   const age = Number(ageMin);
   if (!Number.isFinite(age) || age <= thresholdMin) return false;

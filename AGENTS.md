@@ -137,7 +137,7 @@ npx wrangler deploy
 | `FRONTIER_COOKIE` | optional; falls back to `.dev.vars` |
 | `CF_API_TOKEN`, `CF_ACCOUNT_ID`, `CF_KV_NAMESPACE_ID` | write to KV; absent ⇒ writes `state.json` |
 | `HEADLESS=0` | run headed, offscreen (for a local scheduler) |
-| `NTFY_TOPIC` | optional phone push, no account needed |
+| `NTFY_TOPIC` | optional phone push, no account needed. The collector sends it with each snapshot, so the Worker can push without a second secret; a Worker secret of the same name overrides it |
 | `WATCH` | optional standing question, e.g. `ATL<=25,MCO<=30`; alerts once per 6 h per matching departure set |
 | `WARMUP_URL` | defaults to `https://booking.flyfrontier.com/` — do not change blindly |
 | `STATE_OUT`, `STATE_IN` | snapshot paths |
