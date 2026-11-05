@@ -153,3 +153,50 @@ npm run lint && npm run dry && npm test && npm run stress   # chain integrity
 gh run list --workflow gowild-sweep -L 5                    # did the crons land?
 curl -s "$BOARD/api/board?token=$TOKEN" | jq '{updatedAt,ageMinutes,stale,requests,lastSweep,sweepError}'
 ```
+
+## The deploy pipeline shipped nothing for two days, 2026-11-04
+
+Found while verifying fix 1 of the infrastructure list. The evidence, in order:
+
+- `wrangler deployments list` shows exactly **one** deployment ever:
+  `2026-11-03T17:32:32Z`, version `56b8e9df`. Everything committed to `src/` since
+  then has never reached the edge.
+- `gowild-deploy` reported **success** on every push. Run `41935363347` proves why:
+  step conclusions `Gates = success`, `Deploy to Cloudflare = skipped`,
+  `Say why nothing was deployed = success`. `CF_DEPLOY_TOKEN` was absent, and the
+  workflow turned that into an `::notice::` instead of a failure.
+- A green run whose only effectful step is skipped is the same class of lie as an
+  empty grid: it asserts something happened when nothing did.
+
+### The token that then failed, and how it was named
+
+`CF_DEPLOY_TOKEN` was set on 2026-11-05 and the deploy failed with Cloudflare's
+`No access to the specified service`. That message covers an invalid value, a token
+in another account, a token with no account grants, and a missing script. Three
+cheap preflight questions separated them, and each run removed one hypothesis:
+
+| Run | Question asked | Answer |
+|---|---|---|
+| 41943400735 | deploy with configured wrangler | `No access to the specified service` (wrangler **3.90.0**, action default) |
+| 41943638741 | can the token read this Worker? | HTTP **403**, `No access to the specified resource.` |
+| 41943828676 | is the value a live token? | HTTP 200, `status: active` — valid |
+| 41943828676 | which accounts can it see? | `{"result":[],"total_count":0}` — **none** |
+| 41944796677 | same, with the message split out | *"This token has NO account permissions at all"* |
+
+Root cause: token `00611db77d9a4b6ea17e31a2e03e001a` is active but was created with
+**Account resources left empty**, so it can reach no Worker in any account. Adding
+`Workers Scripts: Edit` to it is not enough — the account grant is the missing half.
+
+The workflow now asks those questions before deploying, prints the token id, and
+pins `wranglerVersion: '4'` (the action default was three majors behind this repo
+and cannot read `preview_urls`).
+
+### Own-goal
+
+A `sed` backreference written through a shell heredoc reached the file as a literal
+`0x01`. YAML does not allow control characters in a scalar, so GitHub stopped reading
+`name: gowild-deploy`, listed the workflow as `.github/workflows/deploy.yml`, and
+`gh workflow run gowild-deploy` answered *"could not find any workflows named"*.
+The deploy was fine; the file was not. Check for `[[:cntrl:]]` after any scripted
+YAML edit, and confirm `gh workflow list` still shows the workflow by name.
+
