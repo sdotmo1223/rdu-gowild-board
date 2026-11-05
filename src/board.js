@@ -229,6 +229,13 @@ export function buildBoard(state, now = Date.now()) {
 
   const updatedAt = src.updatedAt || null;
   const ageMin = updatedAt ? Math.max(0, Math.round((now - updatedAt) / 60000)) : null;
+  // A date that offers nothing must not set the header's age: it already states its
+  // own "last checked" line. Only when nothing at all is offered does the header
+  // fall back to the oldest data in the snapshot.
+  const ageOf = (list) =>
+    list.reduce((n, d) => Math.max(n, Number(d.oldestAgeMin) || 0), 0) || null;
+  const offeredAge = ageOf(visibleDates.filter((d) => d.rows.length));
+  const fetchedAge = ageOf(visibleDates);
 
   return {
     dates: visibleDates,
@@ -238,8 +245,7 @@ export function buildBoard(state, now = Date.now()) {
     ageMin,
     // The worst row provenance across the visible dates, so the header cannot claim
     // a freshness the fares under it do not have.
-    oldestAgeMin:
-      visibleDates.reduce((n, d) => Math.max(n, Number(d.oldestAgeMin) || 0), 0) || null,
+    oldestAgeMin: offeredAge ?? fetchedAge,
     stale: ageMin === null || ageMin > STALE_AFTER_MIN,
     error: src.lastError || null,
     routeCount: src.routeCount || 0,

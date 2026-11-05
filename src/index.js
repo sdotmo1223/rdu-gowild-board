@@ -248,6 +248,11 @@ export default {
           goWild: d.goWild,
           above50: d.above,
           folded: d.folded ? d.folded.length : 0,
+          // Age of the data behind the rows the page would offer, and how many were
+          // withheld for being older than the ceiling. A caller that sees rows: 0
+          // must be able to tell "nothing sold" from "nothing fresh enough".
+          withheld: d.withheld || 0,
+          oldestAgeMin: d.oldestAgeMin ?? null,
           // The count alone was a dead end: a caller could see four folded options
           // and had no way to ask what they were.
           foldedRows: (d.folded || []).map((f) => ({
