@@ -54,15 +54,18 @@ jobs:
         env:
           INGEST_URL: ${{ vars.BOARD_INGEST_URL }}
           BOARD_TOKEN: ${{ secrets.BOARD_TOKEN }}
+          BOARD_WRITE_TOKEN: ${{ secrets.BOARD_WRITE_TOKEN }}
         run: |
           set -u
-          if [ -z "${INGEST_URL:-}" ] || [ -z "${BOARD_TOKEN:-}" ]; then
+          # Writes use the write token when it exists; the board token is read-only.
+          WT="${BOARD_WRITE_TOKEN:-${BOARD_TOKEN:-}}"
+          if [ -z "${INGEST_URL:-}" ] || [ -z "${WT:-}" ]; then
             echo "::error::BOARD_INGEST_URL variable or BOARD_TOKEN secret is missing. Refusing to sweep Frontier for nothing."
             exit 1
           fi
           code=$(curl -sS -o /tmp/preflight.json -w '%{http_code}' \
             -X POST "${INGEST_URL}?dryRun=1" \
-            -H "Authorization: Bearer ${BOARD_TOKEN}" \
+            -H "Authorization: Bearer ${WT}" \
             -H 'Content-Type: application/json' -d '{}' || echo 000)
           if [ "$code" != "200" ]; then
             echo "::error::Write path rejected the credentials: HTTP $code. No Frontier request has been made."
@@ -104,6 +107,7 @@ jobs:
         env:
           BOARD_INGEST_URL: ${{ vars.BOARD_INGEST_URL }}
           BOARD_TOKEN: ${{ secrets.BOARD_TOKEN }}
+          BOARD_WRITE_TOKEN: ${{ secrets.BOARD_WRITE_TOKEN }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           FULL: ${{ inputs.full && '1' || '0' }}
           WANT: ${{ inputs.profiles }}

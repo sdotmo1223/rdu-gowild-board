@@ -88,6 +88,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `tools/route-probe.mjs` | one-request "does Frontier sell this city pair?" probe: real Chromium + the collector parser |
 | `tools/render-state.mjs` | render `board.html` from a real collector snapshot |
 | `tools/seed-schedule.mjs` | rebuild `state.json` (incl. schedule) from `.sweep/` captures |
+| `FAILURES.md` | every failure, why the first look missed it, the four patterns behind them, and a drill list per role. Read your role before touching its code |
 | `PLAN.md` | the current ordered plan and its acceptance criteria |
 | `REVIEW.md` | totality review: scorecard, clash catalogue, bottlenecks, ordered fixes, exam standard |
 | `COLLECTION.md` | collection reliability contract (G1-G5), ordered phases, fixture matrix, next-level brief |
@@ -97,6 +98,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `test/rotation.mjs` | 53 checks: tick-driven shard alternation, two-tick and budgeted coverage |
 | `test/carry.mjs` | 7 checks: a carried row keeps its real fetch time, never re-stamps |
 | `test/resilience.mjs` | 34 checks: one refusal must not end a sweep, three strikes retire a route, and a fare older than 3 h is withheld |
+| `test/health.mjs` | 24 checks: heartbeat and Worker-side stale alert, and the read/write token split |
 | `test/stress.mjs` | 48 adversarial checks (hostile input, malformed state, volume, budget, fare retention) |
 
 ---

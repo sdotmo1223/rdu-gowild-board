@@ -21,7 +21,14 @@ import {
   mergeSweeps,
 } from './parse.mjs';
 import { appendTransitions, recordObservation, recordFirstSeen } from '../src/history.js';
-import { buildAlert, buildZeroAlert, buildWatchAlert, parseWatch, sendAlert } from '../src/alerts.mjs';
+import {
+  buildAlert,
+  buildZeroAlert,
+  buildWatchAlert,
+  buildHeartbeatAlert,
+  parseWatch,
+  sendAlert,
+} from '../src/alerts.mjs';
 import { recordSchedule } from '../src/schedule.mjs';
 import { recordFares } from '../src/pricing.mjs';
 import { readCookieString, applyCookies } from './cookies.mjs';
@@ -99,7 +106,7 @@ const addParam = (u, p) => u + (u.includes('?') ? '&' : '?') + p;
 
 function ingestEnv() {
   const url = process.env.BOARD_INGEST_URL;
-  const token = process.env.BOARD_TOKEN;
+  const token = (process.env.BOARD_WRITE_TOKEN || process.env.BOARD_TOKEN);
   if (!url || !token) return null;
   // A second origin writes its own KV key through the same Worker, so CI needs
   // no new secret and no second endpoint: only the profile name changes where
@@ -458,6 +465,18 @@ async function main() {
     state.routeCursor = shardList.length ? (offset + plannedRoutes.length) % shardList.length : 0;
   }
   state.generatedAt = now;
+  // Liveness: a resumed cron, or one profile that stopped writing while the others
+  // ran. Wrapped, because a notification must never cost a paid-for sweep.
+  try {
+    const heartbeat = buildHeartbeatAlert(previous, now);
+    if (heartbeat) {
+      await sendAlert(process.env.NTFY_TOPIC, heartbeat);
+      state.lastHeartbeatAt = now;
+      console.log(`heartbeat: previous snapshot was ${Math.round((now - previous.updatedAt) / 60000)} min old`);
+    }
+  } catch (err) {
+    console.error(`heartbeat alert failed: ${err.message}`);
+  }
   // NOTE: state.sweeps is assigned only in the success branch below. Assigning it
   // here would replace the last good board with fourteen empty results on a sweep
   // where every route was blocked.

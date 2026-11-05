@@ -190,3 +190,40 @@ export async function sendAlert(topic, alert) {
   if (!res.ok) throw new Error(`ntfy ${res.status}`);
   return { sent: true };
 }
+
+// --- Liveness ----------------------------------------------------------------
+// The board cannot report its own absence: nothing inside the collector runs to say
+// that the collector stopped. Two probes cover the two ways it can die.
+export const STALE_ALERT_AFTER_MIN = 180; // 3x the measured median gap (58 min)
+export const HEARTBEAT_REPEAT_MS = 6 * 3600 * 1000;
+
+// Collector side: the snapshot this sweep is about to replace was already too old.
+// That is either a cron that resumed after a gap or one profile that stopped writing
+// while the others kept going. At most once every six hours.
+export function buildHeartbeatAlert(state, now, thresholdMin = STALE_ALERT_AFTER_MIN) {
+  const updated = Number(state && state.updatedAt) || 0;
+  if (!updated) return null;
+  const ageMin = Math.max(0, Math.round((now - updated) / 60000));
+  if (ageMin <= thresholdMin) return null;
+  const lastAt = Number(state && state.lastHeartbeatAt) || 0;
+  if (lastAt && now - lastAt < HEARTBEAT_REPEAT_MS) return null;
+  const hours = Math.max(1, Math.round(ageMin / 60));
+  return {
+    kind: 'heartbeat',
+    title: `GoWild: ${ORIGIN} collector silent ${hours}h`,
+    message:
+      `The last snapshot for ${ORIGIN} was ${hours}h old when this sweep started.\n` +
+      'Nothing wrote for longer than the 3h limit, so the cron or the write path stopped.\n' +
+      'The board keeps serving the last good sweep, which is why it still looks alive.',
+    priority: 'high',
+  };
+}
+
+// Worker side: the only component still running when the cron is dead. Pure, so the
+// decision is testable without a KV binding or a network call.
+export function shouldSendStaleAlert(ageMin, lastAt, now, thresholdMin = STALE_ALERT_AFTER_MIN) {
+  const age = Number(ageMin);
+  if (!Number.isFinite(age) || age <= thresholdMin) return false;
+  const last = Number(lastAt) || 0;
+  return !(last && now - last < HEARTBEAT_REPEAT_MS);
+}

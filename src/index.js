@@ -5,6 +5,7 @@ import { bookabilityHeatmap } from './heatmap.mjs';
 import { releaseTiming } from './timing.mjs';
 import { weeklyPattern } from './schedule.mjs';
 import { ROUTES, PROFILES, PROFILE } from './routes.js';
+import { shouldSendStaleAlert } from './alerts.mjs';
 
 // Minimal offline shell. Cached per token path so the secret link is never
 // registered at the origin root.
@@ -67,6 +68,54 @@ export function boardAuthorized(request, env) {
   return Boolean(env && sameSecret(presented, env.BOARD_TOKEN));
 }
 
+// Reads and writes are different capabilities. The board token lives in a URL that is
+// meant to be opened and shared, so it must not be able to replace the snapshot: a
+// leaked link would otherwise be a write credential behind a single equality check.
+// The fallback keeps the collector alive during the deploy that introduces the write
+// token; once BOARD_WRITE_TOKEN exists on the Worker, the read token cannot write.
+export function ingestAuthorized(request, env) {
+  const presented = bearerToken(request);
+  const write = env && env.BOARD_WRITE_TOKEN;
+  if (write) return sameSecret(presented, write);
+  return Boolean(env && sameSecret(presented, env.BOARD_TOKEN));
+}
+
+const STALE_ALERT_KEY = 'alert:stale';
+
+// The one signal no collector can send: that no collector is running. This fires from
+// the Worker, which still answers when the cron is dead, and is deduped in KV so
+// opening the board ten times does not send ten pushes.
+async function maybeStaleAlert(env, now) {
+  if (!env || !env.BOARD || !env.NTFY_TOPIC) return null;
+  try {
+    const last = Number(await env.BOARD.get(STALE_ALERT_KEY)) || 0;
+    if (last && now - last < 6 * 3600 * 1000) return null;
+    const stored = await env.BOARD.get('state', 'json');
+    if (!stored) return null;
+    const view = buildBoard(stored, now);
+    if (!shouldSendStaleAlert(view.ageMin, last, now)) return null;
+    await env.BOARD.put(STALE_ALERT_KEY, String(now));
+    const hours = Math.max(1, Math.round((view.ageMin || 0) / 60));
+    await fetch(`https://ntfy.sh/${encodeURIComponent(env.NTFY_TOPIC)}`, {
+      method: 'POST',
+      headers: {
+        Title: `GoWild board: collector silent ${hours}h`,
+        Priority: 'high',
+        Tags: 'warning',
+        'Content-Type': 'text/plain; charset=utf-8',
+      },
+      body:
+        `No snapshot for ${hours}h, past the 3h limit.\n` +
+        'The page is still rendering the last good sweep, which is why it looks alive.\n' +
+        'Check Actions: the cron or the write path has stopped.',
+    });
+    return { sent: true };
+  } catch (err) {
+    console.error('stale alert failed', err && err.message);
+    return null;
+  }
+}
+
 function bearerToken(request) {
   const header = (request.headers.get('authorization') || '').trim();
   const m = /^Bearer\s+(\S+)$/i.exec(header);
@@ -89,8 +138,23 @@ async function handleIngest(request, env, url) {
   if (!env.BOARD_TOKEN) {
     return json({ ok: false, state: 'unconfigured', message: 'BOARD_TOKEN is not set on this Worker.' }, 503);
   }
-  if (!sameSecret(bearerToken(request), env.BOARD_TOKEN)) {
-    return json({ ok: false, state: 'unauthorized', message: 'Bad or missing bearer token.' }, 401);
+  // A write needs the write token once it exists; a read only ever needs the board
+  // token, which the owner is expected to put in a URL.
+  const allowed =
+    request.method === 'POST' ? ingestAuthorized(request, env) : sameSecret(bearerToken(request), env.BOARD_TOKEN);
+  if (!allowed) {
+    return json(
+      {
+        ok: false,
+        state: 'unauthorized',
+        message:
+          request.method === 'POST'
+            ? 'Writes need BOARD_WRITE_TOKEN; the board token is read-only.'
+            : 'Reads need BOARD_TOKEN.',
+        writeTokenSplit: Boolean(env.BOARD_WRITE_TOKEN),
+      },
+      401,
+    );
   }
 
   const wanted = (url.searchParams.get('profile') || PROFILE).toLowerCase();
@@ -168,9 +232,12 @@ async function handleIngest(request, env, url) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const now = Date.now();
+    // Cheap, and silent unless a snapshot is actually stale. waitUntil keeps the
+    // response off the critical path of a push that is usually not needed.
+    if (ctx && url.pathname !== '/api/ingest') ctx.waitUntil(maybeStaleAlert(env, now));
 
     // The one origin that may be served without a token, so a link can be handed
     // to somebody else. Everything else stays behind BOARD_TOKEN.

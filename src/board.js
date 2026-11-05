@@ -1,11 +1,11 @@
 import { isBlackout, PEAK_LABEL, MAX_ALL_IN, MAX_STOPS, MAX_DURATION_MIN, easternStamp } from './routes.js';
 
-// Measured, not assumed: GitHub throttles the */15 cron to roughly one run an
-// hour, and the observed gaps reach 60 minutes. Setting the threshold AT the worst
-// measured gap still paints a healthy board amber (ageMin rounds up), so the value
-// is the worst gap plus a quarter hour of slack. Stale must mean "a run was
-// missed", or the banner trains the reader to ignore it.
-export const STALE_AFTER_MIN = 75;
+// Measured 2026-11-04 over 24 consecutive runs: gaps 42-81 min, median 58. The old
+// value was 75, justified as "worst gap plus slack" back when the worst gap was 60 --
+// it expired the moment the sample's worst exceeded it, and a healthy board went
+// amber at 76 minutes. Three median gaps makes "stale" mean three missed ticks, which
+// no scheduling jitter can fake, and keeps the banner worth reading.
+export const STALE_AFTER_MIN = 180;
 
 // How old a fare may be and still be offered as bookable.
 //

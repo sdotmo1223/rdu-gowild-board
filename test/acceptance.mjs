@@ -223,7 +223,10 @@ check('staleness turns amber only once a sweep is genuinely missed', () => {
   // Cadence is 15 minutes, so a board ten minutes old is healthy.
   const fresh = buildBoard({ routeCount: 14, updatedAt: Date.now() - 10 * 60000, sweeps: [] });
   const old = buildBoard({ routeCount: 14, updatedAt: Date.now() - (STALE_AFTER_MIN + 10) * 60000, sweeps: [] });
-  assert.equal(STALE_AFTER_MIN, 75, 'the worst measured gap plus slack, so stale means a missed run');
+  // Was 75, justified by a 60-minute worst gap. The 2026-11-04 sample has an
+  // 81-minute worst gap, so that number painted healthy boards amber. Three median
+  // gaps (58 min each) makes "stale" mean three missed ticks.
+  assert.equal(STALE_AFTER_MIN, 180, 'three measured median gaps, so jitter cannot fake it');
   assert.equal(fresh.stale, false);
   assert.equal(old.stale, true);
   assert.ok(renderPage(old, {}, [], Date.now()).includes('class="stamp stale"'));
