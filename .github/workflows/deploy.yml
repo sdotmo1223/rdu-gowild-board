@@ -81,19 +81,40 @@ jobs:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         run: |
           set -u
-          echo "::group::token permissions"
-          npx --yes wrangler@4 whoami 2>&1 | sed -n '/Token Permissions/,$p' || true
+          base="https://api.cloudflare.com/client/v4"
+          auth="Authorization: Bearer ${CLOUDFLARE_API_TOKEN}"
+
+          # An invalid value, a token scoped to another account and a token without
+          # Workers Scripts:Edit all end in the same 403. Three cheap questions
+          # separate them, and none of them prints the token.
+          echo "::group::is the stored value a live token?"
+          vcode=$(curl -sS -o /tmp/verify.json -w '%{http_code}' -H "$auth" "$base/user/tokens/verify" || echo 000)
+          echo "verify HTTP $vcode"; head -c 300 /tmp/verify.json || true; echo
+          if [ "$vcode" != "200" ]; then
+            echo "::error::CF_DEPLOY_TOKEN is not a valid Cloudflare API token (HTTP $vcode): wrong, truncated or revoked value. Create a new token and re-set the secret."
+            exit 1
+          fi
           echo "::endgroup::"
-          code=$(curl -sS -o /tmp/svc.json -w '%{http_code}' \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/workers/scripts/rdu-gowild-board" || echo 000)
+
+          echo "::group::which accounts can it see?"
+          acode=$(curl -sS -o /tmp/acct.json -w '%{http_code}' -H "$auth" "$base/accounts" || echo 000)
+          echo "accounts HTTP $acode"; head -c 400 /tmp/acct.json || true; echo
+          echo "wanted account: ${CF_ACCOUNT_ID}"
+          if ! grep -qE "\"id\"[[:space:]]*:[[:space:]]*\"${CF_ACCOUNT_ID}\"" /tmp/acct.json; then
+            echo "::error::Token is valid but cannot see account ${CF_ACCOUNT_ID}. Recreate it with Account resources = Sdotmo1223@gmail.com's Account."
+            exit 1
+          fi
+          echo "::endgroup::"
+
+          code=$(curl -sS -o /tmp/svc.json -w '%{http_code}' -H "$auth" \
+            "$base/accounts/${CF_ACCOUNT_ID}/workers/scripts/rdu-gowild-board" || echo 000)
           if [ "$code" = "200" ]; then
             echo "token can read worker rdu-gowild-board (HTTP 200)"
             exit 0
           fi
-          echo "::error::Deploy token cannot see worker rdu-gowild-board (HTTP $code)."
+          echo "::error::Token is valid and sees the account, but not this Worker (HTTP $code)."
           head -c 400 /tmp/svc.json || true; echo
-          echo "Needs: Account > Workers Scripts > Edit, on account ${CF_ACCOUNT_ID}."
+          echo "Needs: Account > Workers Scripts > Edit. If the permission is already there, delete the token and make a new one: Cloudflare keeps stale permission edges on edited tokens."
           exit 1
 
       - name: Deploy to Cloudflare
