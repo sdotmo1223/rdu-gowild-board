@@ -96,7 +96,7 @@ jobs:
           fi
           # The token id is public metadata and identifies the exact row to edit in
           # the dashboard, which is otherwise guesswork among similarly named tokens.
-          echo "token id: $(grep -oE '\"id\":\"[a-f0-9]+\"' /tmp/verify.json | head -1 | cut -d'\"' -f4)"
+          echo "token id: $(sed -nE 's/.*\"id\":\"([a-f0-9]+)\".*//p' /tmp/verify.json | head -1)"
           echo "::endgroup::"
 
           echo "::group::which accounts can it see?"
