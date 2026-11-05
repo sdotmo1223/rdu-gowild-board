@@ -27,8 +27,8 @@ works, it costs $0, and silent failure is impossible.**
    15-minute cadence, exactly one process touching Frontier. Do not parallelize
    route fetches, do not add retries that multiply requests, do not "warm up"
    extra routes. Half the routes per tick (7 of 14, alternating on the clock) is
-   the burst budget: a refusal aborts the sweep, so 28 requests every 15 minutes
-   can return less than 14. (15 minutes is only affordable because the repo is public:
+   the burst budget: two refusals in a row abort the sweep, so a burst that is too
+   large can return less than 14. (15 minutes is only affordable because the repo is public:
    GitHub Free meters 2,000 Actions minutes/month on private repos, which a
    15-minute Playwright cron exhausts in about a week. Keep it public.)
 5. **Read-only.** Never request checkout, payment, or booking paths.
@@ -96,7 +96,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `test/profiles.mjs` | 9 multi-origin checks: profile resolution, unserved-vs-refused classification, per-origin rendering |
 | `test/rotation.mjs` | 53 checks: tick-driven shard alternation, two-tick and budgeted coverage |
 | `test/carry.mjs` | 7 checks: a carried row keeps its real fetch time, never re-stamps |
-| `test/resilience.mjs` | 33 checks: one refusal must not end a sweep, three strikes retire a route, and a fare older than 3 h is withheld |
+| `test/resilience.mjs` | 34 checks: one refusal must not end a sweep, three strikes retire a route, and a fare older than 3 h is withheld |
 | `test/stress.mjs` | 48 adversarial checks (hostile input, malformed state, volume, budget, fare retention) |
 
 ---
@@ -162,7 +162,7 @@ Rules that hold under either reading:
 
 - Sequential only, 2–5 s jitter, exactly one process touching Frontier.
 - Never add retries. A retry is a second request.
-- The collector **aborts on the first refusal** (`shouldAbortSweep`) and keeps the
+- The collector **aborts on two refusals in a row** (`refusalEndsSweep`) and keeps the
   previous rows for any date that returned nothing usable (`mergeSweeps`). It is a
   safety net, not a licence to raise `SWEEP_DAYS`.
 
