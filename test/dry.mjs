@@ -64,6 +64,47 @@ if (state) {
   expect('snapshot records requests', Number(state.requests) > 0, String(state.requests));
 }
 
+// --- The weekly lead probe, against the same fixture -------------------------
+// This branch decides, once a week, to spend the whole budget on two routes and
+// seven dates. It touches firstSeen, fares, the cursor and the write path, and it
+// must leave state.sweeps alone -- a two-route sweep must never plant a date the
+// board would then render for twelve routes nobody asked. Nothing else exercises
+// it, so it runs here for free.
+const PROBE_STATE = '.dry/probe-state.json';
+if (existsSync(PROBE_STATE)) rmSync(PROBE_STATE);
+const probeEnv = {
+  ...env,
+  LEAD_PROBE: 'force',
+  STATE_OUT: PROBE_STATE,
+  // The RDU budget, so the probe plans the real 2 routes x 7 dates rather than a
+  // smaller shape than production would ever use.
+  SWEEP_MAX_REQUESTS: '14',
+  SWEEP_DAYS: '2',
+};
+delete probeEnv.SWEEP_ONLY;
+delete probeEnv.FULL_SWEEP;
+const pr = spawnSync(process.execPath, ['collector/collect.mjs'], { env: probeEnv, encoding: 'utf8', timeout: 60000 });
+const pout = `${pr.stdout || ''}${pr.stderr || ''}`;
+console.log(pout.trim().split('\n').slice(-6).join('\n'));
+
+expect('probe: collector exited cleanly', pr.status === 0, `exit ${pr.status}, signal ${pr.signal}`);
+expect('probe: the branch really ran', /lead probe: \w+,\w+ x 7 date\(s\)/.test(pout), pout.slice(-300));
+expect('probe: burst stayed inside the budget', /requests=14/.test(pout), pout.slice(-300));
+
+try {
+  const ps = JSON.parse(readFileSync(PROBE_STATE, 'utf8'));
+  expect('probe: state records the probe', Boolean(ps.leadProbe && ps.leadProbe.ok), JSON.stringify(ps.leadProbe || null));
+  expect('probe: two routes, seven dates', ps.leadProbe && ps.leadProbe.routes.length === 2 && ps.leadProbe.dates.length === 7);
+  expect('probe: the cursor moves for next week', Number.isInteger(ps.leadProbeCursor) && ps.leadProbeCursor === 2);
+  // The invariant, asserted rather than assumed.
+  expect('probe: never writes board rows', ps.sweeps === undefined, JSON.stringify(ps.sweeps || '').slice(0, 120));
+  expect('probe: leaves the rotation alone', ps.lastShard === undefined, String(ps.lastShard));
+  expect('probe: leaves the error banner alone', ps.lastError === undefined, JSON.stringify(ps.lastError || null));
+  expect('probe: feeds the timing model', Number(ps.leadProbe.newFirstSeen) > 0, String(ps.leadProbe.newFirstSeen));
+} catch (err) {
+  expect('probe: snapshot parses', false, err.message);
+}
+
 if (failures.length) {
   console.error(`\nDRY: ${failures.length} failed`);
   for (const f of failures) console.error(`  - ${f}`);

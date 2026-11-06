@@ -266,14 +266,20 @@ function timingHtml(state) {
     .map((r) => {
       const lead =
         r.medianLead === null || r.medianLead === undefined ? '' : ` &middot; ~${r.medianLead}h before departure`;
+      // Below the floor the page refuses to print an hour at all: "seen 14:00" from
+      // one sighting reads as a claim even with "not yet a pattern" after it. And a
+      // sighting that was already on sale at our first look is our cron, not a
+      // release, so it is counted but never timed.
       const label = r.confident
         ? `seats open around ${esc(hourLabel(r.medianHour))} local${lead}`
-        : `seen ${esc(hourLabel(r.medianHour))} local &middot; ${r.samples} observation${r.samples === 1 ? '' : 's'}${lead}, not yet a pattern`;
+        : r.censored > 0
+          ? `${r.samples} timed of ${r.seen} sightings &middot; ${r.censored} were already on sale at first check &middot; ${r.needed} more timed before a time is claimed`
+          : `${r.seen} observation${r.seen === 1 ? '' : 's'} &middot; ${r.needed} more before a time is claimed`;
       return `<tr><td>${esc(r.dest)}</td><td>${label}</td></tr>`;
     })
     .join('');
   return `<details><summary>When seats appear</summary><table>${body}</table>
-    <p class="note">A route needs ${MIN_SAMPLES}+ observations before this claims a time of day.</p></details>`;
+    <p class="note">A route needs ${MIN_SAMPLES}+ timed observations before this claims a time of day. A sighting already on sale the first time we checked that date is our own sweep clock, not a release, so it is excluded from the median. Lead hours are only observable inside the two-day window, so a weekly long-horizon probe is what widens them.</p></details>`;
 }
 
 // Visible, not buried in a details block: "when do fares actually flip" is the one

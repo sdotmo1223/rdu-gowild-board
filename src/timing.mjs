@@ -10,8 +10,15 @@
 //
 // Deliberately shy: under MIN_SAMPLES observations a route is flagged unproven
 // rather than dressed up as a pattern. One sweep is not a trend.
+//
+// 3 was a floor against absurdity, not evidence of a pattern: a median hour from
+// three sightings is one refused connection away from being a different hour, and
+// the page was printing "seats open around 14:00" off exactly that. Ten is the
+// point where a median stops being an anecdote -- an 80% interval on a median of
+// ten sightings is roughly +/-2 hours, which is the coarsest claim worth printing.
+// Below it the page states the count and how many more it needs, and names no time.
 
-const MIN_SAMPLES = 3;
+const MIN_SAMPLES = 10;
 
 function localHour(ts) {
   const fmt = new Intl.DateTimeFormat('en-US', {
@@ -70,19 +77,53 @@ export function firstSeenMap(state) {
   return map;
 }
 
+// A first sighting at the very first moment we ever looked at that date is not a
+// release time: it is our own cron. Measured on the live snapshot 2026-11-06, every
+// route reported "seats open around 4 AM local" -- exactly the hour the collector
+// happened to start, which is a confident-looking falsehood. So a sighting within a
+// few minutes of the first sweep that asked about that date is recorded as censored
+// and excluded from the hour and lead medians. It is still counted as a sighting.
+const CENSOR_SLACK_MS = 5 * 60 * 1000;
+
+function firstAskedByDate(state) {
+  const map = new Map();
+  const note = (date, at) => {
+    if (!date || !Number.isFinite(at)) return;
+    const cur = map.get(date);
+    if (cur === undefined || at < cur) map.set(date, at);
+  };
+  for (const s of (state && state.sweeps) || []) {
+    if (s && typeof s === 'object') note(s.date, Number(s.at));
+  }
+  // A probe deliberately does not write `sweeps`, so its dates would otherwise look
+  // uncensored even though the probe was the first (and only) look at them.
+  const probe = state && state.leadProbe;
+  if (probe && Number.isFinite(Number(probe.at)) && Array.isArray(probe.dates)) {
+    for (const d of probe.dates) note(d, Number(probe.at));
+  }
+  return map;
+}
+
 export function releaseTiming(state) {
   const map = firstSeenMap(state);
+  const asked = firstAskedByDate(state);
   const byDest = new Map();
 
   for (const [key, ts] of map) {
     const [date, dest, dep] = key.split('|');
     const hour = localHour(ts);
     if (hour === null) continue;
+    if (!byDest.has(dest)) byDest.set(dest, { hours: [], leads: [], censored: 0 });
+    const bucket = byDest.get(dest);
+
+    const firstLook = asked.get(date);
+    if (firstLook !== undefined && ts <= firstLook + CENSOR_SLACK_MS) {
+      bucket.censored += 1;
+      continue;
+    }
+
     const depMs = departureUtcMs(dep);
     const lead = depMs === null ? null : Math.round((depMs - ts) / 3600000);
-
-    if (!byDest.has(dest)) byDest.set(dest, { hours: [], leads: [] });
-    const bucket = byDest.get(dest);
     bucket.hours.push(hour);
     if (lead !== null && lead >= 0) bucket.leads.push(lead);
   }
@@ -90,12 +131,19 @@ export function releaseTiming(state) {
   return [...byDest.entries()]
     .map(([dest, b]) => ({
       dest,
+      // samples = usable (a release moment was actually observed); seen = every
+      // sighting including the censored ones, so the reader sees the real progress.
       samples: b.hours.length,
+      censored: b.censored,
+      seen: b.hours.length + b.censored,
       medianHour: median(b.hours),
       medianLead: median(b.leads),
       confident: b.hours.length >= MIN_SAMPLES,
+      // How many more timed sightings before this route may name a time. Rendered so
+      // the reader can watch it climb instead of wondering why the row is quiet.
+      needed: Math.max(0, MIN_SAMPLES - b.hours.length),
     }))
     .sort((a, b) => a.dest.localeCompare(b.dest));
 }
 
-export { MIN_SAMPLES, departureUtcMs, etOffsetHours };
+export { MIN_SAMPLES, CENSOR_SLACK_MS, departureUtcMs, etOffsetHours };

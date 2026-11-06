@@ -10,6 +10,8 @@ import {
   nextShard,
   departuresFinished,
   easternStamp,
+  leadProbeDue,
+  leadProbePlan,
   PROFILE,
 } from '../src/routes.js';
 import {
@@ -271,7 +273,7 @@ async function main() {
   const todayDone =
     departuresFinished(startedAt) || (lastDepToday ? easternStamp(startedAt) > lastDepToday : false);
   const skipToday = process.env.SWEEP_ALL_DATES !== '1' && todayDone && todayHasRows;
-  const dates = Array.from({ length: dayCount }, (_, i) => easternDate((skipToday ? 1 : 0) + i, startedAt));
+  let dates = Array.from({ length: dayCount }, (_, i) => easternDate((skipToday ? 1 : 0) + i, startedAt));
   const skippedDates = skipToday ? [todayISO] : [];
 
   // Half the routes per tick, alternating on the clock. 14 routes x 2 dates is a
@@ -305,15 +307,44 @@ async function main() {
     );
     return;
   }
+  // --- Weekly lead probe -----------------------------------------------------
+  // The two-date window censors every release observation at 48 hours, so lead time
+  // is unobservable by construction: no amount of waiting fixes a window that never
+  // opens. Once a week the SAME budget buys a longer horizon for two routes instead
+  // of a short one for seven -- 14 requests, one process, no extra burst.
+  // Off for a forced sweep, a dry run, an explicit LEAD_PROBE=0, and a profile with
+  // no board yet (learning release timing before the board has ever rendered is the
+  // wrong order, and the first tick must produce rows).
+  const probeBudget = Number(process.env.SWEEP_MAX_REQUESTS) || routePool.length * 2;
+  const hasBoard = Boolean(previous && Array.isArray(previous.sweeps) && previous.sweeps.length);
+  // LEAD_PROBE=force is the gate's hook: it runs this branch against the fixture, so
+  // a collector branch that has never executed cannot ship. That is exactly how a
+  // branch-scoped ReferenceError cost 42 Frontier requests on 2026-11-04.
+  const probeForce = process.env.LEAD_PROBE === 'force';
+  const probePlan =
+    !forced && process.env.LEAD_PROBE !== '0' && (hasBoard || (dry && probeForce))
+      ? leadProbePlan(routePool, probeBudget, previous && previous.leadProbeCursor)
+      : null;
+  const probeDue = Boolean(
+    probePlan && leadProbeDue(previous && previous.leadProbe && previous.leadProbe.at, startedAt),
+  );
+  if (probeDue) {
+    // Tomorrow onwards: the probe never re-asks what the board window already covers.
+    dates = Array.from({ length: probePlan.dates }, (_, i) => easternDate(1 + i, startedAt));
+  }
+
   // Tick-driven, not clock-driven (see nextShard). SWEEP_SHARD=0|1 is the manual
   // override for a deliberate single-half probe and is not used by the cron.
   const explicitShard = Number(process.env.SWEEP_SHARD);
-  const shard = forced
-    ? null
-    : explicitShard === 0 || explicitShard === 1
-      ? explicitShard
-      : nextShard(previous && previous.lastShard, startedAt);
-  const shardList = shardRoutes(routePool, shard);
+  // A probe asks a different question and must not advance the rotation: the next
+  // normal tick continues where the last normal tick left off.
+  const shard =
+    forced || probeDue
+      ? null
+      : explicitShard === 0 || explicitShard === 1
+        ? explicitShard
+        : nextShard(previous && previous.lastShard, startedAt);
+  const shardList = probeDue ? probePlan.routes : shardRoutes(routePool, shard);
   // A per-profile request budget. Several origins in one job would otherwise add
   // up to a burst big enough to earn a refusal, and a refusal aborts. The budget
   // keeps each profile's burst small and simply defers the rest to the next tick,
@@ -324,7 +355,9 @@ async function main() {
   // capped by FORCED_BUDGET_CEILING, because "ask everything" on PHL would be 44.
   const wantedBudget = forced
     ? routePool.length * dates.length
-    : Number(process.env.SWEEP_MAX_REQUESTS) || shardList.length * dates.length;
+    : probeDue
+      ? probePlan.routes.length * dates.length
+      : Number(process.env.SWEEP_MAX_REQUESTS) || shardList.length * dates.length;
   const budget = Math.max(1, forced ? Math.min(wantedBudget, FORCED_BUDGET_CEILING) : wantedBudget);
   const maxRoutes = Math.max(1, Math.floor(budget / dates.length));
   // Slice with a clock-driven offset instead of always taking the first N. Taking
@@ -339,15 +372,18 @@ async function main() {
       ? priorCursor % shardList.length
       : Math.floor(startedAt / (15 * 60 * 1000)) % shardList.length
     : 0;
-  const plannedRoutes = Array.from(
-    { length: Math.min(maxRoutes, shardList.length) },
-    (_, i) => shardList[(offset + i) % shardList.length],
-  );
+  const plannedRoutes = probeDue
+    ? probePlan.routes
+    : Array.from(
+        { length: Math.min(maxRoutes, shardList.length) },
+        (_, i) => shardList[(offset + i) % shardList.length],
+      );
   console.log(
     `sweep plan: ${plannedRoutes.length}/${routePool.length} routes x ${dates.length} date(s) = ${
       dates.length * plannedRoutes.length
     } requests (shard ${shard === null ? 'full' : shard}, budget ${budget}${
-      skipToday ? '; today skipped, departures finished' : ''
+      probeDue ? '; LEAD PROBE, board rows untouched' : ''
+    }${skipToday ? '; today skipped, departures finished' : ''
     }${onlyCodes.length ? `; SWEEP_ONLY=${onlyCodes.join(',')}` : ''}${
       quarantined.length && !forced ? `; ${quarantined.length} retired as not-sold` : ''
     }${wantedBudget > budget ? `; capped from ${wantedBudget} to ${budget}` : ''})`,
@@ -426,7 +462,9 @@ async function main() {
       } else {
         refusals = 0;
       }
-      await sleep(jitter());
+      // A dry run talks to a fixture, so there is no host to be polite to and a
+      // fourteen-request probe would otherwise spend a minute of gate time asleep.
+      if (!dry) await sleep(jitter());
     }
   }
 
@@ -441,7 +479,9 @@ async function main() {
   const state = previous || { history: [] };
   // Retire confirmed "not sold" pairs, and un-retire any that answered normally.
   state.routeWatch = state.routeWatch && typeof state.routeWatch === 'object' ? state.routeWatch : {};
-  for (const code of new Set(notServedHits)) {
+  // A probe asks dates Frontier may not have loaded yet, where "not sold" can simply
+  // mean "not published", so it must never move the three-strikes quarantine.
+  for (const code of new Set(probeDue ? [] : notServedHits)) {
     const w =
       state.routeWatch[code] && typeof state.routeWatch[code] === 'object'
         ? state.routeWatch[code]
@@ -452,7 +492,7 @@ async function main() {
   }
   // A route that refuses repeatedly is retired exactly like a pair Frontier does
   // not fly: three strikes, then a week off before it is asked again.
-  for (const code of new Set(refusedHits)) {
+  for (const code of new Set(probeDue ? [] : refusedHits)) {
     const w =
       state.routeWatch[code] && typeof state.routeWatch[code] === 'object'
         ? state.routeWatch[code]
@@ -505,7 +545,32 @@ async function main() {
   );
 
   const everythingFailed = okCount === 0;
-  if (everythingFailed) {
+  if (probeDue) {
+    // A lead probe answers a different question from a board sweep, so it must never
+    // reach the board. state.sweeps is left exactly as it was: twelve routes were
+    // never asked about these dates, and a date the page can only partly answer is
+    // the empty grid this project forbids. Only the release-timing model grows.
+    const before = Object.keys(state.firstSeen || {}).length;
+    const probeRows = allFlights.filter((f) => f.goWild && f.allin !== null && f.allin <= MAX_ALL_IN);
+    recordFirstSeen(state, probeRows, now);
+    const grown = Object.keys(state.firstSeen || {}).length - before;
+    const fareTrack = recordFares(state, allFlights, now);
+    state.leadProbeCursor = probePlan.cursor;
+    state.leadProbe = {
+      at: now,
+      routes: plannedRoutes.map((r) => r.code),
+      dates: dates.slice(),
+      requests,
+      ok: okCount > 0,
+      newFirstSeen: grown,
+      fares: fareTrack.tracked,
+      aborted: abortedAt ? abortedAt.reason : null,
+    };
+    console.log(
+      `lead probe: ${plannedRoutes.map((r) => r.code).join(',')} x ${dates.length} date(s), ` +
+        `${requests} requests, ${grown} new first sighting(s); board rows untouched`,
+    );
+  } else if (everythingFailed) {
     const kind = classifyFailure(sweeps) || 'error';
     state.lastError = {
       kind,
@@ -668,7 +733,9 @@ async function main() {
   // Alerting is a side effect and must never cost the snapshot: a throw in here
   // used to abort main() before the write, discarding a sweep already paid for.
   try {
-  if (topic) {
+  // A probe tick must not buzz the phone about far-out dates that are not on the
+  // board: the reader would be told about a departure the page does not list.
+  if (topic && !probeDue) {
     const fresh = (state.history || []).filter((h) => h.ts === now);
     // The watchlist is answered first because it is the more specific question, and
     // one event must not buzz the phone twice.

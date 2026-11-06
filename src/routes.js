@@ -218,3 +218,39 @@ export const LAST_DEPARTURE_HOUR_ET = 23;
 export function departuresFinished(now = Date.now()) {
   return easternHour(now) >= LAST_DEPARTURE_HOUR_ET;
 }
+
+// --- Weekly lead probe ------------------------------------------------------
+// A two-date window censors every release observation at 48 hours: we can say
+// "seats appeared within the last two days" and nothing at all about a seat that
+// opened seven days out, because we never looked. Once a week the SAME request
+// budget is spent on a longer horizon for two routes instead of a short one for
+// seven. It is a replacement, not an addition -- the burst stays at the profile
+// budget and exactly one process still touches Frontier.
+export const LEAD_PROBE_GAP_MS = 6.5 * 24 * 60 * 60 * 1000; // weekly, with slack for one missed cron
+// Two routes is enough to learn a lead distribution and small enough that seven
+// dates fit inside the smallest profile budget (LGA: 10 requests -> 5 dates).
+export const LEAD_PROBE_ROUTES = 2;
+export const LEAD_PROBE_MIN_DATES = 3;
+export const LEAD_PROBE_MAX_DATES = 7;
+
+// First run always probes: there is nothing to learn from an empty model.
+export function leadProbeDue(lastProbeAt, now = Date.now()) {
+  const last = Number(lastProbeAt);
+  if (!Number.isFinite(last) || last <= 0) return true;
+  return now - last >= LEAD_PROBE_GAP_MS;
+}
+
+// Two routes x N dates, where N is what the budget affords. Returns null when the
+// budget cannot buy at least LEAD_PROBE_MIN_DATES -- a two-date probe is just a
+// normal sweep wearing a costume.
+export function leadProbePlan(routes, budget, cursor = 0) {
+  const list = Array.isArray(routes) ? routes : [];
+  if (list.length < LEAD_PROBE_ROUTES) return null;
+  const dates = Math.min(LEAD_PROBE_MAX_DATES, Math.floor(Math.max(0, Number(budget) || 0) / LEAD_PROBE_ROUTES));
+  if (dates < LEAD_PROBE_MIN_DATES) return null;
+  const start = ((Math.trunc(Number(cursor) || 0) % list.length) + list.length) % list.length;
+  const picked = Array.from({ length: LEAD_PROBE_ROUTES }, (_, i) => list[(start + i) % list.length]);
+  // Advance the cursor so next week's probe covers a different pair. A fixed pair
+  // would give one route a clean distribution and thirteen nothing.
+  return { routes: picked, dates, cursor: (start + LEAD_PROBE_ROUTES) % list.length };
+}

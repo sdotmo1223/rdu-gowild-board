@@ -7,7 +7,7 @@ import { renderPage } from '../src/render.js';
 import { appendTransitions, recordObservation, recordFirstSeen, digestRows } from '../src/history.js';
 import { frequencyTable } from '../src/frequency.js';
 import { bookabilityHeatmap } from '../src/heatmap.mjs';
-import { releaseTiming, departureUtcMs, etOffsetHours } from '../src/timing.mjs';
+import { releaseTiming, departureUtcMs, etOffsetHours, MIN_SAMPLES } from '../src/timing.mjs';
 import { recordSchedule, weeklyPattern, weekKey } from '../src/schedule.mjs';
 import { mergeSweeps, shouldAbortSweep } from '../collector/parse.mjs';
 import { buildAlert, buildWatchAlert, parseWatch } from '../src/alerts.mjs';
@@ -21,6 +21,8 @@ import {
   frontierDateParam,
   isBlackout,
   shardRoutes,
+  leadProbeDue,
+  leadProbePlan,
 } from '../src/routes.js';
 import { recordFares, fareMechanics } from '../src/pricing.mjs';
 
@@ -373,23 +375,91 @@ check('firstSeen survives a history wipe and stays bounded', () => {
   assert.ok(Object.keys(state.firstSeen).length <= 800, 'bounded');
 });
 
-check('release timing refuses to claim a pattern from one sample', () => {
-  const one = { history: [{ ts: Date.UTC(2026, 10, 2, 5, 0, 0), date: '2026-11-03', dest: 'MCO' }] };
-  const t1 = releaseTiming(one)[0];
-  assert.equal(t1.samples, 1);
-  assert.equal(t1.confident, false);
+check('release timing names an hour only at the sample floor', () => {
+  // 06:00 UTC is 01:00 EST in November, so every sighting lands on the same local
+  // hour and the median has one unambiguous answer.
+  const history = (n) =>
+    Array.from({ length: n }, (_, i) => ({
+      ts: Date.UTC(2026, 10, 2 + i, 6, 0, 0),
+      date: `2026-11-${String(3 + i).padStart(2, '0')}`,
+      dest: 'MCO',
+    }));
 
-  const three = {
-    history: [
-      { ts: Date.UTC(2026, 10, 2, 5, 0, 0), date: '2026-11-03', dest: 'MCO' },
-      { ts: Date.UTC(2026, 10, 3, 5, 10, 0), date: '2026-11-04', dest: 'MCO' },
-      { ts: Date.UTC(2026, 10, 4, 5, 20, 0), date: '2026-11-05', dest: 'MCO' },
-    ],
+  const one = releaseTiming({ history: history(1) })[0];
+  assert.equal(one.samples, 1);
+  assert.equal(one.confident, false, 'one sighting is not a pattern');
+  assert.equal(one.needed, MIN_SAMPLES - 1, 'and it says how many more it needs');
+
+  // One short of the floor is still unproven. This is the regression that matters:
+  // three sightings used to be enough to print "seats open around 14:00".
+  const under = releaseTiming({ history: history(MIN_SAMPLES - 1) })[0];
+  assert.equal(under.samples, MIN_SAMPLES - 1);
+  assert.equal(under.confident, false, 'below the floor no time is claimed');
+  assert.equal(under.needed, 1);
+
+  // The rendered page must not name an hour for an unproven route either.
+  const thin = { sweeps: [], history: history(MIN_SAMPLES - 1), firstSeen: {} };
+  const html = renderPage(buildBoard(thin), thin, [], Date.now());
+  assert.ok(!/seats open around/.test(html), 'no timing claim below the floor');
+  assert.ok(/more before a time is claimed/.test(html), 'the count and the shortfall are stated');
+
+  const at = releaseTiming({ history: history(MIN_SAMPLES) })[0];
+  assert.equal(at.samples, MIN_SAMPLES);
+  assert.equal(at.confident, true);
+  assert.equal(at.medianHour, 1);
+  assert.equal(at.needed, 0);
+});
+
+check('a sighting already on sale at our first look is censored, not timed', () => {
+  const firstLook = Date.UTC(2026, 10, 2, 9, 0, 0); // 04:00 EST, when the collector started
+  const state = {
+    sweeps: [{ date: '2026-11-03', at: firstLook }],
+    firstSeen: {
+      // Already there at our first look of that date: our clock, not Frontier's.
+      '2026-11-03|MCO|2026-11-03 22:00:00': firstLook + 60000,
+      // Appeared later, after we had already been watching: a real release moment.
+      '2026-11-04|MCO|2026-11-04 22:00:00': Date.UTC(2026, 10, 3, 17, 30),
+    },
   };
-  const t3 = releaseTiming(three)[0];
-  assert.equal(t3.samples, 3);
-  assert.equal(t3.confident, true);
-  assert.equal(t3.medianHour, 0);
+  const t = releaseTiming(state)[0];
+  assert.equal(t.seen, 2, 'both sightings are counted');
+  assert.equal(t.censored, 1, 'the first-look sighting is censored');
+  assert.equal(t.samples, 1, 'only the observed release may inform the median');
+  assert.equal(t.medianHour, 12, '12:30 EST is the only usable hour');
+  assert.equal(t.confident, false, 'one timed sighting still claims nothing');
+  assert.equal(t.needed, MIN_SAMPLES - 1);
+
+  // A probe asks a date once and never writes sweeps, so its dates must censor too.
+  const probed = releaseTiming({
+    leadProbe: { at: firstLook, dates: ['2026-11-12'] },
+    firstSeen: { '2026-11-12|MCO|2026-11-12 22:00:00': firstLook + 1000 },
+  })[0];
+  assert.equal(probed.samples, 0, 'a probe first look is not a release either');
+  assert.equal(probed.censored, 1);
+});
+
+check('the weekly lead probe fits the same budget as a normal tick', () => {
+  assert.equal(leadProbeDue(null), true, 'first run probes: an empty model has nothing to preserve');
+  assert.equal(leadProbeDue(1000, 1000 + 86400000), false, 'not due a day later');
+  assert.equal(leadProbeDue(1000, 1000 + 7 * 86400000), true, 'due a week later');
+
+  const routes = Array.from({ length: 14 }, (_, i) => ({ code: `R${i}` }));
+  const rdu = leadProbePlan(routes, 14, 0);
+  assert.equal(rdu.routes.length, 2);
+  assert.equal(rdu.dates, 7);
+  assert.equal(rdu.routes.length * rdu.dates, 14, 'RDU: 2 routes x 7 dates is the same 14-request burst');
+
+  for (const budget of [10, 16]) {
+    const p = leadProbePlan(routes, budget, 0);
+    assert.ok(p.routes.length * p.dates <= budget, `a ${budget}-request profile never overruns its budget`);
+  }
+  assert.equal(leadProbePlan(routes, 4, 0), null, 'a budget too small for three dates yields no probe');
+  assert.equal(leadProbePlan([{ code: 'ATL' }], 14, 0), null, 'one route cannot make a probe');
+
+  // The cursor rotates, so two probes cover four routes rather than the same pair twice.
+  const next = leadProbePlan(routes, 14, rdu.cursor);
+  assert.notEqual(rdu.routes[0].code, next.routes[0].code, 'the next probe asks different routes');
+  assert.equal(new Set([...rdu.routes, ...next.routes].map((r) => r.code)).size, 4);
 });
 
 check('alerts fire on change, dedupe on repeat, and stay quiet when nothing moved', () => {

@@ -69,13 +69,13 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 
 | Path | Responsibility |
 |---|---|
-| `src/routes.js` | 14 routes, `BLACKOUT_DATES`, `PEAK_LABEL`, `MAX_ALL_IN`, `MAX_STOPS`, `MAX_DURATION_MIN`, `easternDate()`, `frontierDateParam()`; the sweep budget: `routeShard()`, `shardRoutes()`, `easternHour()`, `departuresFinished()` |
+| `src/routes.js` | 14 routes, `BLACKOUT_DATES`, `PEAK_LABEL`, `MAX_ALL_IN`, `MAX_STOPS`, `MAX_DURATION_MIN`, `easternDate()`, `frontierDateParam()`; the sweep budget: `routeShard()`, `shardRoutes()`, `easternHour()`, `departuresFinished()`; the weekly lead probe: `leadProbeDue()`, `leadProbePlan()` |
 | `src/board.js` | `buildBoard()` — per-date status machine, nonstop-first sort, fold-vs-show, defensive against malformed state |
 | `src/render.js` | `renderPage()` — the entire HTML, all banners, heatmap, timing, pin/ICS/PWA client script |
 | `src/history.js` | digest, transitions, `recordObservation()`, `recordFirstSeen()` |
 | `src/frequency.js` | weekday open-frequency with honest denominators |
 | `src/heatmap.mjs` | bookability by weekday (primary) and by date (secondary) |
-| `src/timing.mjs` | release-timing model: median local hour + median lead hours, `MIN_SAMPLES = 3` |
+| `src/timing.mjs` | release-timing model: median local hour + median lead hours, `MIN_SAMPLES = 10` (below it the page states the count and the shortfall, never an hour) |
 | `src/pricing.mjs` | fare mechanics: records **every** itinerary (pre-flip standard fare included) into `state.fares`, measures when a fare flips, whether it follows the flight or the load, and the GoWild/std ratio |
 | `src/schedule.mjs` | per-date operating matrix + week-over-week stable-vs-rotating verdict |
 | `src/alerts.mjs` | ntfy.sh push, deduped per error state to once / 6 h |
@@ -99,7 +99,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `test/carry.mjs` | 7 checks: a carried row keeps its real fetch time, never re-stamps |
 | `test/resilience.mjs` | 34 checks: one refusal must not end a sweep, three strikes retire a route, and a fare older than 3 h is withheld |
 | `test/health.mjs` | 34 checks: heartbeat, Worker-side stale alert, the collector-to-Worker topic bootstrap, and the read/write token split — including which credential each collector call site presents |
-| `test/stress.mjs` | 48 adversarial checks (hostile input, malformed state, volume, budget, fare retention) |
+| `test/stress.mjs` | 64 adversarial checks (hostile input, malformed state, volume, budget, fare retention, the timing sample floor, the lead-probe budget) |
 
 ---
 
@@ -108,7 +108,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 ```bash
 npm run lint                 # no-undef: the defect class `node --check` cannot see
 npm test                     # acceptance 25 + multi-origin 9; both must pass
-npm run stress               # adversarial: 62 checks
+npm run stress               # adversarial: 64 checks
 node test/profiles.mjs       # multi-origin: 9 checks
 node --check <file>          # syntax gate, used on every file
 
@@ -146,6 +146,7 @@ npx wrangler deploy
 | `SWEEP_ONLY=ATL,MCO` | ask exactly these routes, ignoring shard and budget. This is the one-round-trip diagnostic: 2 routes × 2 dates = 4 requests in ~20 s, no CI queue. |
 | `SWEEP_MAX_REQUESTS` | per-profile request budget for a normal tick (14 rdu / 10 lga / 16 phl). Requests, not routes: `budget / SWEEP_DAYS` routes per date, taken from a clock-driven offset so the tail of a shard is not starved. |
 | `SWEEP_ALL_DATES=1` | keep asking about today after its last departure instead of carrying it. |
+| `LEAD_PROBE=0` | disable the weekly lead probe. `LEAD_PROBE=force` runs it against the fixture (gate only). |
 
 ## The throttle (updated 2026-11-03)
 
@@ -178,6 +179,18 @@ Rules that hold under either reading:
   age (`7/14 routes re-checked · 7 carried from 22:45 ET`), and a date whose
   departures have all flown leaves the list and is reported once instead. A
   carried row is never recorded as a fresh observation or a fresh schedule sample.
+
+- **One tick a week is a lead probe instead of a board sweep.** About every 7 days
+  (and on the first tick after a fresh state), the same budget buys **2 routes x 7
+  dates** rather than 7 routes x 2 dates. It exists because the two-date window
+  *censored* every release observation at 48 h: lead time cannot be learned from a
+  window that never opens further, however long you wait. The probe writes only
+  `firstSeen`, `fares`, `leadProbe` and `leadProbeCursor` — never `sweeps`,
+  `lastShard` or `lastError` — so the board is left exactly as it was, no alert
+  fires for dates the page does not list, and the next normal tick continues the
+  rotation. `LEAD_PROBE=0` disables it; `LEAD_PROBE=force` runs the branch against
+  the fixture inside `npm run dry`, which is the only thing that keeps an
+  otherwise once-a-week branch from shipping unexecuted.
 
 ---
 
