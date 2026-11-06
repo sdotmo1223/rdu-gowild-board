@@ -273,7 +273,7 @@ function timingHtml(state) {
       const label = r.confident
         ? `seats open around ${esc(hourLabel(r.medianHour))} local${lead}`
         : r.censored > 0
-          ? `${r.samples} timed of ${r.seen} sightings &middot; ${r.censored} were already on sale at first check &middot; ${r.needed} more timed before a time is claimed`
+          ? `${r.samples} timed of ${r.seen} sightings &middot; ${r.censored} ${r.censored === 1 ? 'was' : 'were'} already on sale at first check &middot; ${r.needed} more timed before a time is claimed`
           : `${r.seen} observation${r.seen === 1 ? '' : 's'} &middot; ${r.needed} more before a time is claimed`;
       return `<tr><td>${esc(r.dest)}</td><td>${label}</td></tr>`;
     })
