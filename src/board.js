@@ -16,6 +16,13 @@ export const STALE_AFTER_MIN = 180;
 // says when it was last checked, because a price of unknown age is not an offer.
 export const MAX_ROW_AGE_MIN = 180;
 
+// Per-route freshness ceiling. The header's "updated N min ago" is the age of the
+// snapshot, not of each route: a rotating sweep re-checks half the routes per tick,
+// so one route can be hours behind while the header reads fresh (measured
+// 2026-11-05: PHL served a 29-hour-old fare under "updated 47 min ago"). Three
+// median gaps is the same bound the board-level staleness uses.
+export const COVERAGE_ALERT_MIN = 180;
+
 // Frontier publishes no check-in deadline, so this is a planning number and the
 // page labels it as one: two hours covers security at RDU plus the gate walk. It
 // is never presented as a Frontier rule.
@@ -64,6 +71,40 @@ function withinLimits(f) {
   const durMin = durationMinutes(f.dur);
   if (durMin !== null && durMin > MAX_DURATION_MIN) return false;
   return true;
+}
+
+// The worst per-route age in the snapshot, which the board-level age cannot express.
+// Returns null for a snapshot written before the ledger existed, so an old blob still
+// renders: "no ledger" must never read as "every route is fresh".
+export function buildCoverage(state, now = Date.now()) {
+  const cov = state && state.coverage;
+  if (!cov || typeof cov !== 'object' || Array.isArray(cov)) return null;
+  const codes = Object.keys(cov).filter((c) => cov[c] && typeof cov[c] === 'object');
+  if (!codes.length) return null;
+  let oldestRoute = null;
+  let oldestRouteAgeMin = null;
+  let neverAnswered = 0;
+  for (const code of codes) {
+    const okAt = Number(cov[code].lastOkAt);
+    // A route that has never answered is not "0 minutes old". Counting it as age
+    // would hide it; counting it as fresh would be a lie.
+    if (!Number.isFinite(okAt) || okAt <= 0) {
+      neverAnswered += 1;
+      continue;
+    }
+    const age = Math.max(0, Math.round((now - okAt) / 60000));
+    if (oldestRouteAgeMin === null || age > oldestRouteAgeMin) {
+      oldestRouteAgeMin = age;
+      oldestRoute = code;
+    }
+  }
+  return {
+    routes: codes.length,
+    oldestRoute,
+    oldestRouteAgeMin,
+    neverAnswered,
+    warn: (oldestRouteAgeMin !== null && oldestRouteAgeMin >= COVERAGE_ALERT_MIN) || neverAnswered > 0,
+  };
 }
 
 export function buildBoard(state, now = Date.now()) {
@@ -261,5 +302,7 @@ export function buildBoard(state, now = Date.now()) {
     routeCount: src.routeCount || 0,
     zero: src.zero && typeof src.zero === 'object' ? src.zero : null,
     sweep: src.lastSweep && typeof src.lastSweep === 'object' ? src.lastSweep : null,
+    // Worst route age across the profile, for the header line and /api/board.
+    coverage: buildCoverage(src, now),
   };
 }

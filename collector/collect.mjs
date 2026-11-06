@@ -477,6 +477,52 @@ async function main() {
   const okCount = sweeps.filter((s) => s.ok).length;
 
   const state = previous || { history: [] };
+
+  // Durable first-look. This is the only fact that can tell a Frontier release from
+  // our own cron, and it cannot live in `sweeps`: that array holds ONE tick, so every
+  // sighting whose date left the two-date window came back uncensored and voted on the
+  // median (measured 2026-11-06: 66 of 111 sightings were in that blind spot). Written
+  // for every date this tick asked about, including a date every route refused -- the
+  // question was still asked, which is what censoring needs to know. Kept for 21 days,
+  // comfortably longer than a date stays interesting and shorter than KV's own cap.
+  state.firstLook = state.firstLook && typeof state.firstLook === 'object' ? state.firstLook : {};
+  for (const d of dates) {
+    if (!Number.isFinite(Number(state.firstLook[d]))) state.firstLook[d] = startedAt;
+  }
+  const lookFloor = easternDate(-21, startedAt);
+  for (const d of Object.keys(state.firstLook)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || d < lookFloor) delete state.firstLook[d];
+  }
+
+  // Per-route freshness ledger, from answers this tick already paid for. The header's
+  // "updated N min ago" is the age of the SNAPSHOT, not of each route, so a single
+  // starving route used to be invisible without reading KV by hand.
+  // A probe tick deliberately writes nothing here: it asks far-out dates about two
+  // routes, and refreshing two entries would make the other twelve look abandoned on a
+  // tick that never intended to check them.
+  if (!probeDue) {
+    state.coverage = state.coverage && typeof state.coverage === 'object' ? state.coverage : {};
+    for (const s of sweeps) {
+      if (!s || !s.dest) continue;
+      const prior = state.coverage[s.dest] && typeof state.coverage[s.dest] === 'object' ? state.coverage[s.dest] : {};
+      const priorOk = Number(prior.lastOkAt);
+      // lastOkAt is the last time this route ANSWERED, not the last time it was asked:
+      // a route refused six times in a row is not fresh, and that is exactly the age
+      // the page needs to state.
+      state.coverage[s.dest] = {
+        lastFetchAt: Number(s.at) || now,
+        lastOkAt: s.ok
+          ? Number(s.at) || now
+          : Number.isFinite(priorOk) && priorOk > 0
+            ? priorOk
+            : null,
+        fails: s.ok ? 0 : Number(prior.fails || 0) + 1,
+        lastReason: typeof s.reason === 'string' ? s.reason.slice(0, 60) : null,
+      };
+    }
+    const known = new Set(ROUTES.map((r) => r.code));
+    for (const c of Object.keys(state.coverage)) if (!known.has(c)) delete state.coverage[c];
+  }
   // Retire confirmed "not sold" pairs, and un-retire any that answered normally.
   state.routeWatch = state.routeWatch && typeof state.routeWatch === 'object' ? state.routeWatch : {};
   // A probe asks dates Frontier may not have loaded yet, where "not sold" can simply

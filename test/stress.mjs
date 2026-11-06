@@ -2,7 +2,7 @@
 // path with malformed state, hostile strings, and volume, and asserts that the
 // page never throws and never goes blank.
 import assert from 'node:assert';
-import { buildBoard } from '../src/board.js';
+import { buildBoard, buildCoverage } from '../src/board.js';
 import { renderPage } from '../src/render.js';
 import { appendTransitions, recordObservation, recordFirstSeen, digestRows } from '../src/history.js';
 import { frequencyTable } from '../src/frequency.js';
@@ -1132,6 +1132,93 @@ check('a route that was not asked is never given a verdict', () => {
   const full = { observed: {}, days: {}, seenDests: { MCO: 1, CUN: 1 } };
   recordObservation(full, '2026-11-04', [{ date: '2026-11-04', dest: 'MCO', goWild: true, allin: 15 }]);
   assert.equal(full.days['CUN|2026-11-04'], 0, 'asked and absent is a real 0');
+});
+
+// Censoring has to outlive the window. `sweeps` holds one tick, so a first-look kept
+// only there is forgotten the moment its date stops being asked about -- and the old
+// sightings come back as "releases", which is the false 4 AM claim all over again.
+check('a censored sighting stays censored after its date leaves the sweep window', () => {
+  const firstLookAt = Date.UTC(2026, 10, 2, 9, 0);
+  const state = {
+    // The window has moved on to the next day; nothing here names 2026-11-03.
+    sweeps: [{ date: '2026-11-04', dest: 'MCO', ok: true }],
+    firstLook: { '2026-11-03': firstLookAt },
+    firstSeen: {
+      '2026-11-03|ATL|2026-11-03 18:30:00': firstLookAt + 30000,
+      '2026-11-03|ATL|2026-11-03 21:30:00': firstLookAt + 6 * 3600000,
+    },
+  };
+  const atl = releaseTiming(state).find((r) => r.dest === 'ATL');
+  assert.equal(atl.censored, 1, 'a sighting at our own start time is not a release');
+  assert.equal(atl.samples, 1, 'a sighting six hours later is one, so it counts');
+});
+
+// The ledger is the difference between "the snapshot is 9 minutes old" and "this
+// route was last answered hours ago". Without it the header's freshness claim is
+// about the file, not about the fares under it.
+check('the worst route age is named on the page', () => {
+  const now = Date.now();
+  const state = {
+    sweeps: [{ date: '2026-11-06', dest: 'MCO', ok: true, blocked: false, flights: [], at: now }],
+    updatedAt: now,
+    routeCount: 14,
+    coverage: {
+      MCO: { lastFetchAt: now, lastOkAt: now, fails: 0 },
+      PHL: { lastFetchAt: now - 400 * 60000, lastOkAt: now - 400 * 60000, fails: 6 },
+    },
+  };
+  const view = buildBoard(state, now);
+  assert.equal(view.coverage.oldestRoute, 'PHL');
+  assert.equal(view.coverage.oldestRouteAgeMin, 400);
+  assert.equal(view.coverage.warn, true);
+  const html = renderPage(view, state, [], now);
+  assert.match(html, /oldest route reading 6h 40m old \(PHL\)/);
+});
+
+check('a board whose routes are all fresh claims no coverage problem', () => {
+  const now = Date.now();
+  const state = {
+    sweeps: [{ date: '2026-11-06', dest: 'MCO', ok: true, blocked: false, flights: [], at: now }],
+    updatedAt: now,
+    coverage: { MCO: { lastFetchAt: now, lastOkAt: now - 5 * 60000, fails: 0 } },
+  };
+  const view = buildBoard(state, now);
+  assert.equal(view.coverage.oldestRouteAgeMin, 5);
+  assert.equal(view.coverage.warn, false);
+  assert.doesNotMatch(renderPage(view, state, [], now), /oldest route reading/);
+});
+
+// "No ledger" must never read as "every route is fresh", and the page must still
+// render from a snapshot written before the field existed.
+check('a snapshot written before the coverage ledger still renders', () => {
+  const now = Date.now();
+  const state = {
+    sweeps: [{ date: '2026-11-06', dest: 'MCO', ok: true, blocked: false, flights: [], at: now }],
+    updatedAt: now,
+    routeCount: 14,
+  };
+  const view = buildBoard(state, now);
+  assert.equal(view.coverage, null);
+  const html = renderPage(view, state, [], now);
+  assert.match(html, /GoWild/, 'the page still renders');
+  assert.doesNotMatch(html, /oldest route reading/);
+});
+
+// A route that has only ever been refused has no age at all. Counting it as zero
+// minutes old would hide it; counting it toward "oldest" would invent a number.
+check('a route that never answered is stated, not counted as fresh', () => {
+  const now = Date.now();
+  const coverage = { MCO: { lastFetchAt: now, lastOkAt: null, fails: 3 } };
+  const cov = buildCoverage({ coverage }, now);
+  assert.equal(cov.neverAnswered, 1);
+  assert.equal(cov.oldestRouteAgeMin, null);
+  assert.equal(cov.warn, true);
+  const state = {
+    sweeps: [{ date: '2026-11-06', dest: 'MCO', ok: true, blocked: false, flights: [], at: now }],
+    updatedAt: now,
+    coverage,
+  };
+  assert.match(renderPage(buildBoard(state, now), state, [], now), /1 route never answered a sweep/);
 });
 
 async function checkAsync(name, fn) {

@@ -70,7 +70,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | Path | Responsibility |
 |---|---|
 | `src/routes.js` | 14 routes, `BLACKOUT_DATES`, `PEAK_LABEL`, `MAX_ALL_IN`, `MAX_STOPS`, `MAX_DURATION_MIN`, `easternDate()`, `frontierDateParam()`; the sweep budget: `routeShard()`, `shardRoutes()`, `easternHour()`, `departuresFinished()`; the weekly lead probe: `leadProbeDue()`, `leadProbePlan()` |
-| `src/board.js` | `buildBoard()` — per-date status machine, nonstop-first sort, fold-vs-show, defensive against malformed state |
+| `src/board.js` | `buildBoard()` — per-date status machine, nonstop-first sort, fold-vs-show, defensive against malformed state; `buildCoverage()` — worst per-route age from `state.coverage` |
 | `src/render.js` | `renderPage()` — the entire HTML, all banners, heatmap, timing, pin/ICS/PWA client script |
 | `src/history.js` | digest, transitions, `recordObservation()`, `recordFirstSeen()` |
 | `src/frequency.js` | weekday open-frequency with honest denominators |
@@ -99,7 +99,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `test/carry.mjs` | 7 checks: a carried row keeps its real fetch time, never re-stamps |
 | `test/resilience.mjs` | 34 checks: one refusal must not end a sweep, three strikes retire a route, and a fare older than 3 h is withheld |
 | `test/health.mjs` | 34 checks: heartbeat, Worker-side stale alert, the collector-to-Worker topic bootstrap, and the read/write token split — including which credential each collector call site presents |
-| `test/stress.mjs` | 65 adversarial checks (hostile input, malformed state, volume, budget, fare retention, the timing sample floor, censored sightings, the lead-probe budget) |
+| `test/stress.mjs` | 70 adversarial checks (hostile input, malformed state, volume, budget, fare retention, the timing sample floor, censored sightings, the durable first-look, the coverage ledger, the lead-probe budget) |
 
 ---
 
@@ -108,7 +108,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 ```bash
 npm run lint                 # no-undef: the defect class `node --check` cannot see
 npm test                     # acceptance 25 + multi-origin 9; both must pass
-npm run stress               # adversarial: 65 checks
+npm run stress               # adversarial: 70 checks
 node test/profiles.mjs       # multi-origin: 9 checks
 node --check <file>          # syntax gate, used on every file
 

@@ -92,6 +92,14 @@ function firstAskedByDate(state) {
     const cur = map.get(date);
     if (cur === undefined || at < cur) map.set(date, at);
   };
+  // `state.firstLook` is the durable answer: date -> the first tick that ever asked
+  // about it. It has to be stored separately because `sweeps` holds ONE tick, so
+  // every sighting whose date has left the window came back uncensored and voted on
+  // the median -- measured 2026-11-06: 66 of 111 sightings were in that blind spot.
+  const look = (state && state.firstLook) || {};
+  for (const [date, at] of Object.entries(look)) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) note(date, Number(at));
+  }
   for (const s of (state && state.sweeps) || []) {
     if (s && typeof s === 'object') note(s.date, Number(s.at));
   }

@@ -62,6 +62,20 @@ try {
 if (state) {
   expect('snapshot has sweeps', Array.isArray(state.sweeps) && state.sweeps.length > 0);
   expect('snapshot records requests', Number(state.requests) > 0, String(state.requests));
+  // The two facts the timing model and the header need from the collector itself. A
+  // first-look that is never written leaves censoring blind; a coverage ledger that is
+  // never written leaves the oldest-route line empty forever, and both failures are
+  // invisible in the run log.
+  expect(
+    'first look is recorded for the date asked',
+    state.firstLook && Object.keys(state.firstLook).length === 1 && Number(state.firstLook[Object.keys(state.firstLook)[0]]) > 0,
+    JSON.stringify(state.firstLook || null),
+  );
+  expect(
+    'coverage is recorded per route that answered',
+    Boolean(state.coverage && state.coverage.ATL && Number(state.coverage.ATL.lastOkAt) > 0),
+    JSON.stringify(state.coverage || null),
+  );
 }
 
 // --- The weekly lead probe, against the same fixture -------------------------
@@ -101,6 +115,15 @@ try {
   expect('probe: leaves the rotation alone', ps.lastShard === undefined, String(ps.lastShard));
   expect('probe: leaves the error banner alone', ps.lastError === undefined, JSON.stringify(ps.lastError || null));
   expect('probe: feeds the timing model', Number(ps.leadProbe.newFirstSeen) > 0, String(ps.leadProbe.newFirstSeen));
+  // A probe asks far-out dates about two routes. Refreshing the freshness ledger for
+  // those two would make the other twelve read as starving on a tick that never meant
+  // to check them, so the ledger must be left exactly as it was.
+  expect('probe: leaves the freshness ledger alone', ps.coverage === undefined, JSON.stringify(ps.coverage || null));
+  expect(
+    'probe: still records the first look for its dates',
+    ps.firstLook && Object.keys(ps.firstLook).length === 7,
+    JSON.stringify(ps.firstLook || null),
+  );
 } catch (err) {
   expect('probe: snapshot parses', false, err.message);
 }

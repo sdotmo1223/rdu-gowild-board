@@ -320,6 +320,10 @@ export default {
         aborted: state.aborted || null,
         sweepError: view.error || null,
         routeCount: view.routeCount,
+        // Worst per-route age. The board-level ageMin says when the snapshot was
+        // written, which is a different fact from whether every route behind it was
+        // actually re-checked.
+        coverage: view.coverage || null,
         dates: view.dates.map((d) => ({
           date: d.date,
           status: d.status,

@@ -59,6 +59,34 @@ function ago(min) {
   return `updated ${h}h ${min % 60}m ago`;
 }
 
+// "6h 40m" — a span, not a sentence, so it can sit inside one.
+function spanText(min) {
+  if (min == null) return 'unknown';
+  if (min < 60) return `${min} min`;
+  return `${Math.floor(min / 60)}h ${min % 60}m`;
+}
+
+// Per-route freshness. The header already states the snapshot's age, which is not
+// the same claim: a rotating sweep re-checks half the routes per tick, so the page
+// could read "updated 9 min ago" over a route last answered hours ago. Under an
+// hour this is the normal state and saying it every tick is noise; past it, the
+// line names the route instead of leaving a starving route invisible.
+function coverageHtml(view) {
+  const c = view && view.coverage;
+  if (!c) return '';
+  const showAge = c.oldestRouteAgeMin !== null && c.oldestRouteAgeMin !== undefined && c.oldestRouteAgeMin >= 60;
+  if (!showAge && !c.neverAnswered) return '';
+  const parts = [];
+  if (showAge) {
+    parts.push(`oldest route reading ${spanText(c.oldestRouteAgeMin)} old${c.oldestRoute ? ` (${esc(c.oldestRoute)})` : ''}`);
+  }
+  if (c.neverAnswered) {
+    parts.push(`${c.neverAnswered} route${c.neverAnswered === 1 ? '' : 's'} never answered a sweep`);
+  }
+  const text = parts.join(' &middot; ');
+  return `<p class="meta cov">${c.warn ? `<strong>${text}</strong>` : text}</p>`;
+}
+
 function rowHtml(r) {
   const nextDay = dayOf(r.arr) && dayOf(r.dep) && dayOf(r.arr) !== dayOf(r.dep);
   const arrive = `${fmtTime(r.arr)}${nextDay ? ' <span class="nd">+1</span>' : ''}`;
@@ -489,6 +517,7 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
   <h1>{ORIGIN} <span>GoWild</span></h1>
   <span class="stamp ${view.stale ? 'stale' : ''}">${esc(ago(view.ageMin))}${Number(view.oldestAgeMin) > Number(view.ageMin) ? ` &middot; ${view.oldestOffered ? 'oldest fare' : 'oldest data'} ${esc(ago(view.oldestAgeMin))}` : ''}</span>
 </header>
+${coverageHtml(view)}
 ${banner}
 ${view.dates.map((d) => dateSection(d, view, now)).join('')}
 ${flipHtml(state)}
