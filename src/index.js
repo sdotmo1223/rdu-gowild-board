@@ -276,7 +276,9 @@ export default {
           '<h1 style="font-size:1.4rem">Frontier GoWild boards</h1>' +
           '<p>GoWild departures with an estimated all-in fare of $50.00 or less, for the next 48 hours, nonstop first. Every listed departure is still ahead.</p>' +
           `<ul>${items || '<li>No public board is configured.</li>'}</ul>` +
-          '<p>The RDU board is token-gated: open it from its <code>/s/&lt;token&gt;</code> link.</p>' +
+          (pubs.includes('rdu')
+            ? '<p>The RDU board is public at <a href="/rdu">/rdu</a>; the token path <code>/s/&lt;token&gt;</code> still works.</p>'
+            : '<p>The RDU board is token-gated: open it from its <code>/s/&lt;token&gt;</code> link.</p>') +
           '</body>',
       );
     }
