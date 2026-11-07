@@ -31,3 +31,8 @@ preview-board.png
 
 # dispatched agent specs and reports
 .agents/
+
+# local scratch artifacts (not produced or owned by this repo)
+/rdu.html
+/rdu-chart.png
+/godmod3-local/
