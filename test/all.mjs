@@ -14,6 +14,7 @@ const suites = [
   ['resilience', 'test/resilience.mjs'],
   ['health', 'test/health.mjs'],
   ['sink', 'test/sink.mjs'],
+  ['recovery', 'test/recovery.mjs'],
 ];
 
 let failed = 0;

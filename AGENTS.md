@@ -100,6 +100,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `test/resilience.mjs` | 34 checks: one refusal must not end a sweep, three strikes retire a route, and a fare older than 3 h is withheld |
 | `test/health.mjs` | 34 checks: heartbeat, Worker-side stale alert, the collector-to-Worker topic bootstrap, and the read/write token split — including which credential each collector call site presents |
 | `test/sink.mjs` | 21 checks against `tools/sink.mjs` on its own free port: a refused row (400) writes no capture, a real row is stored, a preflight answers 204, `/done` answers 200 **and** leaves `.sweep/_done`, unknown routes answer 404. Written because `/done` was unchecked and a patch that deleted the route passed every other check |
+| `test/recovery.mjs` | 11 checks on `tools/recovery-gate.mjs`: the second cron entry sweeps only when the board is already 40 min old, and an unreadable age sweeps rather than skipping |
 | `test/stress.mjs` | 70 adversarial checks (hostile input, malformed state, volume, budget, fare retention, the timing sample floor, censored sightings, the durable first-look, the coverage ledger, the lead-probe budget) |
 
 ---
@@ -108,7 +109,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 
 ```bash
 npm run lint                 # no-undef: the defect class `node --check` cannot see
-npm test                     # acceptance 25 + multi-origin 9; both must pass
+npm test                     # every suite in test/all.mjs (9 suites, 200 checks); all must pass
 npm run stress               # adversarial: 70 checks
 node test/profiles.mjs       # multi-origin: 9 checks
 node --check <file>          # syntax gate, used on every file
@@ -195,6 +196,14 @@ Rules that hold under either reading:
   otherwise once-a-week branch from shipping unexecuted.
 
 ---
+
+A **second cron entry** (`5,20,35,50 * * * *`) exists only to fill slots GitHub drops
+— measured 2026-11-07: 9 deliveries in 24 h against 24 expected, gaps of 233, 362
+and 434 min. `tools/recovery-gate.mjs` reads the board's own `ageMinutes`: under 40
+min the recovery tick **skips** (a healthy hour still costs one 14-request burst),
+at or over it the tick sweeps. An unreadable age sweeps — a missed tick is the
+failure being removed, and one extra burst is not. `test/recovery.mjs` pins both
+directions.
 
 ## Host gotchas (cost hours if forgotten)
 

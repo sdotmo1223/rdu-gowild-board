@@ -126,6 +126,9 @@ own nonstop table. The widely repeated "32 destinations" is an ABC11 article fro
   `concurrency` group). The cron asks for 15 minutes; GitHub delivers about hourly
   on a free runner (measured 2026-11-04: 24 runs in 24 h, gaps median 60 min,
   range 42–81), so rotation alternates per tick rather than per clock slot.
+  A second entry (`5,20,35,50`) fills the slots GitHub drops: it sweeps only when
+  the board is already 40 minutes old and skips otherwise, so a healthy hour still
+  costs a single burst (measured 2026-11-07: 9 deliveries in 24 h, gaps up to 434 min).
 - **Read-only**: no checkout, payment, or booking path is ever requested.
 - **No stored password**: there is no login at all — only a session cookie you paste once.
 

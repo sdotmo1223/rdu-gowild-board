@@ -17,7 +17,12 @@ name: gowild-sweep
 # tick, which is why a smaller burst buys more data than a bigger one.
 on:
   schedule:
+    # Primary: half the routes per delivery, every delivery.
     - cron: '*/15 * * * *'
+    # Recovery: a second phase of the hour, for the slots GitHub drops. It sweeps only
+    # when the board is already stale, so a healthy hour still costs one burst
+    # (measured 2026-11-07: 9 deliveries in 24 h, gaps of 233, 362 and 434 minutes).
+    - cron: '5,20,35,50 * * * *'
   workflow_dispatch:
     inputs:
       profiles:
@@ -47,10 +52,34 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
+      # A recovery entry can only help if it costs nothing when the primary is
+      # delivering: sweeping on top of a healthy board would double the requests
+      # Frontier sees. This reads the board's own age and skips a tick nobody needs.
+      # It sweeps when the age cannot be read -- a missed tick leaves the page hours
+      # stale, which is the failure being removed here.
+      - name: Recovery slot gate
+        id: gate
+        if: github.event_name == 'schedule' && github.event.schedule != '*/15 * * * *'
+        env:
+          INGEST_URL: ${{ vars.BOARD_INGEST_URL }}
+          BOARD_TOKEN: ${{ secrets.BOARD_TOKEN }}
+        run: |
+          set -u
+          AGE=unknown
+          if [ -n "${INGEST_URL:-}" ] && [ -n "${BOARD_TOKEN:-}" ]; then
+            BASE="${INGEST_URL%/api/ingest}"
+            AGE=$(curl -sS -m 20 -H "Authorization: Bearer ${BOARD_TOKEN}" "${BASE}/api/board" \
+              | node tools/recovery-gate.mjs age || echo unknown)
+          fi
+          DECISION=$(node tools/recovery-gate.mjs decide "${{ github.event.schedule }}" "$AGE")
+          echo "$DECISION"
+          echo "$DECISION" | grep '^skip=' >> "$GITHUB_OUTPUT" || true
+
       # A sweep that spends 18 fare requests and only then discovers it cannot
       # write is the worst case there is. This costs one cheap request and zero
       # Frontier contact.
       - name: Prove the write path before touching Frontier
+        if: steps.gate.outputs.skip != 'true'
         env:
           INGEST_URL: ${{ vars.BOARD_INGEST_URL }}
           BOARD_TOKEN: ${{ secrets.BOARD_TOKEN }}
@@ -75,6 +104,7 @@ jobs:
           echo "write path verified (HTTP 200)"
 
       - name: Install dependencies
+        if: steps.gate.outputs.skip != 'true'
         run: npm ci
 
       # Cheap and before Chromium on purpose. A collector that cannot resolve its
@@ -82,21 +112,25 @@ jobs:
       # and then throw before writing the snapshot -- which is what happened on
       # 2026-11-04 10:18 ("boardRows is not defined", 42 requests discarded).
       - name: Lint before spending requests
+        if: steps.gate.outputs.skip != 'true'
         run: npm run lint
 
       # Executes the collector's main() against a fixture: same plan, parse, merge,
       # alerts and write path, zero Frontier contact. A ReferenceError in there used
       # to be discovered by the cron, after the requests had been paid for.
       - name: Dry-run the collector before spending requests
+        if: steps.gate.outputs.skip != 'true'
         run: npm run dry
 
       - name: Cache Chromium
+        if: steps.gate.outputs.skip != 'true'
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install Chromium
+        if: steps.gate.outputs.skip != 'true'
         run: npx playwright install --with-deps chromium
 
       # Sequential by construction: the loop blocks on each sweep. Secondaries run
@@ -104,6 +138,7 @@ jobs:
       # secondary, which keeps the total request count at roughly what it was when
       # there was a single origin.
       - name: Sweep each origin in turn
+        if: steps.gate.outputs.skip != 'true'
         env:
           BOARD_INGEST_URL: ${{ vars.BOARD_INGEST_URL }}
           BOARD_TOKEN: ${{ secrets.BOARD_TOKEN }}
