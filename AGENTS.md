@@ -99,6 +99,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `test/carry.mjs` | 7 checks: a carried row keeps its real fetch time, never re-stamps |
 | `test/resilience.mjs` | 34 checks: one refusal must not end a sweep, three strikes retire a route, and a fare older than 3 h is withheld |
 | `test/health.mjs` | 34 checks: heartbeat, Worker-side stale alert, the collector-to-Worker topic bootstrap, and the read/write token split — including which credential each collector call site presents |
+| `test/sink.mjs` | 21 checks against `tools/sink.mjs` on its own free port: a refused row (400) writes no capture, a real row is stored, a preflight answers 204, `/done` answers 200 **and** leaves `.sweep/_done`, unknown routes answer 404. Written because `/done` was unchecked and a patch that deleted the route passed every other check |
 | `test/stress.mjs` | 70 adversarial checks (hostile input, malformed state, volume, budget, fare retention, the timing sample floor, censored sightings, the durable first-look, the coverage ledger, the lead-probe budget) |
 
 ---
@@ -147,6 +148,7 @@ npx wrangler deploy
 | `SWEEP_MAX_REQUESTS` | per-profile request budget for a normal tick (14 rdu / 10 lga / 16 phl). Requests, not routes: `budget / SWEEP_DAYS` routes per date, taken from a clock-driven offset so the tail of a shard is not starved. |
 | `SWEEP_ALL_DATES=1` | keep asking about today after its last departure instead of carrying it. |
 | `LEAD_PROBE=0` | disable the weekly lead probe. `LEAD_PROBE=force` runs it against the fixture (gate only). |
+| `SINK_PORT` | loopback port for `tools/sink.mjs`, default 8902. `test/sink.mjs` asks the OS for a free port unless this is set, and fails rather than grading an occupied port. |
 
 ## The throttle (updated 2026-11-03)
 
