@@ -6,7 +6,9 @@ $50.00 or less. One user, personal tool. It is graded on three things only: **it
 works, it costs $0, and silent failure is impossible.**
 
 `README.md` = how to run and deploy. `REPORT.md` = measured evidence. `HANDOFF.md`
-= chronological build log, including every wrong turn. This file = the rules.
+= chronological build log, including every wrong turn. `TASKS.md` = the running
+list: take its first `open` item and only that one, and leave its status honest.
+This file = the rules.
 
 ---
 
@@ -89,6 +91,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `tools/route-probe.mjs` | one-request "does Frontier sell this city pair?" probe: real Chromium + the collector parser |
 | `tools/render-state.mjs` | render `board.html` from a real collector snapshot |
 | `tools/seed-schedule.mjs` | rebuild `state.json` (incl. schedule) from `.sweep/` captures |
+| `TASKS.md` | the running list: one outcome per item, its evidence bar, and what it prevents. The first `open` item is the one being worked; never two at once. Update status in the same commit as the work |
 | `FAILURES.md` | every failure, why the first look missed it, the four patterns behind them, and a drill list per role. Read your role before touching its code |
 | `PLAN.md` | the current ordered plan and its acceptance criteria |
 | `REVIEW.md` | totality review: scorecard, clash catalogue, bottlenecks, ordered fixes, exam standard |
