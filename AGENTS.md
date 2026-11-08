@@ -79,6 +79,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `src/pricing.mjs` | fare mechanics: records **every** itinerary (pre-flip standard fare included) into `state.fares`, measures when a fare flips, whether it follows the flight or the load, and the GoWild/std ratio |
 | `src/schedule.mjs` | per-date operating matrix + week-over-week stable-vs-rotating verdict |
 | `src/alerts.mjs` | ntfy.sh push, deduped per error state to once / 6 h |
+| `src/watch.mjs` | per-route bells: `normalizeWatch()`, `observe()`, `planWatch()` (available / sold out / cheaper / departing), `channelStatus()`, push+email+text delivery, `evaluateWatches()` on ingest |
 | `.github/workflows/sweep.yml` | the only collector cron: every origin, sequential, per-profile request budget |
 | `src/index.js` | Worker router: `/s/<TOKEN>`, `/api/board` (token-gated), `/api/ingest` (token-gated snapshot write), PWA assets |
 | `collector/collect.mjs` | Playwright sweep → KV (or `state.json` with no credentials) |
@@ -140,7 +141,9 @@ npx wrangler deploy
 | `CF_API_TOKEN`, `CF_ACCOUNT_ID`, `CF_KV_NAMESPACE_ID` | write to KV; absent ⇒ writes `state.json` |
 | `HEADLESS=0` | run headed, offscreen (for a local scheduler) |
 | `NTFY_TOPIC` | optional phone push, no account needed. The collector sends it with each snapshot, so the Worker can push without a second secret; a Worker secret of the same name overrides it |
-| `WATCH` | optional standing question, e.g. `ATL<=25,MCO<=30`; alerts once per 6 h per matching departure set |
+| `WATCH` | optional standing question, e.g. `ATL<=25,MCO<=30`; alerts once per 6 h per matching departure set. This is the board-wide env watch; the page's per-route bells live in KV (`w:<profile>:<DEST>`) instead |
+| `RESEND_API_KEY`, `ALERT_EMAIL`, `ALERT_FROM` | optional email channel for watches. Resend's free tier; `ALERT_FROM` defaults to `onboarding@resend.dev`, which may only send to your own address. Absent ⇒ the bell says email is off, it does not accept a watch it cannot deliver |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`, `ALERT_PHONE` | optional text channel for watches. Twilio is **not** free, so this stays off until all four exist |
 | `WARMUP_URL` | defaults to `https://booking.flyfrontier.com/` — do not change blindly |
 | `STATE_OUT`, `STATE_IN` | snapshot paths |
 | `SWEEP_DAYS` | dates per sweep, default 2. Do not raise it in the normal cadence: 7 routes × N dates is the burst, and one refusal aborts the sweep. |

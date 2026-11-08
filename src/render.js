@@ -87,30 +87,42 @@ function coverageHtml(view) {
   return `<p class="meta cov">${c.warn ? `<strong>${text}</strong>` : text}</p>`;
 }
 
-function rowHtml(r) {
+function rowHtml(r, ctx = {}) {
+  const watched = Boolean(ctx && ctx.canWatch && ctx.watched && ctx.watched.has(r.dest));
   const nextDay = dayOf(r.arr) && dayOf(r.dep) && dayOf(r.arr) !== dayOf(r.dep);
   const arrive = `${fmtTime(r.arr)}${nextDay ? ' <span class="nd">+1</span>' : ''}`;
   const data =
     `data-date="${esc(r.date)}" data-dest="${esc(r.dest)}" data-city="${esc(r.city)}" ` +
     `data-dep="${esc(r.dep)}" data-arr="${esc(r.arr)}" data-allin="${esc(r.allin)}" ` +
     `data-stops="${esc(r.stops)}"`;
+  // Departure time is the left rail because it is what the eye scans first; the
+  // time is never repeated downstream, so the row reads once, left to right.
+  const seats =
+    r.seats === 0
+      ? '<span class="seat out">sold out</span>'
+      : r.seats
+        ? `<span class="seat">${r.seats} seat${r.seats === 1 ? '' : 's'} left</span>`
+        : '<span class="seat unk">seats n/a</span>';
   return `<li class="row" ${data}>
-      <div class="line1">
-        <span class="dest">${esc(r.city)} <b>${esc(r.dest)}</b></span>
-        <span class="price">$${r.allin.toFixed(2)}</span>
+      <div class="dep"><time>${fmtTime(r.dep)}</time></div>
+      <div class="main">
+        <p class="dest">${esc(r.city)}<b>${esc(r.dest)}</b></p>
+        <p class="sub">
+          <span class="arr">${arrive}</span>
+          <span>${esc(fmtDuration(r.dur))}</span>
+          ${r.nonstop ? '<span class="badge nonstop">nonstop</span>' : `<span class="badge stops">${esc(r.stops)}</span>`}
+          ${seats}
+          ${r.leaveBy ? `<span class="leave ${r.tight ? 'tight' : ''}">leave by ${fmtTime(r.leaveBy)}${r.tight ? ' &middot; leave now' : ''}</span>` : ''}
+        </p>
+        <div class="acts">
+          ${ctx && ctx.canWatch ? `<button type="button" class="act bell" data-dest="${esc(r.dest)}" data-date="${esc(r.date)}" aria-pressed="${watched ? 'true' : 'false'}" title="Watch ${esc(r.dest)}">${watched ? 'Watching' : 'Watch'}</button>` : ''}
+          <button type="button" class="act pin" aria-pressed="false">Pin ${esc(r.dest)}</button>
+          <button type="button" class="act ics">Calendar</button>
+        </div>
       </div>
-      <div class="line2">
-        <span class="leg">${fmtTime(r.dep)} &rarr; ${arrive}</span>
-        ${r.nonstop ? '<span class="badge nonstop">NONSTOP</span>' : `<span class="badge stops">${esc(r.stops)}</span>`}
-      </div>
-      <div class="line3">
-        <span>${esc(fmtDuration(r.dur))}</span>
-        ${r.leaveBy ? `<span class="${r.tight ? 'tight' : ''}">leave by ${fmtTime(r.leaveBy)}${r.tight ? ' &middot; leave now' : ''}</span>` : ''}
-        <span>${r.seats === 0 ? 'sold out' : r.seats ? `${r.seats} seat${r.seats === 1 ? '' : 's'} left` : 'seats unknown'}</span>
-      </div>
-      <div class="acts">
-        <button type="button" class="act pin" aria-pressed="false">Pin ${esc(r.dest)}</button>
-        <button type="button" class="act ics">Calendar</button>
+      <div class="fare">
+        <span class="amt">$${r.allin.toFixed(2)}</span>
+        <span class="unit">est. all-in</span>
       </div>
     </li>`;
 }
@@ -134,7 +146,66 @@ const STATE_COPY = {
   nogowild: (d) => `${d.total} departure${d.total === 1 ? '' : 's'}, but Frontier released no GoWild seats.`,
 };
 
-function dateSection(d, view, now) {
+// The page's own day, in the zone the board reasons in. "Today" below is a claim
+// about America/New_York, so it must not come from the host clock's UTC date.
+function etDay(now) {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date(now));
+  } catch {
+    return new Date(now).toISOString().slice(0, 10);
+  }
+}
+
+// What a reader can learn from the panel's own roof: which day it is, how many
+// options are on it, and the cheapest one. The counts are read off the rows the
+// panel actually renders, so the summary cannot drift from the list under it.
+function dateSub(d, now) {
+  const rows = Array.isArray(d.rows) ? d.rows : [];
+  const cheapest = rows.reduce((m, r) => {
+    const v = Number(r.allin);
+    return Number.isFinite(v) && (m === null || v < m) ? v : m;
+  }, null);
+  const today = etDay(now);
+  const tomorrow = etDay(Number(now) + 86400000);
+  const rel = d.date === today ? 'Today' : d.date === tomorrow ? 'Tomorrow' : '';
+  const parts = [rel];
+  parts.push(rows.length ? `${rows.length} option${rows.length === 1 ? '' : 's'}` : 'no bookable options');
+  if (cheapest !== null) parts.push(`from <span class="from">$${cheapest.toFixed(2)}</span>`);
+  return parts.filter(Boolean).join(' &middot; ');
+}
+
+// The watch strip is the board's standing questions, stated on the page. It also
+// names the channels that are actually wired: a watch accepted by a Worker with no
+// NTFY_TOPIC would be a promise nobody keeps.
+function watchBar(ctx) {
+  if (!ctx || !ctx.canWatch) return '';
+  const list = Array.isArray(ctx.watches) ? ctx.watches : [];
+  const st = ctx.channels || {};
+  const names = ['push', 'email', 'text'];
+  const ready = names.filter((c) => st[c] && st[c].ready);
+  const off = names.filter((c) => !st[c] || !st[c].ready);
+  const alertLine = ready.length
+    ? `Alerts: ${ready.join(' + ')}${off.length ? ` \u00b7 ${off.join(', ')} not set up` : ''}`
+    : 'No alert channel is set up yet \u2014 set NTFY_TOPIC on the Worker to receive these';
+  if (!list.length) {
+    return `<div class="watchbar empty"><span class="wb">Watch</span><span class="wb-note">Tap <b>Watch</b> on a departure to be told when its seats open, sell out, get cheaper, or get close to leaving.</span><span class="wb-ch">${esc(alertLine)}</span></div>`;
+  }
+  const chips = list
+    .map((w) => {
+      const scope = w.mode === 'always' ? 'every date' : esc(shortDay(w.date));
+      const live = (w.channels || []).filter((c) => st[c] && st[c].ready);
+      return `<span class="wchip"><b>${esc(w.dest)}</b><em>${scope}</em><i>${esc(live.length ? live.join(' + ') : 'no channel ready')}</i><button type="button" class="act unwatch" data-dest="${esc(w.dest)}">stop</button></span>`;
+    })
+    .join('');
+  return `<div class="watchbar"><span class="wb">Watching</span><div class="wchips">${chips}</div><span class="wb-ch">${esc(alertLine)}</span></div>`;
+}
+
+function dateSection(d, view, now, index = 0, ctx = {}) {
   const label = d.blackout || d.peak ? `<span class="badge peak">${esc(PEAK_LABEL)}</span>` : '';
   const freshN = d.freshRoutes == null ? d.routesScanned : d.freshRoutes;
   const carriedNote = d.carriedRoutes
@@ -146,7 +217,7 @@ function dateSection(d, view, now) {
     // Only departures that can still be booked are listed. If some of this date's
     // options have already flown, that is stated rather than left as a silent gap.
     const live = d.rows;
-    body = `<ul class="rows">${live.map(rowHtml).join('')}</ul>`;
+    body = `<ul class="rows">${live.map((r) => rowHtml(r, ctx)).join('')}</ul>`;
     const gone = Number(d.pastCount) || 0;
     if (gone) {
       body += `<div class="state">${gone} more under $${MAX_ALL_IN.toFixed(2)} on this date already departed and cannot be booked.</div>`;
@@ -156,7 +227,7 @@ function dateSection(d, view, now) {
     }
     if (d.folded && d.folded.length) {
       const cap = `${MAX_STOPS} stop${MAX_STOPS === 1 ? '' : 's'} / ${Math.round(MAX_DURATION_MIN / 60)}h`;
-      body += `<details class="folded"><summary>${d.folded.length} more under $${MAX_ALL_IN.toFixed(2)} — beyond ${cap}</summary><ul class="rows">${d.folded.map(rowHtml).join('')}</ul></details>`;
+      body += `<details class="folded"><summary>${d.folded.length} more under $${MAX_ALL_IN.toFixed(2)} — beyond ${cap}</summary><ul class="rows">${d.folded.map((f) => rowHtml(f, ctx)).join('')}</ul></details>`;
     }
     if (Number(d.foldedPastCount)) {
       body += `<div class="state">${d.foldedPastCount} further over-limit option${d.foldedPastCount === 1 ? '' : 's'} on this date already departed.</div>`;
@@ -179,7 +250,7 @@ function dateSection(d, view, now) {
     body = `<div class="state warn">Every option on this date was last checked more than 3 hours ago${d.carriedAt ? ` (${esc(hhmm(d.carriedAt))} ET)` : ''}, so none is offered as bookable. A re-check is pending.</div>`;
   } else if (d.status === 'folded') {
     const cap = `${MAX_STOPS} stop${MAX_STOPS === 1 ? '' : 's'} / ${Math.round(MAX_DURATION_MIN / 60)}h`;
-    body = `<div class="state warn">${d.folded.length} GoWild option${d.folded.length === 1 ? '' : 's'} under $${MAX_ALL_IN.toFixed(2)}, all beyond ${cap}.</div><details class="folded" open><summary>Show them anyway</summary><ul class="rows">${d.folded.map(rowHtml).join('')}</ul></details>`;
+    body = `<div class="state warn">${d.folded.length} GoWild option${d.folded.length === 1 ? '' : 's'} under $${MAX_ALL_IN.toFixed(2)}, all beyond ${cap}.</div><details class="folded" open><summary>Show them anyway</summary><ul class="rows">${d.folded.map((f) => rowHtml(f, ctx)).join('')}</ul></details>`;
     // The cheaper rows that already left are stated here too: showing only the
     // over-limit options would imply this date had nothing better to offer.
     const goneHere = Number(d.pastCount) || 0;
@@ -212,7 +283,14 @@ function dateSection(d, view, now) {
   }
 
   return `<section class="date" id="d-${esc(d.date)}">
-    <h2>${esc(shortDay(d.date))} ${label}<a class="perm" href="#d-${esc(d.date)}" aria-label="Link to ${esc(d.date)}">#</a></h2>
+    <div class="dhead">
+      <span class="idx">${String(index + 1).padStart(2, '0')}</span>
+      <div class="dtitles">
+        <h2>${esc(shortDay(d.date))}${label}</h2>
+        <span class="dsub">${dateSub(d, now)}</span>
+      </div>
+      <a class="perm" href="#d-${esc(d.date)}" aria-label="Link to ${esc(d.date)}">#</a>
+    </div>
     ${body}
     <p class="meta">${
       d.carriedReason === 'day-over' && !freshN
@@ -391,6 +469,26 @@ export function renderPage(view, state, freq, now = Date.now(), opts = {}) {
   // the previous value forward meant a single /lga render inside the same isolate
   // relabelled the RDU page, its title and its calendar events as LGA.
   PAGE_ORIGIN = opts.origin || ORIGIN;
+  const watchedSet = new Set(
+    (Array.isArray(opts.watches) ? opts.watches : []).map((w) => w && w.dest).filter(Boolean),
+  );
+  const watchCtx = {
+    canWatch: Boolean(opts.canWatch),
+    watches: Array.isArray(opts.watches) ? opts.watches : [],
+    channels: opts.channels || {},
+    watched: watchedSet,
+  };
+  // Only what the sheet needs to draw itself: no observation rows, no KV keys and
+  // no secrets. `<` is escaped so a reason string can never close the script tag.
+  const watchJson = JSON.stringify({
+    watches: watchCtx.watches.map((w) => ({
+      dest: w.dest,
+      mode: w.mode,
+      date: w.date || null,
+      channels: Array.isArray(w.channels) ? w.channels : [],
+    })),
+    channels: watchCtx.channels,
+  }).replace(/</g, '\\u003c');
   const err = view.error;
   let banner = '';
 
@@ -439,87 +537,234 @@ export function renderPage(view, state, freq, now = Date.now(), opts = {}) {
 <meta name="robots" content="noindex, nofollow">
 <title>{ORIGIN} GoWild</title>
 ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : ''}
-<meta name="theme-color" content="#0d0f13">
+<meta name="theme-color" content="#0a0a09">
 <style>
-  :root { color-scheme: dark; --bg:#0d0f13; --card:#161a21; --line:#242a34; --txt:#e8ecf2; --dim:#8b95a5; --go:#3fb950; --bad:#f85149; --warn:#d29922; }
+  :root {
+    color-scheme: dark;
+    --ink:#0a0a09; --ink-2:#111110; --ink-3:#191917;
+    --bone:#f4f0e5; --bone-2:#c9c3b6; --dim:#8d877a; --faint:#5d5950;
+    --rule:#26241f; --rule-2:#3a362f;
+    --acid:#d9f24d; --warn:#f0ad3c; --bad:#ff5c3d;
+    --sans:"Helvetica Neue",Helvetica,Arial,"Segoe UI",system-ui,sans-serif;
+    --display:"Arial Narrow","Helvetica Neue",Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono","Segoe UI Mono",Menlo,Consolas,monospace;
+  }
   * { box-sizing: border-box; }
-  body { margin:0; padding:12px; background:var(--bg); color:var(--txt);
-         font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-         max-width:760px; margin-inline:auto; overflow-x:hidden; }
-  header { display:flex; flex-wrap:wrap; align-items:baseline; gap:8px; margin:4px 0 12px; }
-  h1 { font-size:17px; margin:0; letter-spacing:.3px; }
-  h1 span { color:var(--go); }
-  .stamp { font-size:12px; color:var(--dim); margin-left:auto; }
-  .stamp.stale { color:var(--warn); font-weight:600; }
-  .banner { border-radius:10px; padding:10px 12px; margin:0 0 10px; font-size:13px; display:flex; flex-direction:column; gap:4px; }
-  .banner.bad { background:#2b1517; border:1px solid #5c2226; color:#ffb3ae; }
-  .banner.warn { background:#2a2213; border:1px solid #5c4a1d; color:#f0d48a; }
-  .banner code { background:#000; padding:4px 6px; border-radius:6px; font-size:12px; overflow-x:auto; }
-  section.date { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; margin:0 0 12px; }
-  h2 { font-size:14px; margin:0 0 10px; display:flex; flex-wrap:wrap; gap:8px; align-items:center; color:var(--dim); font-weight:600; }
+  body { margin:0 auto; max-width:820px; padding:18px 18px 34px; background:var(--ink);
+         color:var(--bone); font:14px/1.45 var(--sans); overflow-x:hidden;
+         -webkit-font-smoothing:antialiased; -webkit-text-size-adjust:100%; }
+  /* matte stock, not glass: a hairline print screen over the whole sheet */
+  body::before { content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
+                 background:repeating-linear-gradient(0deg,rgba(255,255,255,.015) 0 1px,transparent 1px 3px); }
+  body > * { position:relative; z-index:1; }
+
+  /* masthead — record-sleeve lockup over a departure board */
+  .mast { display:flex; flex-direction:column; gap:9px; padding:0 0 13px; border-bottom:1px solid var(--rule-2); }
+  .mast-top { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .kicker { display:flex; align-items:center; gap:7px; min-width:0;
+            font-family:var(--mono); font-size:8.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--dim); }
+  .kicker .live { flex:none; width:5px; height:5px; background:var(--acid); font-style:normal;
+                  box-shadow:0 0 0 2px rgba(217,242,77,.16); }
+  .stamp { font-family:var(--mono); font-size:9.5px; letter-spacing:.05em; color:var(--dim); white-space:nowrap; }
+  .stamp.stale { color:var(--warn); }
+  h1 { margin:0; display:flex; align-items:center; flex-wrap:wrap; gap:11px;
+       font-family:var(--display); font-weight:700; font-size:clamp(38px,12.5vw,58px);
+       line-height:.84; letter-spacing:-.025em; text-transform:uppercase; }
+  h1 .o { color:var(--bone); }
+  h1 .bar { flex:none; width:2px; height:.6em; background:var(--rule-2); }
+  h1 .g { color:var(--acid); letter-spacing:-.035em; }
+  .strap { display:flex; flex-wrap:wrap; gap:4px 0;
+           font-family:var(--mono); font-size:8.5px; letter-spacing:.15em; text-transform:uppercase; color:var(--bone-2); }
+  .strap > span + span { border-left:1px solid var(--rule-2); margin-left:11px; padding-left:11px; }
+
+  /* banners and health */
+  .banner { margin:0 0 10px; padding:9px 12px; display:flex; flex-direction:column; gap:3px;
+            border:1px solid var(--rule-2); border-left-width:3px; background:var(--ink-2);
+            font-size:12px; line-height:1.5; color:var(--bone-2); }
+  .banner strong { font-family:var(--mono); font-size:9px; letter-spacing:.12em; text-transform:uppercase; color:var(--bone); }
+  .banner.bad { border-color:#5c2a22; border-left-color:var(--bad); background:#160e0c; color:#f0b6ab; }
+  .banner.warn { border-color:#5c4520; border-left-color:var(--warn); background:#161207; color:#e8c894; }
+  .banner code { font-family:var(--mono); font-size:11px; color:var(--bone); background:#000;
+                 border:1px solid var(--rule-2); padding:5px 7px; overflow-x:auto; }
+  .meta { margin:10px 0 8px; font-family:var(--mono); font-size:9px; letter-spacing:.04em;
+          color:var(--faint); line-height:1.65; }
+  .cov { margin:0 0 12px; font-family:var(--mono); font-size:9px; color:var(--dim); }
+  .cov strong { color:var(--warn); }
+
+  /* date panels */
+  section.date { margin:14px 0 0; padding:0 14px 2px; border:1px solid var(--rule); background:var(--ink-2); }
+  .dhead { display:flex; align-items:flex-start; gap:11px; padding:11px 0 9px; border-bottom:1px solid var(--rule); }
+  .idx { padding-top:4px; font-family:var(--mono); font-size:9px; letter-spacing:.08em; color:var(--faint); }
+  .dtitles { flex:1; min-width:0; }
+  h2 { margin:0; display:flex; align-items:center; flex-wrap:wrap; gap:8px;
+       font-family:var(--display); font-weight:700; font-size:25px; line-height:1;
+       letter-spacing:-.015em; text-transform:uppercase; color:var(--bone); }
+  .dsub { display:block; margin-top:6px; font-family:var(--mono); font-size:9px;
+          letter-spacing:.15em; text-transform:uppercase; color:var(--dim); }
+  .dsub .from { color:var(--acid); }
+  .perm { padding-top:2px; font-family:var(--mono); font-size:11px; color:var(--faint); text-decoration:none; }
+  .perm:hover { color:var(--acid); }
+
+  /* rows — time rail, itinerary, fare */
   ul.rows { list-style:none; margin:0; padding:0; }
-  li.row { border-top:1px solid var(--line); padding:9px 0; }
-  li.row:first-child { border-top:0; padding-top:0; }
-  .line1, .line2, .line3 { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
-  .dest { font-weight:600; font-size:15px; }
-  .dest b { color:var(--dim); font-weight:600; font-size:12px; }
-  .price { font-weight:700; color:var(--go); font-size:16px; }
-  .leg { font-variant-numeric:tabular-nums; color:#c4ccd8; font-size:13px; }
-  .line3 { color:var(--dim); font-size:12px; }
-  .line3 .tight { color:var(--warn); font-weight:600; }
-  .perm { color:#4a5260; text-decoration:none; font-size:11px; margin-left:4px; }
-  .badge { font-size:10px; font-weight:700; letter-spacing:.4px; padding:2px 6px; border-radius:5px; text-transform:uppercase; }
-  .badge.nonstop { background:#12331c; color:#5fd67a; border:1px solid #235c33; }
-  .badge.stops { background:#1b2029; color:#93a0b2; border:1px solid #2b3441; }
-  .badge.peak { background:#3a2a10; color:#f3c675; border:1px solid #6b4d16; text-transform:none; font-size:11px; }
-  .nd { color:var(--warn); font-weight:700; font-size:11px; }
-  .state { padding:10px; border-radius:8px; background:#1b2029; color:#b9c3d1; font-size:13px; display:flex; flex-direction:column; gap:3px; }
-  .state.bad { background:#2b1517; color:#ffb3ae; }
-  .state.warn { background:#2a2213; color:#f0d48a; }
-  .state.peakbox { background:#2a2213; color:#f3c675; border:1px solid #5c4a1d; }
-  .note { margin:8px 0 0; font-size:12px; color:var(--dim); }
-  .meta { margin:8px 0 0; font-size:11px; color:#5f6875; }
-  .acts { display:flex; gap:6px; margin-top:7px; }
-  .act { font:inherit; font-size:11px; padding:4px 8px; border-radius:6px; cursor:pointer;
-         background:#1b2029; color:#93a0b2; border:1px solid #2b3441; }
-  .act:active { background:#242c38; }
-  .act[aria-pressed="true"] { background:#12331c; color:#5fd67a; border-color:#235c33; }
-  body.pinned-mode li.row:not(.pinned) { opacity:.32; }
-  li.row.pinned { box-shadow:inset 3px 0 0 var(--go); }
+  li.row { display:grid; grid-template-columns:60px minmax(0,1fr) auto; column-gap:12px;
+           align-items:start; padding:10px 0; border-top:1px solid var(--rule); }
+  li.row:first-child { border-top:0; }
+  .dep { padding-top:1px; font-family:var(--mono); font-size:12px; letter-spacing:-.02em;
+         color:var(--bone); font-variant-numeric:tabular-nums; }
+  .dep time { display:block; }
+  .main { min-width:0; }
+  .dest { margin:0; display:flex; align-items:baseline; flex-wrap:wrap; gap:7px;
+          font-family:var(--display); font-weight:700; font-size:16px; line-height:1.05;
+          letter-spacing:.005em; text-transform:uppercase; color:var(--bone); }
+  .dest b { font-family:var(--mono); font-size:9px; font-weight:600; letter-spacing:.12em; color:var(--acid); }
+  .sub { margin:4px 0 0; display:flex; align-items:center; flex-wrap:wrap; gap:4px 11px;
+         font-family:var(--mono); font-size:10px; letter-spacing:.02em; color:var(--dim);
+         font-variant-numeric:tabular-nums; }
+  .sub .arr, .sub .leave { color:var(--bone-2); }
+  .sub .leave.tight { color:var(--warn); }
+  .sub .seat.out { color:var(--bad); }
+  .sub .seat.unk { color:var(--faint); }
+  .badge { display:inline-flex; align-items:center; padding:2px 5px; border:1px solid;
+           font-family:var(--mono); font-size:8px; font-weight:600; letter-spacing:.12em;
+           text-transform:uppercase; line-height:1.3; white-space:nowrap; }
+  .badge.nonstop { color:var(--acid); border-color:rgba(217,242,77,.45); }
+  .badge.stops { color:var(--dim); border-color:var(--rule-2); }
+  .badge.peak { color:var(--warn); border-color:rgba(240,173,60,.45); }
+  .nd { color:var(--warn); font-weight:700; }
+  .fare { text-align:right; white-space:nowrap; }
+  .fare .amt { display:block; font-family:var(--mono); font-size:18px; font-weight:600; line-height:1.1;
+               letter-spacing:-.045em; color:var(--acid); font-variant-numeric:tabular-nums; }
+  .fare .unit { display:block; margin-top:3px; font-family:var(--mono); font-size:8px;
+                letter-spacing:.13em; text-transform:uppercase; color:var(--faint); }
+  .acts { display:flex; gap:15px; margin-top:7px; }
+  .act { padding:0 0 2px; border:0; border-bottom:1px solid var(--rule-2); background:none;
+         font-family:var(--mono); font-size:8px; font-weight:600; letter-spacing:.14em;
+         text-transform:uppercase; color:var(--dim); cursor:pointer; }
+  .act:hover, .act:focus-visible { color:var(--acid); border-color:var(--acid); outline:none; }
+  .act[aria-pressed="true"] { color:var(--acid); border-color:var(--acid); }
+  body.pinned-mode li.row:not(.pinned) { opacity:.3; }
+  li.row.pinned { box-shadow:inset 2px 0 0 var(--acid); }
+
+  /* empty / failed / peak states — never a blank panel */
+  .state { margin:11px 0; padding:2px 0 2px 11px; border-left:2px solid var(--rule-2);
+           font-size:12.5px; line-height:1.5; color:var(--bone-2); }
+  .state strong { color:var(--bone); }
+  .state.bad { border-color:var(--bad); color:#f0b6ab; }
+  .state.warn { border-color:var(--warn); color:#e8c894; }
+  .state.peakbox { border-color:var(--warn); color:#e8c894; }
+  .state.peakbox strong { display:block; margin-bottom:3px; font-family:var(--mono);
+                          font-size:9px; letter-spacing:.13em; text-transform:uppercase; color:var(--warn); }
+
+  /* liner notes */
+  .sect { margin:26px 0 0; display:flex; align-items:center; gap:10px;
+          font-family:var(--mono); font-size:8.5px; letter-spacing:.24em; text-transform:uppercase; color:var(--faint); }
+  .sect::after { content:""; flex:1; height:1px; background:var(--rule-2); }
+  details { padding:12px 0; border-top:1px solid var(--rule); }
+  .notes > details:first-of-type { border-top:0; padding-top:2px; }
+  summary { display:flex; justify-content:space-between; align-items:center; gap:12px; cursor:pointer;
+            list-style:none; font-family:var(--mono); font-size:9.5px; letter-spacing:.1em;
+            text-transform:uppercase; color:var(--bone-2); }
+  summary::-webkit-details-marker { display:none; }
+  summary::after { content:"+"; font-size:13px; line-height:1; color:var(--acid); }
+  details[open] summary { color:var(--bone); }
+  details[open] summary::after { content:"−"; }
+  details.folded { margin-top:10px; padding-bottom:0; }
+  details.folded summary { font-family:var(--sans); font-size:12px; letter-spacing:0;
+                           text-transform:none; color:var(--dim); }
+  .note { margin:10px 0 0; font-size:11.5px; line-height:1.6; color:var(--dim); }
+  .note strong { color:var(--bone-2); }
+  table { width:100%; margin-top:10px; border-collapse:collapse;
+          font-family:var(--mono); font-size:11px; font-variant-numeric:tabular-nums; }
+  th { padding:0 4px 5px; text-align:left; font-size:8.5px; font-weight:600;
+       letter-spacing:.1em; text-transform:uppercase; color:var(--faint); }
+  td { padding:5px 4px; border-top:1px solid var(--rule); color:var(--bone-2); vertical-align:top; }
+  td:first-child { white-space:nowrap; font-weight:600; color:var(--bone); }
   .heat { overflow-x:auto; margin-top:10px; }
   .heat table { min-width:420px; }
-  .heat th, .heat td { padding:2px; border:0; }
-  .heat th { font-size:10px; color:#5f6875; font-weight:600; }
-  .heat td { text-align:center; }
-  .cell { display:inline-block; width:12px; height:12px; border-radius:3px; background:#20262f; }
-  .cell.on { background:#2ea043; }
-  .hits { font-size:10px; color:#5f6875; }
-  .wk { font-size:10px; padding:2px 3px; text-align:center; color:#5f6875; }
-  .wk.on { color:#5fd67a; font-weight:700; }
-  .wk.part { color:#f0d48a; font-weight:600; }
-  .wk.off, .wk.none { color:#4a5260; }
-  .sc { font-size:10px; padding:2px 3px; text-align:center; color:#5f6875; }
-  .sc.on { color:#5fd67a; font-weight:700; }
-  .sc.part { color:#f0d48a; font-weight:600; }
-  .sc.off, .sc.none { color:#4a5260; }
-  .scflag { font-size:9px; font-weight:600; letter-spacing:0; margin-left:4px; }
-  .scflag.rot { color:#f0d48a; }
-  .scflag.sta { color:#5fd67a; }
-  details { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; }
-  summary { cursor:pointer; font-size:13px; color:#c4ccd8; }
-  table { width:100%; border-collapse:collapse; margin-top:10px; font-size:12px; }
-  td { padding:5px 4px; border-top:1px solid var(--line); color:#b9c3d1; }
-  td:first-child { white-space:nowrap; font-weight:600; }
-  footer { margin:14px 0 8px; font-size:11px; color:#5f6875; line-height:1.6; }
+  .heat th, .heat td { padding:2px; border:0; text-align:center; }
+  .heat th { font-size:9px; color:var(--faint); }
+  .heat td:first-child { padding-right:8px; text-align:left; }
+  .cell { display:inline-block; width:11px; height:11px; background:var(--ink-3); border:1px solid var(--rule); }
+  .cell.on { background:var(--acid); border-color:var(--acid); }
+  .hits { color:var(--faint); }
+  .wk, .sc { font-size:9.5px; text-align:center; color:var(--faint); }
+  .wk.on, .sc.on { color:var(--acid); font-weight:700; }
+  .wk.part, .sc.part { color:var(--warn); }
+  .wk.off, .wk.none, .sc.off, .sc.none { color:var(--faint); }
+  .scflag { margin-left:5px; font-size:8px; letter-spacing:.04em; text-transform:none; }
+  .scflag.rot { color:var(--warn); }
+  .scflag.sta { color:var(--acid); }
+
+  /* watch: the board's standing questions, and the sheet that arms one */
+  .watchbar { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 12px; margin:12px 0 0;
+              padding:9px 0; border-top:1px solid var(--rule); border-bottom:1px solid var(--rule); }
+  .watchbar .wb { font-family:var(--mono); font-size:8px; letter-spacing:.2em; text-transform:uppercase; color:var(--acid); }
+  .watchbar.empty .wb-note { flex:1 1 100%; font-size:11.5px; line-height:1.5; color:var(--dim); }
+  .watchbar.empty .wb-note b { color:var(--bone-2); }
+  .wchips { display:flex; flex-wrap:wrap; gap:6px; }
+  .wchip { display:inline-flex; align-items:baseline; gap:7px; padding:3px 6px; border:1px solid var(--rule-2);
+           font-family:var(--mono); font-size:9px; color:var(--bone-2); }
+  .wchip b { color:var(--bone); letter-spacing:.06em; }
+  .wchip em { font-style:normal; color:var(--dim); }
+  .wchip i { font-style:normal; font-size:8px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); }
+  .wchip .act { font-size:8px; }
+  .wb-ch { flex:1 1 100%; font-family:var(--mono); font-size:8px; letter-spacing:.08em; color:var(--faint); }
+  .sheet { position:fixed; left:0; right:0; bottom:0; z-index:60; margin:0 auto; max-width:820px;
+           padding:14px 16px 18px; background:var(--ink-2); border-top:2px solid var(--acid);
+           box-shadow:0 -18px 40px rgba(0,0,0,.65); }
+  .sheet-head { display:flex; justify-content:space-between; align-items:baseline; gap:12px; }
+  .sheet-title { font-family:var(--display); font-weight:700; font-size:20px; letter-spacing:-.01em;
+                 text-transform:uppercase; color:var(--bone); }
+  .sheet-note { margin:7px 0 12px; font-size:11.5px; line-height:1.5; color:var(--dim); }
+  .sheet-note.dim { margin:10px 0 0; font-family:var(--mono); font-size:8.5px; letter-spacing:.04em; color:var(--faint); }
+  .sheet-row { display:flex; flex-wrap:wrap; align-items:center; gap:7px 12px; margin:0 0 9px; }
+  .sheet-label { width:64px; font-family:var(--mono); font-size:8px; letter-spacing:.18em;
+                 text-transform:uppercase; color:var(--faint); }
+  .seg { display:flex; flex-wrap:wrap; gap:6px; }
+  .chip { padding:5px 9px; border:1px solid var(--rule-2); background:none; cursor:pointer;
+          font-family:var(--mono); font-size:9px; letter-spacing:.06em; color:var(--dim); }
+  .chip:hover, .chip:focus-visible { color:var(--bone); border-color:var(--bone-2); outline:none; }
+  .chip[aria-pressed="true"] { color:var(--acid); border-color:var(--acid); }
+  .chip.off { opacity:.5; cursor:not-allowed; border-style:dashed; }
+  .sheet-foot { display:flex; flex-wrap:wrap; align-items:center; gap:14px; margin-top:13px; }
+  .act.save { padding:6px 12px; border:1px solid var(--acid); background:var(--acid); color:#0a0a09; font-weight:700; }
+  .act.save:hover, .act.save:focus-visible { background:none; color:var(--acid); }
+
+  footer { margin:22px 0 0; padding-top:12px; border-top:1px solid var(--rule-2);
+           font-family:var(--mono); font-size:9px; line-height:1.85; letter-spacing:.04em; color:var(--faint); }
+  footer strong { color:var(--bone-2); }
+
+  /* phone: the row keeps its three columns and gives back only what it can spare */
+  @media (max-width:430px) {
+    body { padding:16px 14px 30px; }
+    li.row { grid-template-columns:54px minmax(0,1fr) auto; column-gap:10px; }
+    .dep { font-size:11.5px; }
+    .dest { font-size:15px; }
+    .fare .amt { font-size:17px; }
+    h2 { font-size:22px; }
+    .dsub { letter-spacing:.12em; }
+  }
 </style></head>
 <body>
-<header>
-  <h1>{ORIGIN} <span>GoWild</span></h1>
-  <span class="stamp ${view.stale ? 'stale' : ''}">${esc(ago(view.ageMin))}${Number(view.oldestAgeMin) > Number(view.ageMin) ? ` &middot; ${view.oldestOffered ? 'oldest fare' : 'oldest data'} ${esc(ago(view.oldestAgeMin))}` : ''}</span>
+<header class="mast">
+  <div class="mast-top">
+    <span class="kicker"><i class="live"></i>Frontier GoWild</span>
+    <span class="stamp ${view.stale ? 'stale' : ''}">${esc(ago(view.ageMin))}${Number(view.oldestAgeMin) > Number(view.ageMin) ? ` &middot; ${view.oldestOffered ? 'oldest fare' : 'oldest data'} ${esc(ago(view.oldestAgeMin))}` : ''}</span>
+  </div>
+  <h1><span class="o">{ORIGIN}</span><span class="bar"></span><span class="g">GoWild</span></h1>
+  <div class="strap">
+    <span>Est. all-in &le; $${MAX_ALL_IN.toFixed(2)}</span>
+    <span>${view.routeCount || 14} routes</span>
+    <span>Read-only</span>
+  </div>
 </header>
 ${coverageHtml(view)}
 ${banner}
-${view.dates.map((d) => dateSection(d, view, now)).join('')}
+${watchBar(watchCtx)}
+${view.dates.map((d, i) => dateSection(d, view, now, i, watchCtx)).join('')}
+<p class="sect">Liner notes</p>
+<div class="notes">
 ${flipHtml(state)}
 ${scheduleHtml(state)}
 ${heatmapHtml(state)}
@@ -529,6 +774,7 @@ ${pricingHtml(state)}
   <summary>Weekday opening history</summary>
   ${freqRows ? `<table>${freqRows}</table>` : '<p class="note">Not enough observations yet.</p>'}
 </details>
+</div>
 <footer>
   Prices are <strong>estimated all-in</strong>: Frontier returns a single GoWild fare with no separate tax or fee
   breakdown, so the total cannot be independently verified.<br>
@@ -539,8 +785,139 @@ ${pricingHtml(state)}
 </footer>
 <script>
 window.__basePath = ${JSON.stringify(basePath)};
+window.__wcfg = ${watchJson};
 (function () {
   var PINS = 'gowild.pins';
+  var CFG = window.__wcfg || { watches: [], channels: {} };
+  var CH = ['push', 'email', 'text'];
+  function watchOf(dest) {
+    var list = CFG.watches || [];
+    for (var i = 0; i < list.length; i++) if (list[i].dest === dest) return list[i];
+    return null;
+  }
+  // The token is already in the path; reuse it rather than inventing a second one.
+  function api(body) {
+    var m = /^\\/s\\/([A-Za-z0-9_-]{8,})$/.exec(window.__basePath || '');
+    if (!m) return Promise.resolve(null);
+    return fetch('/api/watch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + m[1] },
+      body: JSON.stringify(body)
+    }).then(function (r) { return r.json().catch(function () { return null; }); }).catch(function () { return null; });
+  }
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function closeSheet() {
+    var s = document.getElementById('wsheet');
+    if (s && s.parentNode) s.parentNode.removeChild(s);
+  }
+  function openSheet(dest, date) {
+    closeSheet();
+    var have = watchOf(dest);
+    var mode = have ? have.mode : 'date';
+    var picked = {};
+    for (var i = 0; i < CH.length; i++) {
+      var st = (CFG.channels || {})[CH[i]] || {};
+      picked[CH[i]] = !!st.ready && (have ? (have.channels || []).indexOf(CH[i]) !== -1 : true);
+    }
+    var box = el('div', 'sheet');
+    box.id = 'wsheet';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'true');
+    box.setAttribute('aria-label', 'Watch ' + dest);
+    var head = el('div', 'sheet-head');
+    head.appendChild(el('span', 'sheet-title', 'Watch ' + dest));
+    var x = el('button', 'act sheet-x', 'close');
+    x.type = 'button';
+    x.addEventListener('click', closeSheet);
+    head.appendChild(x);
+    box.appendChild(head);
+    box.appendChild(el('p', 'sheet-note', 'Alerts fire when seats open, sell out, get cheaper, or the flight is close to leaving.'));
+    var scopes = el('div', 'sheet-row');
+    scopes.appendChild(el('span', 'sheet-label', 'scope'));
+    var seg = el('div', 'seg');
+    var modeBtns = [];
+    function paintMode() {
+      for (var k = 0; k < modeBtns.length; k++) {
+        modeBtns[k].setAttribute('aria-pressed', modeBtns[k].dataset.mode === mode ? 'true' : 'false');
+      }
+    }
+    var options = [{ m: 'date', label: 'This date only' }, { m: 'always', label: 'Every date, until stopped' }];
+    for (var j = 0; j < options.length; j++) {
+      (function (o) {
+        var b = el('button', 'chip', o.label);
+        b.type = 'button';
+        b.dataset.mode = o.m;
+        b.addEventListener('click', function () { mode = o.m; paintMode(); });
+        modeBtns.push(b);
+        seg.appendChild(b);
+      })(options[j]);
+    }
+    paintMode();
+    scopes.appendChild(seg);
+    box.appendChild(scopes);
+    var sends = el('div', 'sheet-row');
+    sends.appendChild(el('span', 'sheet-label', 'send to'));
+    var chips = el('div', 'seg');
+    for (var c = 0; c < CH.length; c++) {
+      (function (ch) {
+        var st = (CFG.channels || {})[ch] || {};
+        var label = ch === 'push' ? 'phone push' : ch === 'email' ? 'email' : 'text';
+        var b = el('button', st.ready ? 'chip' : 'chip off', st.ready ? label : label + ' - off');
+        b.type = 'button';
+        b.setAttribute('aria-pressed', picked[ch] ? 'true' : 'false');
+        if (!st.ready) {
+          b.disabled = true;
+          b.title = st.reason || 'not set up';
+        } else {
+          b.addEventListener('click', function () {
+            picked[ch] = !picked[ch];
+            b.setAttribute('aria-pressed', picked[ch] ? 'true' : 'false');
+          });
+        }
+        chips.appendChild(b);
+      })(CH[c]);
+    }
+    sends.appendChild(chips);
+    box.appendChild(sends);
+    var why = el('p', 'sheet-note dim');
+    var offs = [];
+    for (var q = 0; q < CH.length; q++) {
+      var s2 = (CFG.channels || {})[CH[q]] || {};
+      if (!s2.ready) offs.push((s2.reason || 'not set up'));
+    }
+    why.textContent = offs.length ? offs.join(' \u00b7 ') : 'Every channel is set up on this Worker.';
+    box.appendChild(why);
+    var foot = el('div', 'sheet-foot');
+    var save = el('button', 'act save', have ? 'Update watch' : 'Start watching');
+    save.type = 'button';
+    save.addEventListener('click', function () {
+      var chans = [];
+      for (var k = 0; k < CH.length; k++) if (picked[CH[k]]) chans.push(CH[k]);
+      save.disabled = true;
+      api({ dest: dest, mode: mode, date: mode === 'date' ? (have && have.date) || date : null, channels: chans }).then(function (r) {
+        if (r && r.ok) location.reload();
+        else { save.disabled = false; save.textContent = (r && r.message) || 'Not saved - try again'; }
+      });
+    });
+    foot.appendChild(save);
+    if (have) {
+      var rm = el('button', 'act', 'Stop watching');
+      rm.type = 'button';
+      rm.addEventListener('click', function () { api({ dest: dest, remove: true }).then(function () { location.reload(); }); });
+      foot.appendChild(rm);
+    }
+    var cancel = el('button', 'act', 'Cancel');
+    cancel.type = 'button';
+    cancel.addEventListener('click', closeSheet);
+    foot.appendChild(cancel);
+    box.appendChild(foot);
+    document.body.appendChild(box);
+  }
   function pins() { try { return JSON.parse(localStorage.getItem(PINS) || '[]'); } catch (e) { return []; } }
   function applyPins() {
     var p = pins();
@@ -581,8 +958,10 @@ window.__basePath = ${JSON.stringify(basePath)};
   document.addEventListener('click', function (ev) {
     var btn = ev.target && ev.target.closest ? ev.target.closest('button.act') : null;
     if (!btn) return;
+    if (btn.classList.contains('unwatch')) { api({ dest: btn.dataset.dest, remove: true }).then(function () { location.reload(); }); return; }
     var row = btn.closest('li.row');
     if (!row) return;
+    if (btn.classList.contains('bell')) { openSheet(row.dataset.dest, row.dataset.date); return; }
     if (btn.classList.contains('ics')) {
       var body = ics(row);
       if (!body) return;
@@ -599,7 +978,7 @@ window.__basePath = ${JSON.stringify(basePath)};
     applyPins();
   });
   applyPins();
-  setInterval(function () { if (!document.hidden) location.reload(); }, 60000);
+  setInterval(function () { if (!document.hidden && !document.getElementById('wsheet')) location.reload(); }, 60000);
   if (window.__basePath && 'serviceWorker' in navigator) {
     navigator.serviceWorker.register(window.__basePath + '/sw.js', { scope: window.__basePath }).catch(function () {});
   }

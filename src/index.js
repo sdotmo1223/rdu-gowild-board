@@ -6,6 +6,15 @@ import { releaseTiming } from './timing.mjs';
 import { weeklyPattern } from './schedule.mjs';
 import { ROUTES, PROFILES, PROFILE } from './routes.js';
 import { shouldSendStaleAlert, validTopic } from './alerts.mjs';
+import {
+  channelStatus,
+  evaluateWatches,
+  listWatches,
+  normalizeWatch,
+  removeWatch,
+  saveWatch,
+  watchKey,
+} from './watch.mjs';
 
 // Minimal offline shell. Cached per token path so the secret link is never
 // registered at the origin root.
@@ -37,7 +46,7 @@ self.addEventListener('fetch', (event) => {
   })());
 });`;
 
-const ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="36" fill="#0d0f13"/><path d="M36 118l58-20 22-52 14 6-10 44 34 12-4 14-38-6-16 32-16-6 6-34-40 14z" fill="#3fb950"/></svg>`;
+const ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" fill="#0a0a09"/><path d="M36 118l58-20 22-52 14 6-10 44 34 12-4 14-38-6-16 32-16-6 6-34-40 14z" fill="#d9f24d"/><rect x="0" y="176" width="192" height="16" fill="#d9f24d"/></svg>`;
 
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body, null, 2), {
@@ -139,7 +148,108 @@ function bearerToken(request) {
 // One Worker serves several origins by keeping one KV key per profile. That is
 // why a second origin costs no second Worker, no second namespace and no second
 // secret: only the key changes.
-async function handleIngest(request, env, url) {
+const WATCH_MAX_BYTES = 2048;
+
+// What a watch looks like outside KV: the observation itself stays private, because
+// a client only needs to know that the bell is on and what it is watching.
+function publicWatch(w) {
+  if (!w || typeof w !== 'object') return null;
+  const ev = w.lastEvent && typeof w.lastEvent === 'object' ? w.lastEvent : null;
+  return {
+    dest: w.dest,
+    mode: w.mode,
+    date: w.date || null,
+    channels: Array.isArray(w.channels) ? w.channels : [],
+    createdAt: w.createdAt || null,
+    updatedAt: w.updatedAt || null,
+    observedAt: w.last && w.last.at ? w.last.at : null,
+    stale: w.last ? Boolean(w.last.stale) : null,
+    lastEvent: ev ? { kind: ev.kind, at: ev.at, sent: ev.sent || [], failed: ev.failed || [] } : null,
+  };
+}
+
+// Watching is a write, but it is gated by the same secret that already opens the
+// page: a link that can read the board is a link that can ask to be told about it.
+// The public profile has no token, so it never gets a bell at all.
+async function handleWatch(request, env, url, now) {
+  if (!env.BOARD_TOKEN) {
+    return json({ ok: false, state: 'unconfigured', message: 'BOARD_TOKEN is not set on this Worker.' }, 503);
+  }
+  const presented = bearerToken(request) || url.searchParams.get('token');
+  if (!sameSecret(presented, env.BOARD_TOKEN)) {
+    return json(
+      { ok: false, state: 'unauthorized', message: 'Watching needs the board token: open the /s/<token> link and use the bell there.' },
+      401,
+    );
+  }
+  const channels = channelStatus(env);
+  if (request.method === 'GET') {
+    const watches = await listWatches(env, PROFILE);
+    return json({ ok: true, canWatch: true, channels, watches: watches.map(publicWatch).filter(Boolean) });
+  }
+  if (request.method !== 'POST') {
+    return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, POST' } });
+  }
+  let raw;
+  try {
+    raw = await request.text();
+  } catch (err) {
+    return json({ ok: false, state: 'unreadable', message: String(err && err.message) }, 400);
+  }
+  if (raw.length > WATCH_MAX_BYTES) {
+    return json({ ok: false, state: 'too-large', message: `${raw.length} bytes; limit is ${WATCH_MAX_BYTES}` }, 413);
+  }
+  let body;
+  try {
+    body = JSON.parse(raw);
+  } catch (err) {
+    return json({ ok: false, state: 'bad-json', message: String(err && err.message) }, 400);
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return json({ ok: false, state: 'bad-shape', message: 'Expected a JSON object.' }, 400);
+  }
+  const dest = String(body.dest == null ? '' : body.dest).trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(dest)) {
+    return json({ ok: false, state: 'bad-dest', message: 'dest must be a three-letter airport code.' }, 400);
+  }
+  if (body.remove) {
+    await removeWatch(env, PROFILE, dest);
+    return json({ ok: true, removed: dest });
+  }
+  const known = ((PROFILES[PROFILE] && PROFILES[PROFILE].routes) || []).map((r) => r.code);
+  const normalized = normalizeWatch({ ...body, dest }, now, known);
+  if (!normalized.ok) {
+    return json({ ok: false, state: 'invalid', message: normalized.reason, field: normalized.field }, 400);
+  }
+  // The last observation survives an edit: changing the channel must not make the
+  // next sweep look like a brand-new seat and fire a false "available".
+  let existing = null;
+  try {
+    existing = await env.BOARD.get(watchKey(PROFILE, dest), 'json');
+  } catch {
+    existing = null;
+  }
+  const record = {
+    ...normalized.watch,
+    createdAt: (existing && existing.createdAt) || normalized.watch.createdAt,
+    last: (existing && existing.last) || null,
+    announced: (existing && existing.announced) || [],
+    lastEvent: (existing && existing.lastEvent) || null,
+  };
+  await saveWatch(env, PROFILE, record);
+  const unsent = record.channels.filter((c) => !channels[c] || !channels[c].ready);
+  return json({
+    ok: true,
+    watch: publicWatch(record),
+    channels,
+    unsent,
+    note: unsent.length
+      ? `Saved, but ${unsent.join(' + ')} cannot deliver yet: ${unsent.map((c) => channels[c] && channels[c].reason).filter(Boolean).join('; ')}`
+      : null,
+  });
+}
+
+async function handleIngest(request, env, url, ctx) {
   if (!env.BOARD_TOKEN) {
     return json({ ok: false, state: 'unconfigured', message: 'BOARD_TOKEN is not set on this Worker.' }, 503);
   }
@@ -228,11 +338,25 @@ async function handleIngest(request, env, url) {
   // channel does not belong in it.
   const { notifyTopic, ...snapshot } = payload;
   const body = notifyTopic === undefined ? raw : JSON.stringify(snapshot);
+  // The snapshot being replaced is the baseline for every watch, so it is read
+  // before the write. A failed read is survivable: each watch also carries its own
+  // last observation, which is why a Worker that missed one snapshot still works.
+  let previous = null;
+  try {
+    previous = await env.BOARD.get(key, 'json');
+  } catch {
+    previous = null;
+  }
   try {
     await env.BOARD.put(key, body);
     if (validTopic(notifyTopic) && notifyTopic !== env.NTFY_TOPIC) await env.BOARD.put('notify:topic', notifyTopic);
   } catch (err) {
     return json({ ok: false, state: 'kv-error', message: String(err && err.message) }, 500);
+  }
+  // After the write, never before it: a notification provider having a bad day must
+  // not be able to cost the snapshot it was reporting on.
+  if (ctx && typeof ctx.waitUntil === 'function') {
+    ctx.waitUntil(evaluateWatches(env, wanted, previous, snapshot, Date.now()));
   }
   return json({
     ok: true,
@@ -249,7 +373,11 @@ export default {
     const now = Date.now();
     // Cheap, and silent unless a snapshot is actually stale. waitUntil keeps the
     // response off the critical path of a push that is usually not needed.
-    if (ctx && url.pathname !== '/api/ingest') ctx.waitUntil(maybeStaleAlert(env, now));
+    // A partial context (local harness, a test) must not turn every page into a 500:
+    // waitUntil is a convenience, not a requirement of serving the board.
+    if (ctx && typeof ctx.waitUntil === 'function' && url.pathname !== '/api/ingest') {
+      ctx.waitUntil(maybeStaleAlert(env, now));
+    }
 
     // The one origin that may be served without a token, so a link can be handed
     // to somebody else. Everything else stays behind BOARD_TOKEN.
@@ -283,7 +411,11 @@ export default {
       );
     }
 
-    if (url.pathname === '/api/ingest') return handleIngest(request, env, url);
+    if (url.pathname === '/api/ingest') return handleIngest(request, env, url, ctx);
+
+    // The bell's endpoint. Gated inside the handler so the refusal is a sentence,
+    // not an empty 401 body from a guard three screens away.
+    if (url.pathname === '/api/watch') return handleWatch(request, env, url, now);
 
     // Authorised before any storage read: an unauthenticated caller must not be
     // able to make the Worker touch KV, and must not learn anything from a
@@ -366,10 +498,16 @@ export default {
       // page must not use a different rule from the API that guards the same data.
       if (!sameSecret(match[1], env.BOARD_TOKEN)) return new Response('Not found', { status: 404 });
       const view = buildBoard(state, now);
+      // The token path is the only place a watch can be created, so it is the only
+      // place the bell exists. A KV hiccup here costs the bells, never the board.
+      const watches = await listWatches(env, PROFILE).catch(() => []);
       return html(
         renderPage(view, state, frequencyTable(state, ROUTES), now, {
           basePath: `/s/${match[1]}`,
           origin: PROFILES[PROFILE].origin,
+          canWatch: true,
+          watches,
+          channels: channelStatus(env),
         }),
       );
     }
@@ -392,8 +530,10 @@ export default {
           `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
             `<meta name="viewport" content="width=device-width,initial-scale=1">` +
             `<title>${origin} GoWild</title></head>` +
-            `<body style="margin:0;padding:2rem;background:#0d0f13;color:#e6edf3;font:16px/1.5 system-ui,sans-serif">` +
-            `<h1 style="margin:0 0 1rem">${origin} <span style="color:#3fb950">GoWild</span></h1>` +
+            `<body style="margin:0;padding:2rem;background:#0a0a09;color:#f4f0e5;font:15px/1.6 'Helvetica Neue',Arial,sans-serif">` +
+            `<p style="margin:0 0 14px;font:9px/1 ui-monospace,monospace;letter-spacing:.2em;text-transform:uppercase;color:#8d877a">Frontier GoWild</p>` +
+            `<h1 style="margin:0 0 14px;font:700 46px/.84 'Arial Narrow','Helvetica Neue',Arial,sans-serif;letter-spacing:-.025em;text-transform:uppercase">${origin} <span style="color:#d9f24d">GoWild</span></h1>` +
+            `<div style="width:46px;height:3px;background:#d9f24d;margin:0 0 18px"></div>` +
             `<p>No snapshot for ${origin} yet. The collector has not written one for this origin, so there is ` +
             `nothing to show rather than nothing available. This page fills in on its next run.</p>` +
             `</body></html>`,
@@ -404,6 +544,9 @@ export default {
         renderPage(view, mine, frequencyTable(mine, PROFILES[pubOk].routes), now, {
           basePath: `/${pubOk}`,
           origin,
+          // No token, no bell: a public link must not be able to subscribe the
+          // owner's phone to a stranger's question.
+          canWatch: false,
         }),
       );
     }
@@ -428,8 +571,8 @@ export default {
           start_url: asset.base,
           scope: asset.base,
           display: 'standalone',
-          background_color: '#0d0f13',
-          theme_color: '#0d0f13',
+          background_color: '#0a0a09',
+          theme_color: '#0a0a09',
           icons: [{ src: `${asset.base}/icon.svg`, sizes: 'any', type: 'image/svg+xml', purpose: 'any' }],
         });
         return new Response(body, {

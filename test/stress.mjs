@@ -857,15 +857,21 @@ check('a dead collector still raises the stale banner when no dates are left', (
 
 check('rendering another origin first cannot relabel this board', () => {
   const state = { sweeps: [], updatedAt: FIXTURE_NOW, routeCount: 14 };
+  // Read the claim off the rendered heading's text, not off a styling span, so a
+  // redesign cannot make this pass or fail without the label itself changing.
+  const masthead = (html) => {
+    const m = /<h1[^>]*>([\s\S]*?)<\/h1>/.exec(html);
+    return m ? m[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : '';
+  };
   const lga = renderPage(buildBoard(state, FIXTURE_NOW), state, [], FIXTURE_NOW, {
     origin: 'LGA',
     basePath: '/lga',
   });
-  assert.ok(lga.includes('LGA <span>GoWild</span>'), 'the LGA board is labelled LGA');
+  assert.equal(masthead(lga), 'LGA GoWild', 'the LGA board is labelled LGA');
   // Same isolate, no origin passed, exactly as the /s/<token> route calls it.
   const rdu = renderPage(buildBoard(state, FIXTURE_NOW), state, [], FIXTURE_NOW, { basePath: '/s/tok' });
-  assert.ok(rdu.includes('RDU <span>GoWild</span>'), 'the default is RDU, not whatever rendered last');
-  assert.ok(!rdu.includes('LGA <span>GoWild</span>'), 'a previous render must not leak its origin');
+  assert.equal(masthead(rdu), 'RDU GoWild', 'the default is RDU, not whatever rendered last');
+  assert.ok(!masthead(rdu).includes('LGA'), 'a previous render must not leak its origin');
 });
 
 check('MAX_ALL_IN is the only price gate', () => {

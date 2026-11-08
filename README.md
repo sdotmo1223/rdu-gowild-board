@@ -70,6 +70,51 @@ writing anything, so a run can never spend 28 fare requests to discover it canno
 Run once by hand (Actions → board-collect → Run workflow) and open
 `https://<worker>.workers.dev/s/<BOARD_TOKEN>`.
 
+## Watching a route
+
+Each departure on the token page carries a **Watch** button. It opens a small sheet
+with the two questions that matter: *which scope* (this date only, or every date until
+you stop it) and *how to be told*. The bell stays pressed on every row for that
+destination, and a strip under the masthead lists what is being watched plus the
+channels that can actually deliver.
+
+What fires an alert, and nothing else:
+
+| Event | When |
+|---|---|
+| **opened** | the route had no option under the ceiling and now does |
+| **gone** | it had one and now does not — sold out, or repriced above $50 |
+| **left** | a watched departure passed its time. Reported as *left*, never as *sold out*: the board drops rows that have flown, and confusing the two would page you about every flight you watch |
+| **cheaper** | the cheapest option dropped by at least a dollar |
+| **soon** | a watched departure is inside 3 hours, once per departure |
+
+A watch is a KV record (`w:<profile>:<DEST>`), not a browser setting, so it survives a
+closed tab and a new phone. It is evaluated when a snapshot lands at `/api/ingest`
+(the path `sweep.yml` uses), the first look after you arm it only sets a baseline, and
+the same event on the same departure never repeats inside six hours. Rows older than
+the 3 h ceiling produce **no** event at all: a memory of a seat is not evidence that
+one sold. If the collector writes straight to KV instead of through the Worker, watches
+are not evaluated — that path has no notification hook.
+
+A bell only exists on the `/s/<token>` page. The public `/rdu` profile has no token, so
+it cannot arm one, and a watch cannot be created without `BOARD_TOKEN`.
+
+### Channels
+
+Phone push is the default and costs nothing: it is the ntfy topic the collector already
+uses, so a bell works the moment `NTFY_TOPIC` exists on the Worker.
+
+| Channel | Needs | Notes |
+|---|---|---|
+| push | `NTFY_TOPIC` | free, no account; the phone subscribes to the topic in the ntfy app |
+| email | `RESEND_API_KEY`, `ALERT_EMAIL` (optional `ALERT_FROM`) | Resend's free tier. The default sender `onboarding@resend.dev` only delivers to your own account address — a verified domain is needed for anyone else |
+| text | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`, `ALERT_PHONE` | real SMS, and **not free**: Twilio charges per message and the number costs monthly, so this stays off until you add it deliberately |
+
+Set them as Worker secrets (`npx wrangler secret put RESEND_API_KEY`). A channel whose
+variables are missing is drawn as *off* with the missing variable named, and a watch that
+asks for it is saved with a warning rather than silently dropped. Nothing is sent with a
+secret in a URL, and a provider having a bad day never costs the snapshot.
+
 ## Local
 
 ```bash
