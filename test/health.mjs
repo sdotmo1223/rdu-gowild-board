@@ -10,6 +10,7 @@ import {
 } from '../src/alerts.mjs';
 import { validTopic } from '../src/alerts.mjs';
 import { ingestAuthorized } from '../src/index.js';
+import { channelStatus, resolveTopic } from '../src/watch.mjs';
 import { STALE_AFTER_MIN } from '../src/board.js';
 
 let checks = 0;
@@ -80,5 +81,29 @@ const ingestRegion = collectorSrc.slice(collectorSrc.indexOf('async function ing
 ok(ingestRegion.length > 100 && !/env\.token/.test(ingestRegion), 'the ingest helper has no shared token to borrow');
 ok(!/const token = \(process\.env\.BOARD_WRITE_TOKEN/.test(collectorSrc), 'the ingest credential is not collapsed into one variable');
 ok(/readToken = process\.env\.BOARD_TOKEN/.test(collectorSrc), 'the read credential is BOARD_TOKEN, never the write token');
+
+// --- The bell's channel: one topic, two places it can live -------------------
+// Measured 2026-11-11: the collector stores the ntfy topic in KV with every snapshot
+// and the stale alert already read it there, while every bell read `env.NTFY_TOPIC`
+// only. The sheet therefore drew push as *off* and refused to arm a watch it could
+// have delivered. These pin the resolution, not the plumbing.
+const kvStub = (v) => ({ get: async () => v });
+const throwingKv = {
+  get: async () => {
+    throw new Error('kv down');
+  },
+};
+ok((await resolveTopic({ NTFY_TOPIC: 'env-topic' })) === 'env-topic', 'a Worker secret wins');
+ok(
+  (await resolveTopic({ BOARD: kvStub('kv-topic') })) === 'kv-topic',
+  'the collector-bootstrapped topic is used when no secret exists',
+);
+ok((await resolveTopic({ BOARD: throwingKv })) === null, 'a KV failure is not a topic');
+ok((await resolveTopic({ BOARD: kvStub('has space') })) === null, 'an invalid stored value is refused');
+ok((await resolveTopic(null)) === null, 'no env is not a topic');
+ok(channelStatus({}, 'kv-topic').push.ready === true, 'push is ready when only the resolved topic exists');
+ok(channelStatus({}).push.ready === false, 'push stays off when nothing resolves');
+ok(/NTFY_TOPIC/.test(channelStatus({}).push.reason), 'the off reason still names the variable');
+ok(channelStatus({ NTFY_TOPIC: 'env-topic' }).push.ready === true, 'a Worker secret still reads ready');
 
 console.log(`health: ${checks} checks passed`);

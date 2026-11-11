@@ -146,6 +146,72 @@ no drift over three carries).
   those are itineraries whose first leg is the same RDU→ATL flight, so the
   identity verdicts partly measure the hub feed, not the destination.
 
+## 2026-11-11 — three red runs, and one lie the gate told itself
+
+25 scheduled runs: **22 success / 3 failure (88%)**, below this file's own 90% bar.
+Two of the three failures had a single, reproducible cause.
+
+### The dry gate was red for 2.5 hours every day
+
+Runs `42949370900` (21:56 ET) and `2026-11-10 02:39Z` (21:39 ET) both failed in **16 s**
+with `DRY: 1 failed — alert block executed`. Not flaky: **deterministic**. The fixture
+carries a real capture whose only departure is **21:30:00**, re-based onto today. After
+21:30 ET every row is in the past, so `boardRows` is empty, `appendTransitions` adds
+nothing, `buildAlert`/`buildWatchAlert` return null by design, and the harness sees no
+alert line at all. The gate was correct and the fixture was stale.
+
+Fixed: the fixture is re-timed to keep its first departure **three hours ahead of now**,
+preserving inter-leg offsets. Proof at a simulated 22:13 ET clock — the exact case that
+was red — now prints `[dry] alert would be sent` and a departure of `01:13`. A new
+assertion (`the fixture still has a departure ahead of now`) fails if this regresses at
+any hour, instead of only at night.
+
+### One apt DNS blip cost every origin
+
+Run `43058005681`: `Temporary failure resolving 'azure.archive.ubuntu.com'` during
+`playwright install --with-deps`, `exit 100` after **10 m 27 s**, zero Frontier requests.
+Because all three origins share one job, RDU, LGA **and** PHL all lost that tick; PHL
+went 8 h 58 m without a snapshot.
+
+Fixed: the browser download is retried twice and the system-package step is best-effort.
+A missing font costs nothing (launch happens before any Frontier request); a failed
+install cost the whole sweep.
+
+### The recovery entry cannot do what it was added for
+
+At 17:20Z the newest run was 16:24Z, and the `16:35 / 16:50 / 17:05` recovery entries had
+produced **no run record at all**. That is the documented behaviour: a `schedule` event
+GitHub drops never creates a run, and the freshness gate is evaluated *inside* a run.
+A second cron entry is a second event in the same congested queue, so the gate can only
+suppress duplicate work — it cannot resurrect a missing slot. Measured live: all three
+boards 6–9 h stale while every recovery entry silently did nothing.
+
+The only real fix is external dispatch (`workflow_dispatch` is a separate queue and
+starts in seconds) from a free 15-minute trigger holding a token with `Actions: write`.
+Until that exists, do not read a green recovery run as evidence the cron is delivering.
+
+### The bell said push was off while a working topic sat in KV
+
+`NTFY_TOPIC` has been a repo secret since 2026-11-04 and the collector stores it in KV
+with every snapshot; the stale alert read it from there. But `channelStatus()` and
+`pushRequest()` read `env.NTFY_TOPIC` only, so every sheet drew push as *off* and refused
+to arm a watch it could have delivered. `resolveTopic()` now resolves once (env, then
+KV) and feeds the sheet, the arming call and delivery.
+
+### The stale alert judged the wrong origin
+
+`maybeStaleAlert` read the RDU key on **every** path and shared one dedupe key, so
+opening `/phl` evaluated RDU's age, a healthy RDU masked a dead PHL, and the first
+profile to alert silenced the others. Now keyed per profile, labelled with the origin,
+and scheduled only by the route that renders that profile.
+
+### Restored, measured
+
+Manual dispatch `43069695681` (all three profiles): **success**. Immediately after,
+`/rdu` 7 min, `/lga` 6 min, `/phl` 4 min — all fresh, all reporting `status=ok` with zero
+bookable rows, which is Frontier releasing nothing under the ceiling at midday, not a
+rendering failure. The page states that rather than showing an empty grid.
+
 ## How to check health in 30 seconds
 
 ```bash

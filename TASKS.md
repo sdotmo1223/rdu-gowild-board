@@ -26,21 +26,25 @@ not doing, with the reason).
 
 ### T1 — Prove a watch actually rings
 
-- **Status:** open · **Size:** 15 min · **Needs:** you (one secret) + one sweep tick
+- **Status:** open · **Size:** 15 min · **Needs:** one deploy + one sweep tick
 - **Intent:** a bell that cannot deliver is worse than no bell, because it looks armed.
-- **Why:** the Worker holds `BOARD_TOKEN` and `BOARD_WRITE_TOKEN` and nothing else.
-  Every watch sheet therefore draws push as *off* and names the missing variable.
-  Nothing has ever been delivered by a watch in production.
-- **Do:** subscribe to a topic in the ntfy app, then `npx wrangler secret put NTFY_TOPIC`
-  with that name, then arm a bell on the token page for a route that is currently
-  bookable.
+- **Why (re-diagnosed 2026-11-11):** the original note blamed a missing Worker
+  secret. The real defect was narrower and worse: `NTFY_TOPIC` **is** a repo secret
+  (set 2026-11-04), the collector stores it in KV (`notify:topic`) with every
+  snapshot, and the stale alert already read it from there — but `channelStatus()`
+  and `pushRequest()` read `env.NTFY_TOPIC` only. Every sheet therefore drew push as
+  *off* and refused to arm a watch it could have delivered. Fixed by `resolveTopic()`,
+  which resolves env-then-KV once and feeds the sheet, the arming call and delivery
+  (`test/health.mjs`, 9 checks).
+- **Do:** deploy the Worker, arm a bell on the token page for a route that is
+  bookable, and wait for one tick.
 - **Done when:** one real push arrives on the phone, caused by a sweep that changed
   that route's state — and the sheet showed push as *on* before the tick.
 - **Prevents:** shipping a notification feature that has never notified.
 
 ### T2 — Make the documented suite count true again
 
-- **Status:** open · **Size:** 10 min · **Needs:** agent
+- **Status:** done 2026-11-11 · **Size:** 10 min · **Needs:** agent
 - **Intent:** `AGENTS.md` is the file an agent trusts before touching anything; a
   wrong count there is a broken map.
 - **Why:** the `npm test` line in `AGENTS.md` still says *9 suites, 200 checks*.
@@ -53,7 +57,7 @@ not doing, with the reason).
 
 ### T3 — Put the watch work into the build log
 
-- **Status:** open · **Size:** 20 min · **Needs:** agent
+- **Status:** done 2026-11-11 · **Size:** 20 min · **Needs:** agent
 - **Intent:** `HANDOFF.md` is the chronological record, including the wrong turns.
   A whole subsystem is missing from it.
 - **Why:** `grep -c -i watch HANDOFF.md` returns **0**, while `src/watch.mjs` (488
@@ -109,7 +113,7 @@ not doing, with the reason).
 
 ### T7 — Make `PLAN.md` honest or fold it in
 
-- **Status:** open · **Size:** 15 min · **Needs:** agent
+- **Status:** done 2026-11-11 · **Size:** 15 min · **Needs:** agent
 - **Intent:** a plan with unticked boxes for finished work reads as work remaining.
 - **Why:** `PLAN.md` Phase 1 still shows `[ ]` for `wrangler login`, the KV namespace,
   `BOARD_TOKEN`, `wrangler deploy` and the repo secrets. All of that is done: the
@@ -121,20 +125,18 @@ not doing, with the reason).
 
 ### T8 — See the alarm fire for real
 
-- **Status:** open · **Size:** 20 min · **Needs:** agent, costs one burst
+- **Status:** done 2026-11-11 · **Size:** 20 min · **Needs:** agent, costs one burst
 - **Intent:** an alarm never observed firing is not an alarm — `PLAN.md` Phase 3 says
   this and it is still unproven.
-- **Why:** `refusalEndsSweep` is proven by test only; both live bursts completed
-  cleanly. The stale banner and the abort path have never run against a real
-  refusal in production.
-- **Do:** force one refusal deliberately (`SWEEP_ONLY=ATL` with the payload shape the
-  parser refuses, or a warmed-up page that returns `no-journeys-key`), watch it abort
-  after two in a row, and confirm the board keeps its previous rows and sets
-  `lastError`.
-- **Done when:** the refusal is visible on the page and in the notification, the
-  snapshot was **not** overwritten, and the request count is in the log.
-- **Prevents:** the first real Frontier refusal being discovered by the board going
-  blank.
+- **Closed because the evidence already existed and this item was stale:**
+  `HANDOFF.md` records the abort firing in production on 2026-11-03 —
+  `partial — "Sweep stopped at DTW after 21/28 requests (no-journeys-key).
+  2026-11-04 only reached 7/14 routes; 7 rows carried from the previous sweep."` —
+  and `MONITOR.md` records the same mid-burst refusal. The board kept its previous
+  rows and stated the carried count, which is the done condition.
+- **What is still unproven is the notification half**, and that now belongs to T1:
+  no watch has ever delivered a push.
+- **Prevents:** re-running a paid experiment whose result is already on record.
 
 ### T9 — Email as a second channel
 
@@ -154,3 +156,10 @@ not doing, with the reason).
 | sink `/done` receipt | route restored, 21-check suite plus a deletion mutation that fails | `b88ceb7` |
 | dropped GitHub slots | gated recovery cron, 11 checks, skip under 40 min | `82923e4` |
 | per-route watches | bell + sheet + KV record + delivery, 127 checks | `9bcf465` |
+| T2 suite count / file map | `npm test` measured at 10 suites / 336 checks; map lists merge, dry, watch and all, plus the deleted workflows | this commit |
+| T7 `PLAN.md` | header declares it history; setup steps are recorded as done | this commit |
+| T8 alarm fired | production log already existed (DTW, 21/28); item was stale, not the code | this commit |
+| watch push unreachable | `resolveTopic()` env-then-KV, threaded into the sheet, arming and delivery; 9 checks | this commit |
+| dry gate red after 21:30 ET | fixture retimed to always keep its first departure 3 h ahead; late-clock proof at 22:13 ET | this commit |
+| one Chromium install cost every origin | browser download retried twice, system deps best-effort | this commit |
+| stale alert judged the wrong origin | per-profile key, label and dedupe, scheduled only by the route that renders it | this commit |

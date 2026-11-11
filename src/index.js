@@ -12,6 +12,7 @@ import {
   listWatches,
   normalizeWatch,
   removeWatch,
+  resolveTopic,
   saveWatch,
   watchKey,
 } from './watch.mjs';
@@ -94,32 +95,41 @@ const STALE_ALERT_KEY = 'alert:stale';
 // The one signal no collector can send: that no collector is running. This fires from
 // the Worker, which still answers when the cron is dead, and is deduped in KV so
 // opening the board ten times does not send ten pushes.
-async function maybeStaleAlert(env, now) {
+//
+// Scoped per profile. Measured 2026-11-11: RDU was 6h36m old while PHL was 8h58m, and
+// that check read `state` (RDU) on every path -- so opening /phl judged RDU's age, a
+// healthy RDU masked a dead PHL, and one shared dedupe key let the first profile to
+// alert silence the other two. The key and the label are now the caller's, and the
+// check only runs on the pages that actually render that profile.
+async function maybeStaleAlert(env, now, key = 'state', label = 'RDU') {
   if (!env || !env.BOARD) return null;
   try {
     // The topic may arrive as a Worker secret, or from the collector's own write.
     // The second path exists so the alert works without the owner copying a value
-    // they cannot read back out of GitHub secrets: CI already holds it.
-    const configured = env.NTFY_TOPIC || (await env.BOARD.get('notify:topic'));
+    // they cannot read back out of GitHub secrets: CI already holds it. The same
+    // resolution feeds the bells, so a page can never say push is off while a
+    // working topic is sitting in KV.
+    const configured = await resolveTopic(env);
     if (!validTopic(configured)) return null;
-    const last = Number(await env.BOARD.get(STALE_ALERT_KEY)) || 0;
+    const alertKey = `${STALE_ALERT_KEY}:${key}`;
+    const last = Number(await env.BOARD.get(alertKey)) || 0;
     if (last && now - last < 6 * 3600 * 1000) return null;
-    const stored = await env.BOARD.get('state', 'json');
+    const stored = await env.BOARD.get(key, 'json');
     if (!stored) return null;
     const view = buildBoard(stored, now);
     if (!shouldSendStaleAlert(view.ageMin, last, now)) return null;
-    await env.BOARD.put(STALE_ALERT_KEY, String(now));
+    await env.BOARD.put(alertKey, String(now));
     const hours = Math.max(1, Math.round((view.ageMin || 0) / 60));
     await fetch(`https://ntfy.sh/${encodeURIComponent(configured)}`, {
       method: 'POST',
       headers: {
-        Title: `GoWild board: collector silent ${hours}h`,
+        Title: `GoWild ${label}: collector silent ${hours}h`,
         Priority: 'high',
         Tags: 'warning',
         'Content-Type': 'text/plain; charset=utf-8',
       },
       body:
-        `No snapshot for ${hours}h, past the 3h limit.\n` +
+        `No ${label} snapshot for ${hours}h, past the 3h limit.\n` +
         'The page is still rendering the last good sweep, which is why it looks alive.\n' +
         'Check Actions: the cron or the write path has stopped.',
     });
@@ -182,7 +192,9 @@ async function handleWatch(request, env, url, now) {
       401,
     );
   }
-  const channels = channelStatus(env);
+  // Resolve the topic before answering, so the sheet never draws a channel as off
+  // when the collector has already stored a working one in KV.
+  const channels = channelStatus(env, await resolveTopic(env));
   if (request.method === 'GET') {
     const watches = await listWatches(env, PROFILE);
     return json({ ok: true, canWatch: true, channels, watches: watches.map(publicWatch).filter(Boolean) });
@@ -371,13 +383,9 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const now = Date.now();
-    // Cheap, and silent unless a snapshot is actually stale. waitUntil keeps the
-    // response off the critical path of a push that is usually not needed.
-    // A partial context (local harness, a test) must not turn every page into a 500:
-    // waitUntil is a convenience, not a requirement of serving the board.
-    if (ctx && typeof ctx.waitUntil === 'function' && url.pathname !== '/api/ingest') {
-      ctx.waitUntil(maybeStaleAlert(env, now));
-    }
+    // The staleness check is scheduled by each route that renders a profile, not here:
+    // it needs that profile's key, and running it on every asset request cost a KV
+    // read plus a full buildBoard to answer a question nobody asked.
 
     // The one origin that may be served without a token, so a link can be handed
     // to somebody else. Everything else stays behind BOARD_TOKEN.
@@ -435,6 +443,9 @@ export default {
     }
 
     if (url.pathname === '/api/board') {
+      if (ctx && typeof ctx.waitUntil === 'function') {
+        ctx.waitUntil(maybeStaleAlert(env, now, 'state', PROFILES[PROFILE].origin));
+      }
       if (!state) return json({ ok: false, state: 'no-data', message: 'Collector has never written a snapshot.' });
       const view = buildBoard(state, now);
       return json({
@@ -501,13 +512,19 @@ export default {
       // The token path is the only place a watch can be created, so it is the only
       // place the bell exists. A KV hiccup here costs the bells, never the board.
       const watches = await listWatches(env, PROFILE).catch(() => []);
+      // The bell can only be armed for a channel that resolves, and the topic usually
+      // lives in KV rather than in the Worker's own environment.
+      const channels = channelStatus(env, await resolveTopic(env));
+      if (ctx && typeof ctx.waitUntil === 'function') {
+        ctx.waitUntil(maybeStaleAlert(env, now, 'state', PROFILES[PROFILE].origin));
+      }
       return html(
         renderPage(view, state, frequencyTable(state, ROUTES), now, {
           basePath: `/s/${match[1]}`,
           origin: PROFILES[PROFILE].origin,
           canWatch: true,
           watches,
-          channels: channelStatus(env),
+          channels,
         }),
       );
     }
@@ -540,6 +557,11 @@ export default {
         );
       }
       const view = buildBoard(mine, now);
+      if (ctx && typeof ctx.waitUntil === 'function') {
+        ctx.waitUntil(
+          maybeStaleAlert(env, now, pubOk === 'rdu' ? 'state' : `state:${pubOk}`, origin),
+        );
+      }
       return html(
         renderPage(view, mine, frequencyTable(mine, PROFILES[pubOk].routes), now, {
           basePath: `/${pubOk}`,

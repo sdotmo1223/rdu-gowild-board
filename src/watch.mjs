@@ -75,9 +75,28 @@ export function normalizeWatch(input, now = Date.now(), known = null) {
 // Which channels can actually deliver, and why the others cannot. The reason is a
 // missing variable name, never its value, and it is shown in the page: a channel
 // that is switched off has to say so rather than accept a watch it will not send.
-export function channelStatus(env) {
+// The push topic can arrive two ways, and only one of them is a Worker secret.
+// `NTFY_TOPIC` as a Worker secret wins; otherwise the collector's snapshot write
+// stores it in KV (`notify:topic`), because a GitHub secret cannot be read back in
+// the Worker. Measured 2026-11-11: the KV value was present and the stale alert used
+// it, while every bell read `env.NTFY_TOPIC` only -- so the sheet drew push as OFF
+// and refused to arm a watch it could actually have delivered. One resolution, used
+// by the sheet, the arming call and delivery itself.
+export async function resolveTopic(env) {
+  if (!env) return null;
+  if (validTopic(env.NTFY_TOPIC)) return env.NTFY_TOPIC;
+  try {
+    if (!env.BOARD || typeof env.BOARD.get !== 'function') return null;
+    const stored = await env.BOARD.get('notify:topic');
+    return validTopic(stored) ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+export function channelStatus(env, topic = null) {
   const e = env || {};
-  const pushReady = validTopic(e.NTFY_TOPIC);
+  const pushReady = validTopic(topic) || validTopic(e.NTFY_TOPIC);
   const emailReady = Boolean(e.RESEND_API_KEY && e.ALERT_EMAIL);
   const textReady = Boolean(e.TWILIO_ACCOUNT_SID && e.TWILIO_AUTH_TOKEN && e.TWILIO_FROM && e.ALERT_PHONE);
   return {
@@ -443,6 +462,11 @@ export async function evaluateWatches(env, profile, prevState, nextState, now = 
   try {
     const watches = await listWatches(env, profile);
     if (!watches.length) return { watched: 0, sent: 0 };
+    // Resolve the topic once, from env or KV, then hand delivery an env-shaped
+    // object that carries it. Without this a watch armed for push silently has its
+    // only channel dropped by buildRequests().
+    const topic = await resolveTopic(env);
+    const eff = topic ? { ...env, NTFY_TOPIC: topic } : env;
     const nextView = buildBoard(nextState, now);
     const prevView = prevState ? buildBoard(prevState, now) : null;
     let sent = 0;
@@ -459,7 +483,7 @@ export async function evaluateWatches(env, profile, prevState, nextState, now = 
       for (const ev of plan.events) {
         if (!shouldNotify({ lastEvent }, ev, now)) continue;
         const msg = describeEvent(ev, String(profile || 'rdu').toUpperCase());
-        const res = await deliver(env, msg, w.channels);
+        const res = await deliver(eff, msg, w.channels);
         if (res.sent.length) sent += 1;
         lastEvent = { kind: ev.kind, key: ev.key, at: now, sent: res.sent, failed: res.failed };
         console.log(`watch ${w.dest} ${ev.kind}: sent ${res.sent.join(',') || 'none'}${res.failed.length ? ` failed ${res.failed.map((f) => f.channel).join(',')}` : ''}`);

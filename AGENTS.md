@@ -26,12 +26,17 @@ This file = the rules.
    **"estimated all-in"**. Never show `$0.01`, `$NaN`, `$undefined`, or a `-1`
    sentinel.
 4. **Politeness is not negotiable.** Strictly sequential, 2–5 s randomized delay,
-   15-minute cadence, exactly one process touching Frontier. Do not parallelize
-   route fetches, do not add retries that multiply requests, do not "warm up"
-   extra routes. Half the routes per tick (7 of 14, alternating on the clock) is
-   the burst budget: two refusals in a row abort the sweep, so a burst that is too
-   large can return less than 14. (15 minutes is only affordable because the repo is public:
-   GitHub Free meters 2,000 Actions minutes/month on private repos, which a
+   exactly one process touching Frontier. Do not parallelize route fetches, do not
+   add retries that multiply requests, do not "warm up" extra routes. Each profile
+   gets a **per-profile request budget** (`rdu` 14, `lga` 10, `phl` 16) and each tick
+   runs one primary plus at most one secondary, so the burst stays inside the measured
+   refusal zone; two refusals in a row abort the sweep, so a burst that is too large
+   can return less data than a smaller one. Rotation is **tick-driven** (`nextShard`),
+   never clock-derived: GitHub fires a `*/15` cron about hourly (measured 2026-11-04:
+   24 runs/24 h, median gap 60 min), and four 15-minute slots make clock parity repeat.
+   The cron is a *request*, not a promise — measured 2026-11-11: a scheduled pair
+   produced no run records at all for an hour. ($0 is only affordable because the repo
+   is public: GitHub Free meters 2,000 Actions minutes/month on private repos, which a
    15-minute Playwright cron exhausts in about a week. Keep it public.)
 5. **Read-only.** Never request checkout, payment, or booking paths.
 6. **The session cookie is optional and secret.** It is never logged, printed,
@@ -63,7 +68,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | GoWild is **$0.01 fare per segment + taxes/fees**, not a dynamic discount | Frontier T&C §14 and every 2026 release say "only $0.01 in airfare per flight segment (plus taxes, fees and charges)"; Frontier puts domestic taxes at "approximately $15.40". Our cheapest observed all-in is **$15.41**. A ratio against `standardFare` is a by-product, never a rate Frontier applies. |
 | GoWild availability is **capacity controlled per flight** | Frontier: "not all Frontier flights will be available", "seats are capacity controlled, limited in quantity... first-come, first-served", "last seat availability is not guaranteed". No seat count per flight is published. |
 | Time-of-day GoWild availability is **undocumented** | No Frontier statement and no credible third-party analysis. Our hour table is the only evidence we will have, so it stays labelled with its denominators. |
-| Route count is **14** | FlightConnections 2026-11-02 + RDU's own table. The "32 destinations" figure is ABC11 **2019-05-01**. BUF is announced, not operating. |
+| Route count is **14** for RDU, **9** for LGA, **22** for PHL | FlightConnections 2026-11-02 + each airport's own table. The "32 destinations" figure is ABC11 **2019-05-01**. BUF is announced, not operating. Three profiles, 45 routes, share one Worker, one KV namespace and one concurrency group |
 
 ---
 
@@ -71,7 +76,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 
 | Path | Responsibility |
 |---|---|
-| `src/routes.js` | 14 routes, `BLACKOUT_DATES`, `PEAK_LABEL`, `MAX_ALL_IN`, `MAX_STOPS`, `MAX_DURATION_MIN`, `easternDate()`, `frontierDateParam()`; the sweep budget: `routeShard()`, `shardRoutes()`, `easternHour()`, `departuresFinished()`; the weekly lead probe: `leadProbeDue()`, `leadProbePlan()` |
+| `src/routes.js` | three origin profiles (rdu 14 / lga 9 / phl 22 routes), `BLACKOUT_DATES`, `PEAK_LABEL`, `MAX_ALL_IN`, `MAX_STOPS`, `MAX_DURATION_MIN`, `easternDate()`, `frontierDateParam()`; the sweep budget: `routeShard()`, `shardRoutes()`, `nextShard()` (tick-driven, not clock-driven), `easternHour()`, `departuresFinished()`; the weekly lead probe: `leadProbeDue()`, `leadProbePlan()` |
 | `src/board.js` | `buildBoard()` — per-date status machine, nonstop-first sort, fold-vs-show, defensive against malformed state; `buildCoverage()` — worst per-route age from `state.coverage` |
 | `src/render.js` | `renderPage()` — the entire HTML, all banners, heatmap, timing, pin/ICS/PWA client script |
 | `src/history.js` | digest, transitions, `recordObservation()`, `recordFirstSeen()` |
@@ -82,7 +87,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `src/schedule.mjs` | per-date operating matrix + week-over-week stable-vs-rotating verdict |
 | `src/alerts.mjs` | ntfy.sh push, deduped per error state to once / 6 h |
 | `src/watch.mjs` | per-route bells: `normalizeWatch()`, `observe()`, `planWatch()` (available / sold out / cheaper / departing), `channelStatus()`, push+email+text delivery, `evaluateWatches()` on ingest |
-| `.github/workflows/sweep.yml` | the only collector cron: every origin, sequential, per-profile request budget |
+| `.github/workflows/sweep.yml` | the only collector cron: every origin, sequential, per-profile request budget. The older `board.yml` and `lga.yml` were deleted 2026-11-11 — both were `disabled_manually` and both presented the read token to a write endpoint, so re-enabling either could only fail |
 | `src/index.js` | Worker router: `/s/<TOKEN>`, `/api/board` (token-gated), `/api/ingest` (token-gated snapshot write), PWA assets |
 | `collector/collect.mjs` | Playwright sweep → KV (or `state.json` with no credentials) |
 | `collector/parse.mjs` | `extractJourneys`, `normalizeFlight`, `parseRoute`, `classifyFailure` |
@@ -99,12 +104,16 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `tools/render-local.mjs` | render from interactive `.sweep/` captures |
 | `test/acceptance.mjs` | 25 spec-level checks |
 | `test/profiles.mjs` | 9 multi-origin checks: profile resolution, unserved-vs-refused classification, per-origin rendering |
+| `test/merge.mjs` | 6 checks: a refused route keeps its previous good row, a rotated half is carried rather than called partial, `carriedAt` never re-stamps |
+| `test/dry.mjs` | the collector's real `main()` against a fixture: plan, parse, merge, alerts, write, plus the weekly lead probe. Re-times the fixture so its first departure is always three hours ahead of whenever the gate runs |
 | `test/rotation.mjs` | 53 checks: tick-driven shard alternation, two-tick and budgeted coverage |
 | `test/carry.mjs` | 7 checks: a carried row keeps its real fetch time, never re-stamps |
 | `test/resilience.mjs` | 34 checks: one refusal must not end a sweep, three strikes retire a route, and a fare older than 3 h is withheld |
 | `test/health.mjs` | 34 checks: heartbeat, Worker-side stale alert, the collector-to-Worker topic bootstrap, and the read/write token split — including which credential each collector call site presents |
 | `test/sink.mjs` | 21 checks against `tools/sink.mjs` on its own free port: a refused row (400) writes no capture, a real row is stored, a preflight answers 204, `/done` answers 200 **and** leaves `.sweep/_done`, unknown routes answer 404. Written because `/done` was unchecked and a patch that deleted the route passed every other check |
-| `test/recovery.mjs` | 11 checks on `tools/recovery-gate.mjs`: the second cron entry sweeps only when the board is already 40 min old, and an unreadable age sweeps rather than skipping |
+| `test/recovery.mjs` | 11 checks on `tools/recovery-gate.mjs`: the second cron entry sweeps only when the board is already 40 min old, and an unreadable age sweeps rather than skipping. **It cannot create a run GitHub never scheduled** — see the note below the throttle section |
+| `test/watch.mjs` | 127 checks: normalization, channel status, the five event kinds, dedupe, delivery payloads, the KV record |
+| `test/all.mjs` | the registry `npm test` runs; a suite not listed here does not gate anything |
 | `test/stress.mjs` | 70 adversarial checks (hostile input, malformed state, volume, budget, fare retention, the timing sample floor, censored sightings, the durable first-look, the coverage ledger, the lead-probe budget) |
 
 ---
@@ -113,7 +122,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 
 ```bash
 npm run lint                 # no-undef: the defect class `node --check` cannot see
-npm test                     # every suite in test/all.mjs (9 suites, 200 checks); all must pass
+npm test                     # every suite in test/all.mjs (10 suites, 336 checks); all must pass
 npm run stress               # adversarial: 70 checks
 node test/profiles.mjs       # multi-origin: 9 checks
 node --check <file>          # syntax gate, used on every file
@@ -141,7 +150,11 @@ npx wrangler deploy
 | Variable | Meaning |
 |---|---|
 | `FRONTIER_COOKIE` | optional; falls back to `.dev.vars` |
-| `CF_API_TOKEN`, `CF_ACCOUNT_ID`, `CF_KV_NAMESPACE_ID` | write to KV; absent ⇒ writes `state.json` |
+| `CF_API_TOKEN`, `CF_ACCOUNT_ID`, `CF_KV_NAMESPACE_ID` | legacy direct-KV write path; absent ⇒ prefers the Worker ingest below |
+| `BOARD_INGEST_URL`, `BOARD_TOKEN`, `BOARD_WRITE_TOKEN` | the normal write path: `POST /api/ingest` on the Worker, which owns the KV write. `BOARD_TOKEN` is read-only; the write token is what `POST` accepts once it exists |
+| `BOARD_PROFILE` | which origin a collector run sweeps: `rdu` (default), `lga`, `phl` |
+| `SWEEP_SHARD=0\|1` | manual override for one half of the rotation; the cron never sets it |
+| `SWEEP_ALL_DATES=1` | keep asking about today after its last departure instead of carrying it |
 | `HEADLESS=0` | run headed, offscreen (for a local scheduler) |
 | `NTFY_TOPIC` | optional phone push, no account needed. The collector sends it with each snapshot, so the Worker can push without a second secret; a Worker secret of the same name overrides it |
 | `WATCH` | optional standing question, e.g. `ATL<=25,MCO<=30`; alerts once per 6 h per matching departure set. This is the board-wide env watch; the page's per-route bells live in KV (`w:<profile>:<DEST>`) instead |
@@ -206,10 +219,20 @@ Rules that hold under either reading:
 A **second cron entry** (`5,20,35,50 * * * *`) exists only to fill slots GitHub drops
 — measured 2026-11-07: 9 deliveries in 24 h against 24 expected, gaps of 233, 362
 and 434 min. `tools/recovery-gate.mjs` reads the board's own `ageMinutes`: under 40
-min the recovery tick **skips** (a healthy hour still costs one 14-request burst),
+min the recovery tick **skips** (a healthy hour still costs one request budget),
 at or over it the tick sweeps. An unreadable age sweeps — a missed tick is the
 failure being removed, and one extra burst is not. `test/recovery.mjs` pins both
 directions.
+
+**Hard limit of that design, measured 2026-11-11.** A second cron entry is a second
+`schedule` event in the *same* congested queue, and the gate is evaluated **inside** a
+run. If GitHub drops the event, no run exists, so no gate can fire: at 17:20Z the
+newest run was 16:24Z and the 16:35/16:50/17:05 recovery entries had produced **no run
+record at all** while all three boards sat 6–9 hours stale. External dispatch is the
+only real fix: `workflow_dispatch` is a separate queue and starts in seconds, so a free
+external 15-minute trigger (cron-job.org, or a Worker Cron Trigger holding a token with
+`Actions: write`) is the next change if freshness matters. Do not read a green recovery
+entry as evidence the cron is delivering.
 
 ## Host gotchas (cost hours if forgotten)
 

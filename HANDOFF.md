@@ -803,3 +803,55 @@ ingest write complete: 33617 bytes via the Worker
 which is what a base station looks like. The rotation covers the remaining 14
 routes over the following ticks; the page states how many routes were re-checked
 rather than implying the list is complete.
+
+---
+
+## Per-route watches — what a bell is, and the four judgement calls (2026-11-11)
+
+Built in `9bcf465` and never written up here, which is why this section exists.
+
+A watch is a standing question about one destination: *"tell me about PHL"*, either for
+one date or for every date until I stop it. It is a **KV record**, not a browser
+setting — `w:<profile>:<DEST>` — so a phone that has never opened the page still gets
+the push, and two browsers editing two watches cannot overwrite each other the way one
+JSON array would. The collector's sweep is the only thing that can answer it, so the
+watch is evaluated **when a snapshot lands at `/api/ingest`**, after the write.
+
+Five things fire, and nothing else:
+
+| Event | When |
+|---|---|
+| `available` | it had no option under the ceiling and now does |
+| `soldout` | it had one and now does not |
+| `departed` | a watched row's departure time passed. Reported as *left*, never *sold out* |
+| `cheaper` | the cheapest option fell by at least a dollar |
+| `departing` | inside 3 hours of departure, once per departure |
+
+The four judgement calls, each of which was a decision rather than an accident:
+
+1. **The first look is only a baseline.** A watch armed today does not immediately fire
+   `available` for seats that were already there; otherwise arming a bell pages you
+   about the present.
+2. **`left` is not `sold out`.** The board drops departures that have flown, so a row
+   vanishing has two causes. `planWatch` checks whether *every* previous row's `dep` is
+   at or before now and reports `departed`; treating push-back as a sell-out would page
+   you about every flight you watch.
+3. **A stale observation produces no event at all.** Rows older than `MAX_ROW_AGE_MIN`
+   (180 min) or a route with no freshness ledger entry make `observe()` return
+   `stale`, and two observations cannot be compared — "it disappeared" may only mean
+   the sweep stopped asking. Departure timing still fires, because that is the clock,
+   not Frontier.
+4. **Delivery can never cost the snapshot.** `evaluateWatches` is called from
+   `ctx.waitUntil` *after* `env.BOARD.put`, and every failure path is caught and
+   recorded on the record's `lastEvent.failed`. A push provider having a bad day costs
+   a notification, never a paid-for sweep.
+
+Two follow-ups from the 2026-11-11 review, both now fixed and both invisible from the
+page: a bell read `env.NTFY_TOPIC` only while the working topic lived in KV (so the
+sheet drew push as *off* and refused to arm), and the stale alert read the RDU snapshot
+on every path (so a healthy RDU masked a dead PHL). `resolveTopic()` resolves env-then-KV
+once and feeds the sheet, the arming call and delivery.
+
+**Still unproven:** no watch has ever delivered a push in production. The code path is
+covered by 127 checks and 9 more on topic resolution, but the only evidence that counts
+is one real notification on the phone (TASKS T1).

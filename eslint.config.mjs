@@ -37,7 +37,9 @@ const web = {
 
 export default [
   {
-    ignores: ['node_modules/**', '.wrangler/**', 'state.json', 'board.html', '.sweep/**'],
+    // `.dry/` and `.sweep/` are local scratch output, not source: linting them let a
+    // scratch file fail the gate that protects a Frontier sweep.
+    ignores: ['node_modules/**', '.wrangler/**', 'state.json', 'board.html', '.sweep/**', '.dry/**'],
   },
   {
     files: ['**/*.mjs', '**/*.js'],

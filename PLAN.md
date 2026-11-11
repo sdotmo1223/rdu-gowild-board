@@ -3,6 +3,13 @@
 Written 2026-11-02, for a session that starts the morning of 2026-11-03.
 Everything here is prepared already; nothing is left as "figure this out first".
 
+> **This file is history, as of 2026-11-11.** Every Phase 1 item is done: the repo
+> exists and is public, the KV namespace id is in `wrangler.toml`, both tokens are
+> set, the Worker is live at `rdu-gowild-board.sdotmo1223.workers.dev`, and
+> `sweep.yml` runs on a schedule. The unticked boxes below are kept as the record of
+> what was asked, **not as work remaining**. Work that is actually open lives in
+> `TASKS.md`; measured evidence lives in `REPORT.md` and `MONITOR.md`.
+
 ---
 
 ## The one sentence

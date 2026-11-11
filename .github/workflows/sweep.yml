@@ -129,9 +129,29 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
+      # The browser download is essential; the system packages are best-effort.
+      # Measured 2026-11-11 (run 43058005681): `--with-deps` failed on an apt DNS blip
+      # (`Temporary failure resolving 'azure.archive.ubuntu.com'`), killed the job after
+      # 10m27s and cost EVERY origin its tick -- all three boards went hours stale. The
+      # deps step only supplies fonts; a launch failure happens before any Frontier
+      # request, so it costs nothing, while a failed install costs the whole sweep.
       - name: Install Chromium
         if: steps.gate.outputs.skip != 'true'
-        run: npx playwright install --with-deps chromium
+        run: |
+          set -u
+          ok=0
+          for attempt in 1 2; do
+            if npx playwright install chromium; then ok=1; break; fi
+            echo "::warning::Chromium download failed (attempt $attempt); retrying in 15s"
+            sleep 15
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error::Chromium could not be downloaded after two attempts. No Frontier request was made."
+            exit 1
+          fi
+          if ! npx playwright install-deps chromium; then
+            echo "::warning::System packages for Chromium failed to install (apt/DNS). Continuing: the browser downloaded, and a launch failure still costs zero Frontier requests."
+          fi
 
       # Sequential by construction: the loop blocks on each sweep. Secondaries run
       # on alternating quarters of the hour so a tick carries the primary plus one

@@ -15,6 +15,7 @@
 // harness blind to the bug it was built for.
 import { spawnSync } from 'node:child_process';
 import { readFileSync, existsSync, rmSync } from 'node:fs';
+import { easternStamp } from '../src/routes.js';
 
 const STATE = '.dry/state.json';
 if (existsSync(STATE)) rmSync(STATE);
@@ -75,6 +76,19 @@ if (state) {
     'coverage is recorded per route that answered',
     Boolean(state.coverage && state.coverage.ATL && Number(state.coverage.ATL.lastOkAt) > 0),
     JSON.stringify(state.coverage || null),
+  );
+  // The check that would have caught the 21:30 bug. The fixture is re-timed to keep
+  // its first departure ahead of now, because a fixture whose only flight has flown
+  // makes the alert block legitimately silent and the harness grade nothing. Without
+  // this assertion the repair could regress and the gate would only go red at night.
+  const stamp = easternStamp(Date.now());
+  const legs = (state.sweeps || [])
+    .flatMap((s) => (s && s.flights) || [])
+    .filter((f) => f && f.dep);
+  expect(
+    'the fixture still has a departure ahead of now',
+    legs.some((f) => String(f.dep) >= stamp),
+    `${legs.length} flight(s), latest ${legs.map((f) => f.dep).sort().pop() || 'none'} vs now ${stamp}`,
   );
 }
 

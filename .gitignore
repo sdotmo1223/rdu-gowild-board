@@ -26,8 +26,9 @@ threads/
 board.live.html
 .verify.log
 
-# rendered previews captured for the user
-preview-board.png
+# rendered previews and scratch screenshots: ignore the class, not one name at a time
+# (`lga-board.png` was tracked before this rule, so it stays tracked until untracked)
+/*.png
 
 # dispatched agent specs and reports
 .agents/

@@ -146,7 +146,8 @@ npm test                 # offline acceptance checks
 | Condition | What you see |
 |---|---|
 | No snapshot ever written | red "No data yet — not 'no flights'" banner |
-| Data > 45 min old | amber stale banner, amber timestamp |
+| Data > 180 min old (three measured median cron gaps) | amber stale banner, amber timestamp |
+| A fare older than 180 min | withheld, and the date states when it was last checked — an old price is a memory, not an offer |
 | All routes blocked | red bot-protection banner, previous board preserved |
 | Some routes failed | per-date "`n`/14 routes re-checked · `n` failed" |
 | Half the routes carried (rotation) | per-date "7/14 routes re-checked · 7 carried from HH:MM ET" |
@@ -166,9 +167,9 @@ own nonstop table. The widely repeated "32 destinations" is an ABC11 article fro
 ## Constraints honoured
 
 - **$0**: Workers Free + KV Free + GitHub Actions free minutes. No card, no R2, no paid tier.
-- **Politeness**: strictly sequential, 2–5 s randomized, half the routes per tick
-  (14 requests per two-date sweep), one process ever (enforced by a GitHub Actions
-  `concurrency` group). The cron asks for 15 minutes; GitHub delivers about hourly
+- **Politeness**: strictly sequential, 2–5 s randomized, a per-profile request budget
+  (`rdu` 14, `lga` 10, `phl` 16) with one primary and at most one secondary per tick,
+  one process ever (enforced by a GitHub Actions `concurrency` group). The cron asks for 15 minutes; GitHub delivers about hourly
   on a free runner (measured 2026-11-04: 24 runs in 24 h, gaps median 60 min,
   range 42–81), so rotation alternates per tick rather than per clock slot.
   A second entry (`5,20,35,50`) fills the slots GitHub drops: it sweeps only when

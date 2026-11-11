@@ -43,7 +43,6 @@ const KV_KEY = 'state';
 // sweeps are capped and the remainder is deferred to the rotation.
 const FORCED_BUDGET_CEILING = 30;
 const API_BASE = 'https://api.cloudflare.com/client/v4';
-const BASE_URL = 'https://booking.flyfrontier.com/Flight/Select';
 // The booking root keeps the fetches same-origin; /Flight/Select redirects to
 // /Flight/Redirect and then the fare request can be bounced to www.
 const WARMUP_URL = process.env.WARMUP_URL || 'https://booking.flyfrontier.com/';
@@ -189,19 +188,53 @@ function openFixturePage() {
   // real captured clock times and fares.
   const today = easternDate(0);
   const rebase = (s) => (typeof s === 'string' && /^\d{4}-\d{2}-\d{2}/.test(s) ? `${today}${s.slice(10)}` : s);
+  // Wall-clock arithmetic, no timezone: every timestamp here is an Eastern wall
+  // clock, so parsing both ends as UTC gives a consistent delta.
+  const wall = (s) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/.exec(String(s || ''));
+    return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)) : null;
+  };
+  const fmtWall = (t) => {
+    const d = new Date(t);
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+  };
   let payload = null;
   try {
     payload = JSON.parse(raw.text);
   } catch {
     payload = null;
   }
+  const legs = [];
   if (payload && Array.isArray(payload.journeys)) {
     for (const j of payload.journeys) {
       for (const f of j.flights || []) {
-        for (const leg of f.legs || []) {
-          leg.departureDate = rebase(leg.departureDate);
-          leg.arrivalDate = rebase(leg.arrivalDate);
-        }
+        for (const leg of f.legs || []) legs.push(leg);
+      }
+    }
+  }
+  for (const leg of legs) {
+    leg.departureDate = rebase(leg.departureDate);
+    leg.arrivalDate = rebase(leg.arrivalDate);
+  }
+  // The fixture carries a real capture's clock time. Re-based onto today, that time
+  // is already in the PAST for the last hours of every Eastern day -- which makes
+  // every row unbookable, the alert block legitimately silent, and the dry gate red
+  // from 21:30 until midnight (`alert block executed`: runs 42949370900 at 21:56 ET
+  // and 2026-11-10 02:39Z). The harness exists to execute that branch, so the whole
+  // payload is moved to keep its first departure three hours ahead of whatever hour
+  // the gate runs. Offsets between legs are preserved.
+  const firstDep = legs
+    .map((l) => wall(l.departureDate))
+    .filter((t) => t !== null)
+    .sort((a, b) => a - b)[0];
+  const target = wall(easternStamp(Date.now() + 3 * 3600 * 1000));
+  if (firstDep !== undefined && target !== null) {
+    const delta = target - firstDep;
+    for (const leg of legs) {
+      for (const key of ['departureDate', 'arrivalDate']) {
+        const t = wall(leg[key]);
+        if (t !== null) leg[key] = fmtWall(t + delta);
       }
     }
   }

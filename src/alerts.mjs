@@ -53,7 +53,7 @@ function money(n) {
 }
 
 function shortDate(iso) {
-  const [y, m, d] = String(iso).split('-');
+  const [, m, d] = String(iso).split('-');
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return `${months[Number(m) - 1]} ${Number(d)}`;
 }
