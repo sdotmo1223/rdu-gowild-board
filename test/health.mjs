@@ -10,7 +10,7 @@ import {
 } from '../src/alerts.mjs';
 import { validTopic } from '../src/alerts.mjs';
 import { ingestAuthorized } from '../src/index.js';
-import { channelStatus, resolveTopic } from '../src/watch.mjs';
+import { channelStatus, deliver, resolveTopic } from '../src/watch.mjs';
 import { STALE_AFTER_MIN } from '../src/board.js';
 
 let checks = 0;
@@ -105,5 +105,39 @@ ok(channelStatus({}, 'kv-topic').push.ready === true, 'push is ready when only t
 ok(channelStatus({}).push.ready === false, 'push stays off when nothing resolves');
 ok(/NTFY_TOPIC/.test(channelStatus({}).push.reason), 'the off reason still names the variable');
 ok(channelStatus({ NTFY_TOPIC: 'env-topic' }).push.ready === true, 'a Worker secret still reads ready');
+
+// --- Delivery: one bounded retry, and only for a transient error ------------
+// Measured 2026-11-11: the first real watch delivery reached ntfy.sh and got HTTP
+// 522 (Cloudflare origin timeout). The event's dedupe stamp is written whether or
+// not the push landed, so one transient error used to cost six hours of silence.
+const realFetch = globalThis.fetch;
+const alert = { title: 't', body: 'b', priority: 'default' };
+
+let calls = 0;
+globalThis.fetch = async () => {
+  calls += 1;
+  return calls === 1 ? { ok: false, status: 522 } : { ok: true, status: 200 };
+};
+const retried = await deliver({ NTFY_TOPIC: 'topic' }, alert, ['push']);
+ok(retried.sent.join(',') === 'push', 'a transient 522 is retried and the push lands');
+ok(calls === 2, 'exactly one retry, not a loop');
+
+calls = 0;
+globalThis.fetch = async () => {
+  calls += 1;
+  return { ok: false, status: 400 };
+};
+const refused = await deliver({ NTFY_TOPIC: 'topic' }, alert, ['push']);
+ok(refused.sent.length === 0 && calls === 1, 'a permanent refusal (400) is not retried');
+ok(/400/.test(String(refused.failed[0].reason)), 'the failure still names the status');
+
+calls = 0;
+globalThis.fetch = async () => {
+  calls += 1;
+  return { ok: false, status: 522 };
+};
+const dead = await deliver({ NTFY_TOPIC: 'topic' }, alert, ['push']);
+ok(dead.sent.length === 0 && calls === 2, 'a persistent 522 gives up after one retry');
+globalThis.fetch = realFetch;
 
 console.log(`health: ${checks} checks passed`);

@@ -166,3 +166,4 @@ not doing, with the reason).
 | T4 two sink contracts | the untracked duplicate (`test/sink.test.mjs`) deleted; `test/sink.mjs` in `test/all.mjs` is the one contract | this commit |
 | T5 dirty tree | the stray galaxy experiment, its builder and the duplicate test deleted; `/*.png` ignored as a class | this commit |
 | scope: RDU only until mastered | LGA/PHL unscheduled, `/lga` and `/phl` off, RDU budget 14 per tick; profiles kept so a dispatch can still ask | this commit |
+| a transient push error cost six hours | one bounded retry, transient statuses only (observed: ntfy HTTP 522 on the first real delivery); 5 checks | this commit |

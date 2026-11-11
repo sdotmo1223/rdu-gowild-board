@@ -396,6 +396,37 @@ export function buildRequests(env, alert, channels) {
 
 // Delivery never throws into its caller: a watch exists so that the board's write
 // path cannot be taken down by a notification provider.
+
+// One bounded retry, on the notification path only — Frontier's request budget is
+// untouched by this and always will be. Measured 2026-11-11: the first real watch
+// delivery reached ntfy.sh and came back HTTP 522 (Cloudflare origin timeout).
+// Because the event's dedupe stamp is written whether or not the push landed, one
+// transient upstream error used to cost six hours of silence — the failure mode
+// MONITOR.md lists as "a failed push is logged and dropped". Retrying only what is
+// worth retrying keeps a genuine 400 from becoming a loop.
+export const DELIVERY_RETRY_MS = 1500;
+
+function worthRetrying(status) {
+  return status === 0 || status === 408 || status === 429 || status >= 500;
+}
+
+async function sendOnce(req) {
+  let last = 'not attempted';
+  for (let tryNo = 1; tryNo <= 2; tryNo += 1) {
+    try {
+      const res = await fetch(req.url, req.init);
+      if (res && res.ok) return { ok: true, reason: null };
+      const status = res ? res.status : 0;
+      last = `HTTP ${status || '000'}`;
+      if (!worthRetrying(status)) return { ok: false, reason: last };
+    } catch (err) {
+      last = String((err && err.message) || err).slice(0, 120);
+    }
+    if (tryNo === 1) await new Promise((r) => setTimeout(r, DELIVERY_RETRY_MS));
+  }
+  return { ok: false, reason: last };
+}
+
 export async function deliver(env, alert, channels) {
   const sent = [];
   const failed = [];
@@ -406,13 +437,9 @@ export async function deliver(env, alert, channels) {
     failed.push({ channel: 'build', reason: String((err && err.message) || err).slice(0, 120) });
   }
   for (const req of reqs) {
-    try {
-      const res = await fetch(req.url, req.init);
-      if (res && res.ok) sent.push(req.channel);
-      else failed.push({ channel: req.channel, reason: `HTTP ${res ? res.status : '000'}` });
-    } catch (err) {
-      failed.push({ channel: req.channel, reason: String((err && err.message) || err).slice(0, 120) });
-    }
+    const res = await sendOnce(req);
+    if (res.ok) sent.push(req.channel);
+    else failed.push({ channel: req.channel, reason: res.reason });
   }
   return { sent, failed };
 }
