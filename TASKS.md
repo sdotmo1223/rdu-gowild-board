@@ -72,7 +72,7 @@ not doing, with the reason).
 
 ### T4 — One contract for the sink, not two
 
-- **Status:** open · **Size:** 15 min · **Needs:** agent
+- **Status:** done 2026-11-11 · **Size:** 15 min · **Needs:** agent
 - **Intent:** the sink's contract should have exactly one owner.
 - **Why:** `test/sink.mjs` (21 checks) runs inside `npm test`; the newer
   `test/sink.test.mjs` (12 checks, `node:test`) covers the same routes and is
@@ -87,7 +87,7 @@ not doing, with the reason).
 
 ### T5 — Get `git status` clean
 
-- **Status:** open · **Size:** 5 min · **Needs:** agent
+- **Status:** done 2026-11-11 · **Size:** 5 min · **Needs:** agent
 - **Intent:** a dirty tree hides the next real change.
 - **Why:** `watch-board.png` and `watch-sheet.png` sit untracked in the root (scratch
   screenshots), while `.gitignore` already lists `preview-board.png`, `/rdu.html`
@@ -163,3 +163,6 @@ not doing, with the reason).
 | dry gate red after 21:30 ET | fixture retimed to always keep its first departure 3 h ahead; late-clock proof at 22:13 ET | this commit |
 | one Chromium install cost every origin | browser download retried twice, system deps best-effort | this commit |
 | stale alert judged the wrong origin | per-profile key, label and dedupe, scheduled only by the route that renders it | this commit |
+| T4 two sink contracts | the untracked duplicate (`test/sink.test.mjs`) deleted; `test/sink.mjs` in `test/all.mjs` is the one contract | this commit |
+| T5 dirty tree | the stray galaxy experiment, its builder and the duplicate test deleted; `/*.png` ignored as a class | this commit |
+| scope: RDU only until mastered | LGA/PHL unscheduled, `/lga` and `/phl` off, RDU budget 14 per tick; profiles kept so a dispatch can still ask | this commit |

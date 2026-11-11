@@ -13,12 +13,13 @@ preview_urls = false
 binding = "BOARD"
 id = "fec311a9eda84b90a8490061cda5d4bf"
 
-# The origins served WITHOUT a token, at /<profile>, so a link can be sent to
-# someone who does not have BOARD_TOKEN. RDU is included on purpose: /rdu and
-# /s/<token> render the same snapshot, so the public link never needs the token.
+# The origins served WITHOUT a token, at /<profile>. RDU only, decided 2026-11-11:
+# three airports could not be kept fresh on the cadence GitHub actually delivers, so
+# /lga and /phl are switched off until RDU is mastered. Their snapshots stay in KV and
+# their route lists stay in the code; re-enabling either is one word in this list.
 # Each public page reads only its own KV key, so no origin can see another's.
 [vars]
-PUBLIC_PROFILE = "rdu,lga,phl"
+PUBLIC_PROFILE = "rdu"
 
 # BOARD_TOKEN is NOT set here. It is a secret:
 #   npx wrangler secret put BOARD_TOKEN      (production)

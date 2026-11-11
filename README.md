@@ -154,6 +154,7 @@ npm test                 # offline acceptance checks
 | Departures finished for the day | "14 routes carried from 23:30 ET · departures for this date have finished" |
 | Blackout date | `Peak Day Charge $79+` |
 | GoWild all above $50 | "`n` departures, all above $50.00" |
+| Two other airports | Not served right now. `/rdu` is the only board; `/lga` and `/phl` are switched off until this one is solid |
 | No GoWild seats released | "`n` departures, but no GoWild seats" |
 | Route not operating | "No Frontier departures from RDU on this date." |
 
@@ -167,9 +168,10 @@ own nonstop table. The widely repeated "32 destinations" is an ABC11 article fro
 ## Constraints honoured
 
 - **$0**: Workers Free + KV Free + GitHub Actions free minutes. No card, no R2, no paid tier.
-- **Politeness**: strictly sequential, 2–5 s randomized, a per-profile request budget
-  (`rdu` 14, `lga` 10, `phl` 16) with one primary and at most one secondary per tick,
-  one process ever (enforced by a GitHub Actions `concurrency` group). The cron asks for 15 minutes; GitHub delivers about hourly
+- **Politeness**: strictly sequential, 2–5 s randomized, **one origin swept — RDU — at
+  14 requests per tick**, one process ever (enforced by a GitHub Actions `concurrency`
+  group). LGA and PHL stay defined in the code but are not scheduled: three airports on
+  this budget could not stay inside the 3-hour freshness ceiling. The cron asks for 15 minutes; GitHub delivers about hourly
   on a free runner (measured 2026-11-04: 24 runs in 24 h, gaps median 60 min,
   range 42–81), so rotation alternates per tick rather than per clock slot.
   A second entry (`5,20,35,50`) fills the slots GitHub drops: it sweeps only when

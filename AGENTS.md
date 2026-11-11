@@ -27,11 +27,13 @@ This file = the rules.
    sentinel.
 4. **Politeness is not negotiable.** Strictly sequential, 2–5 s randomized delay,
    exactly one process touching Frontier. Do not parallelize route fetches, do not
-   add retries that multiply requests, do not "warm up" extra routes. Each profile
-   gets a **per-profile request budget** (`rdu` 14, `lga` 10, `phl` 16) and each tick
-   runs one primary plus at most one secondary, so the burst stays inside the measured
-   refusal zone; two refusals in a row abort the sweep, so a burst that is too large
-   can return less data than a smaller one. Rotation is **tick-driven** (`nextShard`),
+   add retries that multiply requests, do not "warm up" extra routes. **One origin is
+   swept: RDU** (decided 2026-11-11). Three airports on one budget could not honour the
+   freshness ceiling — LGA and PHL sat 6–9 hours old while RDU was minutes — so LGA and
+   PHL stay defined but unscheduled until RDU is mastered. RDU's budget is **14
+   requests** per tick, which keeps the burst inside the measured refusal zone; two
+   refusals in a row abort the sweep, so a burst that is too large can return less data
+   than a smaller one. Rotation is **tick-driven** (`nextShard`),
    never clock-derived: GitHub fires a `*/15` cron about hourly (measured 2026-11-04:
    24 runs/24 h, median gap 60 min), and four 15-minute slots make clock parity repeat.
    The cron is a *request*, not a promise — measured 2026-11-11: a scheduled pair

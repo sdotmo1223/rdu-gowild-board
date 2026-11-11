@@ -26,8 +26,8 @@ on:
   workflow_dispatch:
     inputs:
       profiles:
-        description: 'Comma list of origins to sweep'
-        default: 'rdu,lga,phl'
+        description: 'Comma list of origins to sweep (the cron sweeps rdu only)'
+        default: 'rdu'
       full:
         description: 'Ask every route in each profile (deliberate, not scheduled)'
         type: boolean
@@ -169,20 +169,23 @@ jobs:
           ONLY: ${{ inputs.only }}
         run: |
           # set -u only: with -e, the first origin to fail would silently skip the
-          # others, so one broken profile could starve three boards. Failures are
+          # others, so one broken profile could starve the rest. Failures are
           # collected and reported at the end instead.
+          #
+          # ONE ORIGIN, deliberately. Decided 2026-11-11: 45 routes across three
+          # airports on a ~30-request budget, swept on a clock GitHub delivers about
+          # hourly, cannot honour a 3-hour row ceiling -- LGA and PHL were routinely
+          # 6-9 hours old while RDU was minutes. RDU is the only scheduled sweep until
+          # that board is mastered. The other profiles stay defined so a dispatch can
+          # still ask a deliberate question, and re-enabling one is a word here.
           set -u
           FAILED=""
-          WANT="${WANT:-rdu,lga,phl}"
-          MIN=$(date -u +%M)
-          SLOT=$(( 10#$MIN % 30 ))
-          if [ $(( SLOT / 15 )) -eq 0 ]; then HALF=lga; else HALF=phl; fi
+          WANT="${WANT:-rdu}"
           for P in rdu lga phl; do
             case ",$WANT," in *",$P,"*) ;; *) echo "skip $P (not requested)"; continue ;; esac
-            # Schedule: primary every tick, one secondary per tick. Manual dispatch
-            # honours the list exactly, so a requested origin is never silently skipped.
-            if [ "${{ github.event_name }}" = "schedule" ] && [ "$P" != "rdu" ] && [ "$P" != "$HALF" ]; then
-              echo "skip $P (not its quarter)"
+            # The cron sweeps RDU only; a manual dispatch may name any profile.
+            if [ "${{ github.event_name }}" = "schedule" ] && [ "$P" != "rdu" ]; then
+              echo "skip $P (single-origin cadence: RDU only)"
               continue
             fi
             case "$P" in
