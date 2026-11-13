@@ -310,7 +310,12 @@ export function describeEvent(ev, origin = 'RDU') {
 export function appPushPayload(env, alert) {
   const token = env && typeof env.BOARD_TOKEN === 'string' ? env.BOARD_TOKEN : '';
   const focus = alert && (alert.key || alert.announce);
-  const path = token ? `/s/${token}${focus ? `?focus=${encodeURIComponent(focus)}` : ''}` : '/rdu';
+  // The outbox writes the link at enqueue time (`clickPath`, with its own focus key), and
+  // a retry can be hours later. That stored link wins: rebuilding it from the alert is
+  // how a retried delivery ended up opening the board instead of the row it was about.
+  const stored =
+    alert && typeof alert.clickPath === 'string' && alert.clickPath.charAt(0) === '/' ? alert.clickPath : null;
+  const path = stored || (token ? `/s/${token}${focus ? `?focus=${encodeURIComponent(focus)}` : ''}` : '/rdu');
   return {
     title: alert.title,
     body: alert.body,

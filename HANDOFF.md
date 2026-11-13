@@ -1259,3 +1259,26 @@ free.
 branch, so the channel line reports enrolment and last successful delivery only. The
 owner-verify items (PWA install tap, pin→bar, and the first real watch ring) stay open in
 this file; none of them is closed by agent-side evidence.
+
+## 2026-11-13 — loose ends, and the one list to check by hand
+
+**Closed since the promotion:** a retried delivery ignored `clickPath`, the link the outbox
+writes at enqueue time, and rebuilt one from the alert — which has no `key`, so a retry
+opened the board instead of the row. The stored link now wins; `test/watch.mjs` pins it
+(145 checks).
+
+**Owner-verifies, kept together on purpose (U5).** These are the items only the owner can
+close, and none of them is closed by an agent-side symptom:
+
+1. **Install from the board.** Tap the install line in the drawer on the S23 and confirm
+   the launch icon says GoWild, not "RDU". *(Open. No agent can observe the home screen.)*
+2. **Pin it to the bar.** Pin the board from the Chrome menu, then reopen it after a
+   browser restart; it must come back to the same origin state. *(Open.)*
+3. **The first real ring.** One watch event caused by a sweep, arriving as a notification,
+   tapping through to its own row. `/api/push/test` proves the transport; it does not
+   prove the watch. *(TASKS T1, still open.)*
+4. **Denied → allowed recovery.** The public WebAPK on this phone is
+   `POST_NOTIFICATION: ignore`; the settings path in the updates block is written for that
+   case and has not been walked end to end. *(Open.)*
+
+Until 3 is done, "the app notifies for itself" is proven as a transport, not as a watch.

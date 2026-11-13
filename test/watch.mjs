@@ -225,6 +225,10 @@ const payload = appPushPayload({ ...env, BOARD_TOKEN: 'tok12345678' }, alert);
 ok(/^\/s\/tok12345678\?focus=/.test(payload.url), 'the tap links to the board at this event');
 ok(decodeURIComponent(payload.url).indexOf('2026-11-08|10:12|PHL') > 0, 'the focus key is the event, not a guess');
 ok(appPushPayload(env, alert).url === '/rdu', 'without a token the link stays on the public board');
+ok(
+  appPushPayload(env, { ...alert, clickPath: '/s/tok12345678?focus=stored-key' }).url === '/s/tok12345678?focus=stored-key',
+  'a link stored at enqueue time wins, so a retried delivery still opens its own row',
+);
 ok(payload.tag === 'gowild-PHL', 'the tag collapses repeat notices for one destination');
 ok(payload.urgency === 'high', 'a high-priority alert rides as a high-urgency push');
 ok(payload.title === alert.title && payload.body === alert.body, 'the title and body are the alert\u2019s own');
