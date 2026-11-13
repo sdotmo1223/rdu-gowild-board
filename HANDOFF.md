@@ -1094,3 +1094,40 @@ recheck affordance waits on `/api/recheck`. No placeholder was built for any of 
 **Joint live check:** standing. When the app agent opens the window I will be looking at
 the same push — the focus shot (`focus-arrival.png`) plus the log entry carrying the
 event key is what closes acceptance for both task sets at once.
+
+## 2026-11-12 — the phone pass: both owner-verifies closed, and a real PWA bug found
+
+With the device in hand (wireless adb + Chrome DevTools over adb), the two items that had
+been waiting for a human were done on the S23 itself.
+
+**1. Pin → bar: PASS.** Two pins (DTW, DFW) were set on the live page; `body` gained
+`pinned-mode`, the bar rendered `display:flex` reading `DTW · DFW`, `localStorage` gained
+`gowild.pins`, 16 rows carried the pinned rail, and the controls flipped to `UNPIN DTW` /
+`UNPIN DFW`. The state survived a reload. Evidence: `pin-bar-on-s23.png`.
+
+**2. PWA install: PASS — after fixing a real defect.** The install dialog appeared with
+the right name and icon, but tapping Install produced **nothing**: no package, no launcher
+icon, on any home-screen page. Root cause: the manifest's only icon was an SVG with
+`sizes="any"`. Chrome will show an install prompt for that and then fail to mint a
+WebAPK, which is a silent failure of exactly the kind this project exists to prevent.
+
+Fix: `src/pwa-icons.mjs` now carries PNG 192 and PNG 512 generated from the same
+artwork (base64, no binary import, no new dependency), served at
+`/<base>/icon-192.png` and `/icon-512.png`, and listed first in the manifest alongside
+the SVG. Deployed `7f30aa7a-8b6b-421e-8689-5f22255a9cbb`.
+
+Reinstall on the device produced **`org.chromium.webapk.ad001edd74762af0f_v2`**
+(firstInstallTime 2026-11-13 08:13:45), and launching it opens the board with **no browser
+chrome** — standalone, dark, pins intact, search and origins present. Evidence:
+`pwa-installed-standalone.png`, `pwa-install-dialog.png`.
+
+**What the install pass cost to learn:** blind `adb input tap` on Chrome's menu is not a
+reliable instrument. Two attempts landed on Translate and on Reading mode because the
+sheet scrolls between the screenshot and the tap. What worked was capturing Chrome's own
+`beforeinstallprompt` over CDP and invoking it from a trusted click, then confirming the
+artifact by package name rather than by eye. Recorded here so the next phone pass starts
+there instead of at the menu.
+
+**Still open:** the token page (`/s/<token>`) was not exercised from the phone, because
+the token is a secret this pass will not paste into a device URL or a shell history. The
+installed app starts at the public profile, which is what its manifest says.

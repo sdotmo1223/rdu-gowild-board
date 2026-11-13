@@ -9,6 +9,7 @@ import { shouldSendStaleAlert, validTopic } from './alerts.mjs';
 import { outboxStatus } from './outbox.mjs';
 import { maybeDispatch } from './dispatch.mjs';
 import { buildLedger } from './ledger.mjs';
+import { ICON_192_PNG, ICON_512_PNG } from './pwa-icons.mjs';
 import { runPolicy } from './policy.mjs';
 import { readSettings, writeSettings } from './settings.mjs';
 import {
@@ -53,6 +54,18 @@ self.addEventListener('fetch', (event) => {
 });`;
 
 const ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" fill="#0a0a09"/><path d="M36 118l58-20 22-52 14 6-10 44 34 12-4 14-38-6-16 32-16-6 6-34-40 14z" fill="#d9f24d"/><rect x="0" y="176" width="192" height="16" fill="#d9f24d"/></svg>`;
+
+// Chrome needs real PNGs at 192 and 512 to mint a WebAPK. With only the SVG, the
+// install dialog still appears and then produces nothing: measured on the owner's S23
+// on 2026-11-12 (dialog shown, Install tapped, no package, no launcher icon).
+const png = (b64) => {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+  return new Response(bytes, {
+    headers: { 'Content-Type': 'image/png', 'Cache-Control': 'max-age=86400' },
+  });
+};
 
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body, null, 2), {
@@ -647,12 +660,12 @@ export default {
 
     // PWA assets: the token path, or the public profile prefix when one is enabled.
     let asset = null;
-    const tokAsset = url.pathname.match(/^\/s\/([A-Za-z0-9_-]{8,})\/(manifest\.webmanifest|sw\.js|icon\.svg)$/);
+    const tokAsset = url.pathname.match(/^\/s\/([A-Za-z0-9_-]{8,})\/(manifest\.webmanifest|sw\.js|icon\.svg|icon-192\.png|icon-512\.png)$/);
     if (tokAsset) {
       if (!sameSecret(tokAsset[1], env.BOARD_TOKEN)) return new Response('Not found', { status: 404 });
       asset = { base: `/s/${tokAsset[1]}`, name: tokAsset[2], origin: PROFILES[PROFILE].origin };
     } else {
-      const pubAsset = url.pathname.match(/^\/([a-z]{3})\/(manifest\.webmanifest|sw\.js|icon\.svg)$/);
+      const pubAsset = url.pathname.match(/^\/([a-z]{3})\/(manifest\.webmanifest|sw\.js|icon\.svg|icon-192\.png|icon-512\.png)$/);
       if (pubAsset && pubs.includes(pubAsset[1])) {
         asset = { base: `/${pubAsset[1]}`, name: pubAsset[2], origin: PROFILES[pubAsset[1]].origin };
       }
@@ -667,12 +680,18 @@ export default {
           display: 'standalone',
           background_color: '#0a0a09',
           theme_color: '#0a0a09',
-          icons: [{ src: `${asset.base}/icon.svg`, sizes: 'any', type: 'image/svg+xml', purpose: 'any' }],
+          icons: [
+            { src: `${asset.base}/icon-192.png`, sizes: '192x192', type: 'image/png', purpose: 'any' },
+            { src: `${asset.base}/icon-512.png`, sizes: '512x512', type: 'image/png', purpose: 'any' },
+            { src: `${asset.base}/icon.svg`, sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+          ],
         });
         return new Response(body, {
           headers: { 'Content-Type': 'application/manifest+json', 'Cache-Control': 'no-store' },
         });
       }
+      if (asset.name === 'icon-192.png') return png(ICON_192_PNG);
+      if (asset.name === 'icon-512.png') return png(ICON_512_PNG);
       if (asset.name === 'icon.svg') {
         return new Response(ICON_SVG, {
           headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'max-age=86400' },
