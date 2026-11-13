@@ -461,7 +461,12 @@ export default {
       if (!sameSecret(presented, env.BOARD_TOKEN)) {
         return json({ ok: false, state: 'unauthorized', message: 'Send ?token=<BOARD_TOKEN> or an Authorization: Bearer header.' }, 401);
       }
-      if (request.method === 'GET') return json({ ok: true, settings: await readSettings(env) });
+      if (request.method === 'GET') {
+        // The last policy run rides along: without it, "no briefing arrived" is
+        // unfalsifiable from outside the Worker.
+        const policy = await env.BOARD.get('policy:last', 'json').catch(() => null);
+        return json({ ok: true, settings: await readSettings(env), policy });
+      }
       if (request.method !== 'POST') return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, POST' } });
       let patch = null;
       try {

@@ -19,6 +19,7 @@ import { bookingUrl, classifyProbe, livenessDue } from './liveness.mjs';
 export const BRIEFING_KEY = 'briefing:last';
 export const HEALTH_KEY = 'health:last';
 export const PROBE_KEY = 'link:probe';
+export const POLICY_KEY = 'policy:last';
 
 async function push(env, alert) {
   const topic = await resolveTopic(env);
@@ -125,5 +126,12 @@ export async function runPolicy(env, now = Date.now()) {
     out.health = `error: ${(err && err.message) || err}`;
   }
 
+  // A tier that fails silently is the failure mode this board exists to remove. The
+  // outcome is stored, so "why did no briefing arrive?" is a GET, not a log hunt.
+  try {
+    await kv.put(POLICY_KEY, JSON.stringify({ at: now, ...out }));
+  } catch {
+    // A failed bookkeeping write must not turn a successful run into an error.
+  }
   return out;
 }
