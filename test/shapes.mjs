@@ -449,11 +449,11 @@ for (const [name, state] of Object.entries(shapes)) {
     dead: 1,
   };
   const logPage = renderPage(view, two, [], NOW, { basePath: '/s/abcdefgh1234', origin: 'RDU', outbox: ob });
-  ok(/class="evlog"/.test(logPage), 'the alert log renders when the outbox has entries');
-  ok(/class="ev dead"/.test(logPage), 'a dead event keeps its own state class');
+  ok(/id="updates"/.test(logPage), 'the updates block renders when the outbox has entries');
+  ok(/class="ev dead/.test(logPage), 'a dead event keeps its own state class');
   // Reversed on purpose: an absent log is indistinguishable from a broken one, and a
   // focus link to an aged-out event used to open the board with nothing to explain it.
-  ok(/class="evlog"/.test(page), 'the log renders even when empty, so its absence never reads as a fault');
+  ok(/id="updates"/.test(page), 'the block renders even when empty, so its absence never reads as a fault');
   ok(/nothing yet/.test(page), 'and says nothing has fired, rather than showing a blank box');
   ok(!/class="ev /.test(page), 'while inventing no entries');
   ok(/data-ev="soldout\|PHL\|12:30"/.test(logPage), 'the log entry carries the key a push can point at');

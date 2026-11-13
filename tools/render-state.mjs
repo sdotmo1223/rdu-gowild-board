@@ -25,9 +25,15 @@ const view = buildBoard(state, now);
 let outbox = null;
 if (process.env.OUTBOX) {
   const entries = JSON.parse(readFileSync(process.env.OUTBOX, 'utf8'));
-  const store = { get: async () => entries, put: async () => {} };
-  const { outboxStatus } = await import('../src/outbox.mjs');
-  outbox = await outboxStatus(store, 'rdu', now);
+  // Either raw KV outbox records, or an already-shaped outboxStatus object: a review
+  // fixture should be able to show the page's own input without imitating KV.
+  if (entries && !Array.isArray(entries) && Array.isArray(entries.recent)) {
+    outbox = entries;
+  } else {
+    const store = { get: async () => entries, put: async () => {} };
+    const { outboxStatus } = await import('../src/outbox.mjs');
+    outbox = await outboxStatus(store, 'rdu', now);
+  }
 }
 // WATCHES=ATL,MCO renders the page as the token path does, with those watches armed,
 // and LEDGER=1 attaches the schedule ledger the projected legs are drawn from.
@@ -40,10 +46,19 @@ if (process.env.LEDGER) {
   const { buildLedger } = await import('../src/ledger.mjs');
   ledger = buildLedger(state, now);
 }
+// U3 review: PUSH_DEVICES=0 shows the degraded channel line, PUSH_DEVICES=1 with
+// PUSH_MIN_AGO=9 shows the stale one. Absent means "not read", which the nav says out loud.
+let push = null;
+if (process.env.PUSH_DEVICES != null) {
+  const mins = Number(process.env.PUSH_MIN_AGO || 0);
+  push = { devices: Number(process.env.PUSH_DEVICES) || 0, lastOk: mins >= 0 ? now - mins * 60000 : null };
+  if (process.env.PUSH_NEVER === '1') push.lastOk = null;
+}
 const html = renderPage(view, state, frequencyTable(state, ROUTES), now, {
   basePath: '/s/LOCALPREVIEW',
   origin: ORIGIN,
   outbox,
+  push,
   ledger,
   // The page must be able to show an origin it cannot serve, so the review fixture
   // carries the same three profiles the Worker does.

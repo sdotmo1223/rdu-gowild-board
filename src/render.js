@@ -223,8 +223,6 @@ const ALERT_KIND = {
   departed: 'left',
 };
 
-// A push that fired must leave a trace the board can show, or the reader taps a
-// notification and lands on a list with no memory of it. Entries come from the
 // The one control that makes this app the only face: without an enrolled device there
 // is nowhere for an update to arrive, and the page says so instead of implying a bell
 // rings. The client half is at the bottom of this file.
@@ -233,26 +231,82 @@ function pushBoxHtml() {
     '<button type="button" class="act" id="push-enable">Enable app notifications</button></div>';
 }
 
-// outbox that already exists in KV; nothing is fetched and nothing is invented.
-function eventLogHtml(ob) {
+// Kind is not decoration. A watch alert is something the reader asked for and can act
+// on; a briefing is a summary; a health notice is about the machinery. Printed in one
+// ink they become a uniform wall, which is how a dead notification hides.
+const KIND_TONE = {
+  opened: 'good',
+  gone: 'bad',
+  cheaper: 'good',
+  departing: 'warn',
+  soon: 'warn',
+  briefing: 'info',
+  health: 'info',
+  stale: 'warn',
+};
+const STATE_TEXT = { sent: 'delivered', pending: 'retrying', dead: 'dead', dropped: 'expired' };
+const STATE_TONE = { sent: '', pending: ' warn', dead: ' bad', dropped: ' faint' };
+
+// Day headings use the page's own clock, never the host's: a group header that
+// disagrees with the stamp above it is the kind of small lie this file avoids.
+function dayHeading(day, now) {
+  if (!day) return 'Undated';
+  if (day === etDay(now)) return 'Today';
+  if (day === etDay(now - 86400000)) return 'Yesterday';
+  return shortDay(day) || day;
+}
+
+// U1/U4: the updates block is a co-equal surface with the board, not a footer. It is
+// always drawn, it names the delivery state of every entry, it groups by day, and every
+// entry is a tap that lands on the flight it is about -- through the same focus reader
+// the URL path uses, never a second copy of it.
+function updatesSection(ob, ctx) {
   const list = ob && Array.isArray(ob.recent) ? ob.recent : [];
-  // Never nothing. An update log that is absent when it is empty is indistinguishable
-  // from one that is broken, and a push whose entry has aged out used to open the board
-  // at the top with no explanation at all.
-  if (!list.length) {
-    return `<details class="evlog" open><summary>Updates \u00b7 nothing yet</summary>` +
-      `<p class="evnote">No alert has fired in the last 24 hours. This log fills as the sweeps run: a watch that opens, sells out, gets cheaper or is about to leave lands here, and the same update arrives as a notification from this app.</p>` +
-      `<ul class="evlist"></ul></details>` +
-      pushBoxHtml();
+  const now = (ctx && ctx.now) || Date.now();
+  const dead = Number(ob && ob.dead) || 0;
+  const pending = Number(ob && ob.pending) || 0;
+
+  let groups = '';
+  let lastDay = null;
+  for (const e of list) {
+    const day = etDay(e.createdAt || e.at || now);
+    if (day !== lastDay) {
+      if (lastDay !== null) groups += '</ul>';
+      groups += `<p class="evday">${esc(dayHeading(day, now))}</p><ul class="evlist">`;
+      lastDay = day;
+    }
+    const spec = String(e.announce || '').split('|');
+    const rowDate = spec[0] || '';
+    const rowDep = spec[1] || '';
+    const tappable = rowDate && rowDep;
+    const stateTone = STATE_TONE[e.state] || '';
+    const kindTone = KIND_TONE[e.kind] || 'info';
+    const inner =
+      `<b>${esc(e.dest)}</b>` +
+      `<span class="ek">${esc(ALERT_KIND[e.kind] || e.kind)}</span>` +
+      `<time>${esc(hhmm(e.at))}</time>` +
+      `<span class="evstate${stateTone}">${esc(STATE_TEXT[e.state] || e.state)}</span>`;
+    const attrs = ` data-kind="${esc(e.kind)}"${e.key ? ` data-ev="${esc(e.key)}"` : ''}${e.announce ? ` data-target="${esc(e.announce)}"` : ''}`;
+    groups += tappable
+      ? `<li class="ev ${esc(e.state)} kind-${esc(kindTone)}"${attrs}><a class="updrow" href="#rows" data-date="${esc(rowDate)}" data-dep="${esc(rowDep)}">${inner}</a>${e.reason ? `<span class="evwhy">${esc(e.reason)}</span>` : ''}</li>`
+      : `<li class="ev ${esc(e.state)} kind-${esc(kindTone)}"${attrs}>${inner}${e.reason ? `<span class="evwhy">${esc(e.reason)}</span>` : ''}</li>`;
   }
-  const state = { sent: 'delivered', pending: 'retrying', dead: 'dead', dropped: 'expired' };
-  const rows = list
-    .map(
-      (e) =>
-        `<li class="ev ${esc(e.state)}"${e.key ? ` data-ev="${esc(e.key)}"` : ''}${e.announce ? ` data-target="${esc(e.announce)}"` : ''}><b>${esc(e.dest)}</b><span class="ek">${esc(ALERT_KIND[e.kind] || e.kind)}</span><time>${esc(hhmm(e.at))}</time><span class="est">${esc(state[e.state] || e.state)}</span></li>`,
-    )
-    .join('');
-  return `<details class="evlog"${Number(ob.dead) > 0 ? ' open' : ''}><summary>Updates \u00b7 ${list.length} in the last 24h</summary><p class="evnote">Times are ET. A dead event is one that never reached the app; the watch that fired it is still armed.</p><ul class="evlist">${rows}</ul></details>` + pushBoxHtml();
+  if (lastDay !== null) groups += '</ul>';
+
+  const count = list.length;
+  const head = count
+    ? `<p class="evnote">${count} in the last 24 hours${dead ? ` \u00b7 ${dead} never arrived` : ''}${pending ? ` \u00b7 ${pending} retrying` : ''}. Times are ET. Tap an update to find the flight it is about.</p>`
+    : `<p class="evnote">Nothing has fired in the last 24 hours. This log fills as the sweeps run: a watch that opens, sells out, gets cheaper or is about to leave lands here, and the same update arrives as a notification from this app.</p>`;
+  const older = count >= 8
+    ? `<p class="evolder">Older updates are not kept: the outbox holds the last 24 hours, up to eight entries. Nothing older than that is stored, so this view cannot show it rather than hiding it.</p>`
+    : '';
+
+  return `<section id="updates" class="updates" aria-labelledby="updhead">` +
+    `<div class="updtop"><h2 id="updhead">Updates</h2>` +
+    `<span class="updcount">${count ? `${count} today` : 'nothing yet'}</span>` +
+    `<a class="updjump" href="#rows">to the board</a></div>` +
+    head + groups + older + pushBoxHtml() +
+    '</section>';
 }
 
 // How old this row's route reading is, under the price. It says "checked" and not
@@ -447,7 +501,7 @@ function dateSub(d, now) {
 
 // The watch strip is the board's standing questions, stated on the page. It also
 // names the channels that are actually wired: a watch accepted by a Worker with no
-// NTFY_TOPIC would be a promise nobody keeps.
+// push keys would be a promise nobody keeps.
 function watchBar(ctx) {
   if (!ctx || !ctx.canWatch) return '';
   const list = Array.isArray(ctx.watches) ? ctx.watches : [];
@@ -457,7 +511,7 @@ function watchBar(ctx) {
   const off = names.filter((c) => !st[c] || !st[c].ready);
   const alertLine = ready.length
     ? `Alerts: ${ready.join(' + ')}${off.length ? ` \u00b7 ${off.join(', ')} not set up` : ''}`
-    : 'No alert channel is set up yet \u2014 set NTFY_TOPIC on the Worker to receive these';
+    : 'No alert channel is set up yet \u2014 press Enable app notifications on this page to receive these';
   if (!list.length) {
     return `<div class="watchbar empty"><span class="wb">Watch</span><span class="wb-note">Tap <b>Watch</b> on a departure to be told when its seats open, sell out, get cheaper, or get close to leaving.</span><span class="wb-ch">${esc(alertLine)}</span></div>`;
   }
@@ -470,6 +524,37 @@ function watchBar(ctx) {
     })
     .join('');
   return `<div class="watchbar"><span class="wb">Watching</span><div class="wchips">${chips}</div><span class="wb-ch">${esc(alertLine)}</span></div>`;
+}
+
+// The nav line: today's alert count is a link, and the notifier's own health is stated
+// beside it. A dead notifier is the exact silence this project exists to kill, so it is
+// never allowed to be quiet -- zero devices or an old last-delivery is drawn, not hidden.
+function jumpBar(ob, ctx) {
+  const list = ob && Array.isArray(ob.recent) ? ob.recent : [];
+  const n = list.length;
+  const push = (ctx && ctx.push) || null;
+  let chan = '';
+  if (push) {
+    const devices = Number(push.devices) || 0;
+    const last = Number(push.lastOk) || 0;
+    if (!devices) {
+      chan = '<span class="chan bad">no device enrolled \u2014 updates land nowhere</span>';
+    } else {
+      const clock = Number(ctx && ctx.now) || Date.now();
+      const age = last ? Math.max(0, clock - last) : null;
+      const mins = age == null ? null : Math.round(age / 60000);
+      const label = age == null ? 'never delivered' : mins < 60 ? `delivered ${mins} min ago` : `delivered ${Math.round(mins / 60)}h ago`;
+      // Six hours is the same cadence the watch dedupe uses: if nothing has been
+      // delivered in that long while a device is enrolled, say so rather than assume
+      // it is simply a quiet board.
+      const tone = age == null || age > 6 * 3600000 ? ' warn' : '';
+      chan = `<span class="chan${tone}">${devices} device${devices === 1 ? '' : 's'} \u00b7 ${esc(label)}</span>`;
+    }
+  }
+  return `<nav class="jumpbar">` +
+    `<a class="jump" href="#updates">${n ? `<b>${n}</b> update${n === 1 ? '' : 's'} today` : 'Updates \u00b7 none yet'}</a>` +
+    (chan || '<span class="chan">channel: not reported</span>') +
+    '</nav>';
 }
 
 function dateSection(d, view, now, index = 0, ctx = {}) {
@@ -765,6 +850,9 @@ export function renderPage(view, state, freq, now = Date.now(), opts = {}) {
     routeAges: (view.coverage && view.coverage.byRoute) || {},
     ledger: opts.ledger || null,
     origins: Array.isArray(opts.origins) ? opts.origins : [],
+    // U3: {devices, lastOk} for the notifier itself. Absent means the caller did not
+    // read it, and the nav line says so rather than implying a healthy channel.
+    push: opts.push && typeof opts.push === 'object' ? opts.push : null,
   };
   // Only what the sheet needs to draw itself: no observation rows, no KV keys and
   // no secrets. `<` is escaped so a reason string can never close the script tag.
@@ -776,6 +864,7 @@ export function renderPage(view, state, freq, now = Date.now(), opts = {}) {
       channels: Array.isArray(w.channels) ? w.channels : [],
     })),
     channels: watchCtx.channels,
+    push: opts.push || null,
   }).replace(/</g, '\\u003c');
   const err = view.error;
   let banner = '';
@@ -1054,25 +1143,60 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
   .pconf.weak { color:var(--warn); }
   .pcard .act.arm { margin-top:10px; }
 
-  /* what fired, so a push and its row are the same object to the eye */
-  .evlog { margin:12px 0 0; padding:9px 0; border-top:1px solid var(--rule); border-bottom:1px solid var(--rule); }
-  .pushbox { display:flex; flex-wrap:wrap; gap:10px; align-items:baseline; margin:8px 0 0; }
+  /* U1: updates are a primary surface, not a footer. The nav line sits under the
+     masthead so the log is reachable without scrolling the whole board. */
+  .jumpbar { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 14px; margin:10px 0 0;
+             padding:7px 0; border-top:1px solid var(--rule); border-bottom:1px solid var(--rule); }
+  .jump { font-family:var(--mono); font-size:9px; letter-spacing:.14em; text-transform:uppercase;
+          color:var(--acid); text-decoration:none; }
+  .jump b { font-size:11px; letter-spacing:.04em; }
+  .jump:hover, .jump:focus-visible { outline:none; border-bottom:1px solid var(--acid); }
+  .chan { font-family:var(--mono); font-size:8.5px; letter-spacing:.06em; color:var(--faint); }
+  .chan.warn { color:var(--warn); }
+  .chan.bad { color:var(--bad); }
+  .updates { margin:16px 0 0; padding:12px 0 6px; border-top:1px solid var(--rule-2);
+             border-bottom:1px solid var(--rule-2); scroll-margin-top:12px; }
+  .updtop { display:flex; flex-wrap:wrap; align-items:baseline; gap:5px 12px; }
+  .updtop h2 { margin:0; }
+  .updcount { font-family:var(--mono); font-size:9px; letter-spacing:.16em; text-transform:uppercase; color:var(--dim); }
+  .updjump { margin-left:auto; font-family:var(--mono); font-size:8px; letter-spacing:.14em;
+             text-transform:uppercase; color:var(--faint); text-decoration:none; }
+  .updjump:hover, .updjump:focus-visible { color:var(--bone-2); outline:none; }
+  .evday { margin:11px 0 0; font-family:var(--mono); font-size:8px; letter-spacing:.2em;
+           text-transform:uppercase; color:var(--faint); }
+  .updrow { display:flex; flex:1 1 100%; align-items:baseline; gap:8px; min-width:0;
+            text-decoration:none; color:inherit; }
+  .updrow:hover b, .updrow:focus-visible b { color:var(--acid); }
+  .updrow:focus-visible { outline:1px solid var(--rule-2); outline-offset:2px; }
+  .evstate { min-width:62px; text-align:right; font-size:8px; letter-spacing:.12em; text-transform:uppercase; color:var(--acid); }
+  .evstate.warn { color:var(--warn); }
+  .evstate.bad { color:var(--bad); }
+  .evstate.faint { color:var(--faint); }
+  .evwhy { flex:1 1 100%; padding-left:2px; font-size:8px; line-height:1.5; color:var(--faint); }
+  .evolder { margin:10px 0 0; font-family:var(--mono); font-size:8px; line-height:1.6; color:var(--faint); }
+  .pushbox { display:flex; flex-wrap:wrap; gap:10px; align-items:baseline; margin:12px 0 0;
+             padding-top:10px; border-top:1px solid var(--rule); }
   .pushnote { flex:1 1 220px; margin:0; font-family:var(--mono); font-size:8.5px; line-height:1.6; letter-spacing:.06em; color:var(--dim); }
-  .evlog summary { font-size:8.5px; }
+  .pushnote.bad { color:var(--bad); }
+  .pushnote.warn { color:var(--warn); }
   .evnote { margin:8px 0 0; font-family:var(--mono); font-size:8px; letter-spacing:.04em;
             line-height:1.6; color:var(--faint); }
   .evlist { list-style:none; margin:8px 0 0; padding:0; display:flex; flex-direction:column; gap:5px; }
-  .ev { display:flex; align-items:baseline; gap:8px; font-family:var(--mono); font-size:9px;
-        letter-spacing:.04em; color:var(--faint); }
+  /* wrap: a reason line belongs under its entry, never on top of it */
+  .ev { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 8px; font-family:var(--mono);
+        font-size:9px; letter-spacing:.04em; color:var(--faint); }
   .ev b { color:var(--bone); letter-spacing:.1em; }
   .ev .ek { color:var(--bone-2); }
   .ev time { margin-left:auto; }
   .ev .est { min-width:62px; text-align:right; font-size:8px; letter-spacing:.12em; text-transform:uppercase; }
-  .ev.sent .est { color:var(--acid); }
-  .ev.pending .est { color:var(--warn); }
-  .ev.dead .est { color:var(--bad); }
-  /* an expired departing event is the system working, not a failure */
-  .ev.dropped .est { color:var(--faint); }
+  /* kind, not state: what the update is ABOUT, so a briefing never looks like a
+     fare drop and a health notice never looks like something to act on */
+  .ev.kind-good .ek { color:var(--acid); }
+  .ev.kind-warn .ek { color:var(--warn); }
+  .ev.kind-bad .ek { color:var(--bad); }
+  .ev.kind-info .ek { color:var(--dim); }
+  .ev.ev-active { background:var(--ink-3); }
+  .ev.ev-active .evstate { color:var(--acid); }
   .ev.dead b { color:#f0b6ab; }
   .ev.ev-active { color:var(--bone); }
   .ev.ev-active .est { color:var(--acid); }
@@ -1205,12 +1329,13 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
     <span>Read-only</span>
   </div>
 </header>
+${jumpBar(ob, { ...watchCtx, now })}
 ${bestDealHtml(view, now, watchCtx)}
+${updatesSection(ob, { ...watchCtx, now })}
 ${coverageHtml(view)}
 ${banner}
 ${watchBar(watchCtx)}
 ${planHtml(watchCtx.ledger, watchCtx)}
-${eventLogHtml(ob)}
 ${searchHtml(view, watchCtx)}
 <div class="pinbar"><span>Pinned</span><b id="pinlist"></b><button type="button" class="act" id="pinclear">clear</button></div>
 ${view.dates.map((d, i) => dateSection(d, view, now, i, watchCtx)).join('')}
@@ -1529,6 +1654,22 @@ window.__wcfg = ${watchJson};
   // A push names the event it was about: /?focus=<eventKey>. Land on the flight
   // itself, with the log entry that fired it lit, instead of at the top of a long
   // page. Nothing is fetched -- both the row and the event are already here.
+  // ONE implementation. A tap on a log entry and a ?focus= arrival are the same question,
+  // so they go through the same function: two copies would drift, and the copy would be
+  // the one nobody tested.
+  function focusRow(date, dep) {
+    if (!date || !dep) return false;
+    var rows = document.querySelectorAll('li.row');
+    for (var j = 0; j < rows.length; j++) {
+      var d = rows[j].getAttribute('data-dep') || '';
+      if (rows[j].getAttribute('data-date') === date && d.indexOf(dep) >= 0) {
+        rows[j].className += ' is-focus';
+        rows[j].scrollIntoView({ block: 'center' });
+        return true;
+      }
+    }
+    return false;
+  }
   (function () {
     var want = '';
     try { want = new URLSearchParams(location.search).get('focus') || ''; } catch (e) { want = ''; }
@@ -1538,22 +1679,31 @@ window.__wcfg = ${watchJson};
     for (var i = 0; i < evs.length; i++) {
       if (evs[i].getAttribute('data-ev') === want) { ev = evs[i]; break; }
     }
-    if (!ev) return;
-    ev.className += ' ev-active';
-    // The entry that fired the push has to be visible, not folded inside a summary.
-    var box = ev.parentNode;
-    while (box && box.nodeName !== 'DETAILS') box = box.parentNode;
-    if (box) box.open = true;
-    var spec = (ev.getAttribute('data-target') || '').split('|');
-    if (spec.length < 2) return;
-    var rows = document.querySelectorAll('li.row');
-    for (var j = 0; j < rows.length; j++) {
-      var dep = rows[j].getAttribute('data-dep') || '';
-      if (rows[j].getAttribute('data-date') === spec[0] && dep.indexOf(spec[1]) >= 0) {
-        rows[j].className += ' is-focus';
-        rows[j].scrollIntoView({ block: 'center' });
-        break;
-      }
+    if (ev) {
+      ev.className += ' ev-active';
+      var spec = (ev.getAttribute('data-target') || '').split('|');
+      if (spec.length >= 2) focusRow(spec[0], spec[1]);
+      return;
+    }
+    // The entry may have aged out of the 24h log before the tap landed. The key itself
+    // still says which flight it was about, so the arrival lands there and lights
+    // nothing -- better than opening at the top with no explanation, which is what this
+    // did until 2026-11-13.
+    var parts = want.split('|');
+    if (parts.length >= 2) focusRow(parts[0], parts[1]);
+  })();
+  // U1: every entry is a jump into the board, through that same function.
+  (function () {
+    var taps = document.querySelectorAll('a.updrow');
+    for (var t = 0; t < taps.length; t++) {
+      (function (el) {
+        el.addEventListener('click', function (event) {
+          var date = el.getAttribute('data-date') || '';
+          var dep = el.getAttribute('data-dep') || '';
+          if (!focusRow(date, dep)) return;
+          event.preventDefault();
+        });
+      })(taps[t]);
     }
   })();
 
@@ -1604,26 +1754,41 @@ window.__wcfg = ${watchJson};
     var btn = document.getElementById('push-enable');
     var out = document.getElementById('push-state');
     if (!btn || !out) return;
-    function say(t) { out.textContent = t; }
+    // What this actually costs, in the one place the reader turns it on. The old ntfy
+    // path kept a second app running; Web Push wakes the service worker only when an
+    // update arrives. Cheaper, not free -- and saying so is the point of the line.
+    var COST = ' Web Push wakes the service worker only when an update arrives: no background app running, no foreground service. Cheaper than what it replaced, not free.';
+    function say(t, tone) {
+      out.textContent = t + COST;
+      out.className = 'pushnote' + (tone ? ' ' + tone : '');
+    }
     if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
       btn.disabled = true;
       say('This browser cannot receive app notifications.');
       return;
     }
     if (Notification.permission === 'denied') {
+      // A diagnosable state, not a silent one: Android's own switch is the usual cause,
+      // and a WebAPK reading "ignore" for POST_NOTIFICATION looks identical to this.
       btn.disabled = true;
-      say('Notifications are blocked for this app in Android settings, so nothing can arrive.');
+      btn.textContent = 'Blocked in Android';
+      say('Notifications are blocked for this app. Android: Settings \u2192 Apps \u2192 GoWild \u2192 Notifications \u2192 allow.', 'bad');
     }
     function enrolled() {
       btn.textContent = 'Notifications on';
       btn.disabled = true;
       say('This device is enrolled. Updates arrive here, in the app, and tapping one opens the departure it is about.');
     }
+    function notYet() {
+      btn.textContent = 'Enable app notifications';
+      btn.disabled = false;
+      say('Not enrolled on this device yet. One tap subscribes it; the Worker already holds the signing key.', 'warn');
+    }
     navigator.serviceWorker.ready
       .then(function (reg) { return reg.pushManager.getSubscription(); })
       .then(function (sub) {
         if (sub) enrolled();
-        else if (Notification.permission !== 'denied') say('Not enrolled on this device yet.');
+        else if (Notification.permission !== 'denied') notYet();
       })
       .catch(function () { say('Could not read this device\u2019s push state.'); });
     btn.addEventListener('click', function () {

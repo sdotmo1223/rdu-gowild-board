@@ -304,7 +304,10 @@ export async function outboxStatus(env, profile, now = Date.now()) {
       dest: e.dest,
       createdAt: Number(e.createdAt) || null,
       at: Number(e.state === 'sent' ? e.deliveredAt : e.state === 'pending' ? e.nextAt : e.deadAt) || Number(e.createdAt) || null,
-      reason: e.state === 'dead' ? e.lastReason || null : null,
+      // A retrying entry needs its reason as much as a dead one: "retrying" with no
+      // cause is a spinner in the log, and the reader cannot tell a 429 from a device
+      // that is gone. Delivered entries carry none by definition.
+      reason: e.state === 'sent' ? null : e.lastReason || null,
     }));
   return {
     recent,

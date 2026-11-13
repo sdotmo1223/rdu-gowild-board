@@ -1216,3 +1216,46 @@ event caused by a sweep — that is T1, unchanged in what it demands. The public
 installed on 2026-11-12 also has OS-level notifications set to `ignore`
 (`cmd appops get org.chromium.webapk.ad001edd74762af0f_v2 POST_NOTIFICATION`), so it will
 never show one; the private app is the one that matters and it is `allow`.
+
+## 2026-11-13 (later) — updates promoted to a primary surface
+
+The app is the notifier now, so the log stopped being a footer.
+
+**U1 — first-class.** A nav line under the masthead carries today's alert count as a link
+(`4 updates today`) and the notifier's own health beside it. `#updates` is a real section
+above the liner notes, with its own heading, count and a link back to the board. Every
+entry is a tap that scrolls to the flight it is about — through **the same `focusRow`**
+the `?focus=` arrival uses. `test/updates.mjs` asserts exactly one implementation exists
+and that both call sites use it, because a second copy would be the untested one.
+
+**Delivery-state honesty in the log.** Each entry prints `DELIVERED`, `RETRYING`, `DEAD`
+or `EXPIRED`, in that ink, and a non-delivered entry prints the reason under it
+(`push: HTTP 429`). That needed a real fix rather than a render change: `outboxStatus`
+only exposed a reason for dead entries, so a retrying one had none to show — a spinner
+with no cause. Now every state except `sent` carries its reason.
+
+**U4 — depth and breadth, to the limit of what exists.** Entries group under `Today` /
+`Yesterday` / a dated header, and kind has its own ink (`kind-good`, `kind-warn`,
+`kind-bad`, `kind-info`) so a briefing never reads like a fare drop. Grouping is by the
+page's own ET clock, not the host's. **What is not done:** entries older than 24 hours are
+not shown, because the outbox keeps 24 hours and at most eight entries — showing more would
+mean new collection, which this round was told not to add. The page says that in words
+rather than implying the list is complete.
+
+**U3 — the notifier is never silently down.** The masthead states `N devices · delivered X
+ago`; zero devices renders in bad ink (`no device enrolled — updates land nowhere`) and a
+last delivery older than six hours in warn ink. Fixture-driven: `PUSH_DEVICES`,
+`PUSH_MIN_AGO` and `PUSH_NEVER` on `tools/render-state.mjs` produce each state.
+
+**U2 — enrolment as a front door.** The control lives in the updates block, not in a
+settings footnote, and every state is named: not-yet, granted/enrolled, denied (with the
+literal Android path: *Settings → Apps → GoWild → Notifications → allow*, which is also
+what a WebAPK with `POST_NOTIFICATION: ignore` looks like), and unsupported. The battery
+line changed with the channel: Web Push wakes the service worker only when an update
+arrives — no background app, no foreground service — cheaper than ntfy's second app, not
+free.
+
+**Not claimed:** the canary's "last received" stamp is infra's T2 and is not in this
+branch, so the channel line reports enrolment and last successful delivery only. The
+owner-verify items (PWA install tap, pin→bar, and the first real watch ring) stay open in
+this file; none of them is closed by agent-side evidence.
