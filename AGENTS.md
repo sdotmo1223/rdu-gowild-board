@@ -298,6 +298,31 @@ entry as evidence the cron is delivering.
 
 ---
 
+## Driving the phone (only through the quiet workspace)
+
+The owner uses the S23 while it is connected. An agent that taps, swipes or launches
+competes with them, so **`android/agent/` is the default and only sanctioned way to
+drive an app on that phone** — for troubleshooting, design iteration and testing alike.
+
+```bash
+node android/agent/cli.mjs probe           # read-only capability probe; nothing acts before it
+node android/agent/cli.mjs run --app <pkg> # the app on a private overlay display
+node android/agent/cli.mjs stop            # teardown + what is still running
+```
+
+- Display 0 belongs to the owner: no `input` and no `am start` may target it, ever.
+  Reads (`dumpsys`, `screencap`, `logcat`) are always allowed.
+- A refusal is a correct outcome with a stated cause. Do not route around it.
+- The virtual tier is invisibility, **not** isolation — same user, same data. Only the
+  emulator/work-profile tier isolates, and neither is installed here.
+- Apps not on `android/agent/config/apps.json` need the owner's approval; payments and
+  irreversible account changes need a human or the isolated tier.
+- Any run reports the tier per action, the crown record and the battery delta into
+  `docs/android-agent/evidence/`. Report those numbers, not "it worked".
+
+The evidence behind these rules — including where the brief and the device disagreed —
+is in `docs/android-agent/`. `android/agent/README.md` is the command reference.
+
 ## Definition of done
 
 `npm run lint`, `npm test` and `npm run stress` all exit 0, `node --check` passes
