@@ -403,6 +403,36 @@ for (const [name, state] of Object.entries(shapes)) {
   });
   ok(!/class="plan"/.test(noWatch), 'nothing watched, nothing to project');
 
+  // Search: every origin the Worker knows is on the page, and the ones it cannot
+  // serve say so. Hiding an origin would be the dead end this is meant to avoid.
+  const withOrigins = renderPage(buildBoard(ledState, NOW), ledState, [], NOW, {
+    basePath: '/s/abcdefgh1234',
+    origin: 'RDU',
+    origins: [
+      { code: 'RDU', city: 'Raleigh', routes: 14, live: true },
+      { code: 'LGA', city: 'New York', routes: 9, live: false },
+      { code: 'PHL', city: 'Philadelphia', routes: 22, live: false },
+    ],
+  });
+  ok(/class="find"/.test(withOrigins), 'the search section renders');
+  ok(/id="q"/.test(withOrigins), 'with one input');
+  ok(/class="origin on" aria-current="true"/.test(withOrigins), 'the served origin is marked current');
+  eq((withOrigins.match(/class="origin off"/g) || []).length, 2, 'both unserved origins are shown, never hidden');
+  ok(/available later/.test(withOrigins), 'each unserved origin says available later');
+  ok(/one request budget cannot keep three origins/.test(withOrigins), 'and the one-line reason is printed');
+  ok(/departures on this board/.test(withOrigins), 'the count says how many there are');
+
+  // A board with no rows has no search box, because a filter over nothing is a dead
+  // end and "0 departures" is a claim this board is not entitled to make.
+  const emptyState = { sweeps: [], updatedAt: NOW, routeCount: 14 };
+  const emptyPage = renderPage(buildBoard(emptyState, NOW), emptyState, [], NOW, {
+    basePath: '/s/abcdefgh1234',
+    origin: 'RDU',
+    origins: [{ code: 'RDU', city: 'Raleigh', routes: 14, live: true }],
+  });
+  ok(!/class="find"/.test(emptyPage), 'no rows means no search box');
+  ok(!/0 departures on this board/.test(emptyPage), 'and never a zero underneath one');
+
   // The alert log is drawn from the outbox the Worker already reads.
   const ob = {
     recent: [

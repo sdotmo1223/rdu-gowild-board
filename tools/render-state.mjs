@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { buildBoard } from '../src/board.js';
 import { renderPage } from '../src/render.js';
 import { frequencyTable } from '../src/frequency.js';
-import { ROUTES, ORIGIN } from '../src/routes.js';
+import { ROUTES, ORIGIN, PROFILES } from '../src/routes.js';
 
 const src = process.env.STATE_IN || 'state.json';
 let state;
@@ -45,6 +45,14 @@ const html = renderPage(view, state, frequencyTable(state, ROUTES), now, {
   origin: ORIGIN,
   outbox,
   ledger,
+  // The page must be able to show an origin it cannot serve, so the review fixture
+  // carries the same three profiles the Worker does.
+  origins: Object.keys(PROFILES).map((k) => ({
+    code: PROFILES[k].origin,
+    city: PROFILES[k].city,
+    routes: (PROFILES[k].routes || []).length,
+    live: k === 'rdu',
+  })),
   canWatch: watchDests.length > 0,
   // mode 'always' is a real watch mode (src/watch.mjs WATCH_MODES); 'dest' is not,
   // and normalizing it produced a date watch with no date -- the "Invalid Date" chip.

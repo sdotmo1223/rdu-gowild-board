@@ -286,6 +286,46 @@ function planHtml(ledger, ctx) {
   </section>`;
 }
 
+// Why an origin that exists is not on this page. Copy, not state: the scheduling
+// decision is recorded in AGENTS.md (2026-11-11 — three airports on one budget could
+// not hold the freshness ceiling) and this is how a reader is told, in one line.
+const ORIGIN_LATER =
+  'defined but not scheduled: one request budget cannot keep three origins inside the freshness ceiling (2026-11-11)';
+
+function searchHtml(view, ctx) {
+  const origins = Array.isArray(ctx.origins) ? ctx.origins : [];
+  const total = view.dates.reduce((n, d) => n + d.rows.length, 0);
+  // Nothing to search is not a search box with a zero under it: a control over an
+  // empty page is both a dead end and a false statement about the board.
+  if (!total) return '';
+  const seen = new Set();
+  const hints = [];
+  for (const d of view.dates) {
+    for (const r of d.rows) {
+      if (seen.has(r.dest)) continue;
+      seen.add(r.dest);
+      hints.push(r.city);
+    }
+  }
+  const off = origins.filter((o) => !o.live).map((o) => o.code);
+  const chips = origins
+    .map((o) =>
+      o.live
+        ? `<b class="origin on" aria-current="true">${esc(o.code)}</b>`
+        : `<span class="origin off">${esc(o.code)} <em>available later</em></span>`,
+    )
+    .join('');
+  return `<section class="find" aria-label="Find a departure">
+    <div class="findrow">
+      <label for="q">Find</label>
+      <input id="q" type="search" inputmode="search" autocomplete="off" spellcheck="false" placeholder="${esc(hints.slice(0, 2).join(' \u00b7 ') || 'destination')}">
+      <button type="button" class="act qclear" id="qclear" hidden>Clear</button>
+    </div>
+    <p class="findmeta" id="qcount" aria-live="polite">${total} departure${total === 1 ? '' : 's'} on this board</p>
+    ${chips ? `<div class="origins"><span class="olabel">Origin</span>${chips}</div><p class="olater">${esc(off.join(' and '))} ${off.length === 1 ? 'is' : 'are'} ${esc(ORIGIN_LATER)}.</p>` : ''}
+  </section>`;
+}
+
 function routeCheck(r, ctx) {
   const ages = ctx && ctx.routeAges;
   if (!ages || !Object.prototype.hasOwnProperty.call(ages, r.dest)) return '';
@@ -326,13 +366,13 @@ function rowHtml(r, ctx = {}) {
           ${ctx && ctx.canWatch ? `<button type="button" class="act bell" data-dest="${esc(r.dest)}" data-date="${esc(r.date)}" aria-pressed="${watched ? 'true' : 'false'}" title="Watch ${esc(r.dest)}">${watched ? 'Watching' : 'Watch'}</button>` : ''}
           <button type="button" class="act pin" aria-pressed="false">Pin ${esc(r.dest)}</button>
           <button type="button" class="act ics">Calendar</button>
-          <a class="act book" href="https://booking.flyfrontier.com/Flight/InternalSelect?o1={ORIGIN}&d1=${esc(r.dest)}&dd1=${esc(r.date)}&ADT=1&mon=true&promo=" target="_blank" rel="noopener noreferrer" title="Opens Frontier's own search for this date. The fare there is live; the fare here is a snapshot.">Search &#8599;</a>
         </div>
       </div>
       <div class="fare">
         <span class="amt">$${r.allin.toFixed(2)}</span>
         <span class="unit">est. all-in</span>
         ${routeCheck(r, ctx)}
+        <a class="act book" href="https://booking.flyfrontier.com/Flight/InternalSelect?o1={ORIGIN}&d1=${esc(r.dest)}&dd1=${esc(r.date)}&ADT=1&mon=true&promo=" target="_blank" rel="noopener noreferrer" title="Opens Frontier's own search for this date. The fare there is live; the fare here is a snapshot.">Search &#8599;</a>
       </div>
     </li>`;
 }
@@ -708,6 +748,7 @@ export function renderPage(view, state, freq, now = Date.now(), opts = {}) {
     // not to tell.
     routeAges: (view.coverage && view.coverage.byRoute) || {},
     ledger: opts.ledger || null,
+    origins: Array.isArray(opts.origins) ? opts.origins : [],
   };
   // Only what the sheet needs to draw itself: no observation rows, no KV keys and
   // no secrets. `<` is escaped so a reason string can never close the script tag.
@@ -887,8 +928,10 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
                letter-spacing:-.045em; color:var(--acid); font-variant-numeric:tabular-nums; }
   .fare .unit { display:block; margin-top:3px; font-family:var(--mono); font-size:8px;
                 letter-spacing:.13em; text-transform:uppercase; color:var(--faint); }
-  .acts { display:flex; gap:15px; margin-top:7px; }
-  .act { padding:0 0 2px; border:0; border-bottom:1px solid var(--rule-2); background:none;
+  /* Four actions now share this strip, so it wraps as a unit and never splits a
+     label: "SEARCH" with its arrow on the next line reads like two controls. */
+  .acts { display:flex; flex-wrap:wrap; gap:15px; row-gap:8px; margin-top:7px; }
+  .act { flex:none; white-space:nowrap; padding:0 0 2px; border:0; border-bottom:1px solid var(--rule-2); background:none;
          font-family:var(--mono); font-size:8px; font-weight:600; letter-spacing:.14em;
          text-transform:uppercase; color:var(--dim); cursor:pointer; }
   .act:hover, .act:focus-visible { color:var(--acid); border-color:var(--acid); outline:none; }
@@ -945,6 +988,31 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
   .agechip.warn { color:var(--warn); border-color:rgba(240,173,60,.4); }
   .badge.best { color:var(--acid); border-color:rgba(217,242,77,.5); }
 
+  /* find a departure: a filter, not a second copy of the list */
+  .find { margin:12px 0 0; padding:10px 12px; border:1px solid var(--rule-2); background:var(--ink-2); }
+  .findrow { display:flex; align-items:center; gap:9px; }
+  .findrow label { flex:none; font-family:var(--mono); font-size:7.5px; letter-spacing:.2em;
+                   text-transform:uppercase; color:var(--faint); }
+  .findrow input { flex:1; min-width:0; padding:8px 10px; border:1px solid var(--rule); border-radius:0;
+                   background:var(--ink); color:var(--bone); font:13px var(--sans);
+                   -webkit-appearance:none; appearance:none; }
+  .findrow input::placeholder { color:var(--faint); }
+  .findrow input:focus { outline:none; border-color:var(--acid); }
+  .findmeta { margin:7px 0 0; font-family:var(--mono); font-size:8px; letter-spacing:.05em; color:var(--faint); }
+  .origins { display:flex; flex-wrap:wrap; align-items:baseline; gap:8px; margin-top:9px;
+             padding-top:9px; border-top:1px solid var(--rule); }
+  .olabel { font-family:var(--mono); font-size:7.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--faint); }
+  .origin { font-family:var(--mono); font-size:9px; letter-spacing:.12em; padding:3px 7px;
+            border:1px solid var(--rule-2); color:var(--bone); }
+  .origin.on { color:var(--acid); border-color:var(--acid); }
+  .origin.off { color:var(--dim); }
+  .origin em { font-style:normal; font-size:7.5px; letter-spacing:.02em; color:var(--faint); }
+  .olater { margin:6px 0 0; font-family:var(--mono); font-size:7.5px; line-height:1.6;
+            letter-spacing:.03em; color:var(--faint); }
+  .fcount { font-family:var(--mono); font-size:7.5px; letter-spacing:.06em; color:var(--warn); }
+  .nomatch { margin:12px 0; }
+  [hidden] { display:none !important; }
+
   /* projected legs: a pattern, inked by how much evidence stands behind it */
   .plan { margin:14px 0 0; border:1px solid var(--rule-2); background:var(--ink-2); }
   .plead { margin:0; padding:8px 12px 0; font-family:var(--mono); font-size:8px;
@@ -998,7 +1066,9 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
   .rcheck { display:block; margin-top:3px; font-family:var(--mono); font-size:7.5px;
             letter-spacing:.06em; color:var(--faint); white-space:nowrap; }
   .rcheck.warn { color:var(--warn); }
-  a.act.book { text-decoration:none; }
+  /* Search sits under the price it belongs to: the row's controls stay three, and the
+     act that leaves the page is next to the number it is about. */
+  .fare .act.book { display:inline-block; margin-top:6px; text-decoration:none; font-size:7.5px; }
 
   /* pins, said out loud instead of being an invisible localStorage trick */
   .pinbar { display:none; align-items:baseline; gap:9px; margin:10px 0 0; padding:7px 10px;
@@ -1123,6 +1193,7 @@ ${banner}
 ${watchBar(watchCtx)}
 ${planHtml(watchCtx.ledger, watchCtx)}
 ${eventLogHtml(ob)}
+${searchHtml(view, watchCtx)}
 <div class="pinbar"><span>Pinned</span><b id="pinlist"></b><button type="button" class="act" id="pinclear">clear</button></div>
 ${view.dates.map((d, i) => dateSection(d, view, now, i, watchCtx)).join('')}
 <p class="sect">Liner notes</p>
@@ -1341,6 +1412,102 @@ window.__wcfg = ${watchJson};
     localStorage.setItem(PINS, JSON.stringify(p));
     applyPins();
   });
+  // Find a departure. This filters the rows already on the page: no request, no
+  // second copy of the list, and no way for a result to disagree with the board. A
+  // date left with no match states that instead of going blank, because an empty grid
+  // is the one forbidden state here.
+  (function () {
+    var input = document.getElementById('q');
+    if (!input) return;
+    var clear = document.getElementById('qclear');
+    var count = document.getElementById('qcount');
+    // Only the rows the board actually offers. Folded options live inside a closed
+    // details block under "N more under the ceiling": counting them here would print
+    // 109 departures on a page whose own triage says 38.
+    function offered(scope) {
+      return [].slice.call(scope.querySelectorAll('li.row[data-dest]')).filter(function (r) {
+        return !(r.closest && r.closest('details.folded'));
+      });
+    }
+    // Date sections only: the decision header's hero row is the answer, not a result,
+    // so it is never filtered away and never counted as one.
+    var sections = [].slice.call(document.querySelectorAll('section.date'));
+    var rows = [];
+    for (var si = 0; si < sections.length; si++) rows = rows.concat(offered(sections[si]));
+    var total = rows.length;
+    function label(shown, q) {
+      if (!count) return;
+      count.textContent = q
+        ? shown + ' of ' + total + ' departure' + (total === 1 ? '' : 's') + ' match \u201c' + q + '\u201d'
+        : total + ' departure' + (total === 1 ? '' : 's') + ' on this board';
+    }
+    function run() {
+      var q = String(input.value || '').trim().toLowerCase();
+      var shown = 0;
+      for (var i = 0; i < rows.length; i++) {
+        var hay = ((rows[i].getAttribute('data-dest') || '') + ' ' + (rows[i].getAttribute('data-city') || '')).toLowerCase();
+        var hit = !q || hay.indexOf(q) >= 0;
+        rows[i].hidden = !hit;
+        if (hit) shown += 1;
+      }
+      for (var s = 0; s < sections.length; s++) {
+        var sec = sections[s];
+        var all = offered(sec);
+        var vis = all.filter(function (r) { return !r.hidden; }).length;
+        var chip = sec.querySelector('.fcount');
+        if (!chip) {
+          chip = document.createElement('span');
+          chip.className = 'fcount';
+          var titles = sec.querySelector('.dtitles');
+          if (titles) titles.appendChild(chip);
+        }
+        if (q && all.length) { chip.hidden = false; chip.textContent = vis + ' of ' + all.length; }
+        else chip.hidden = true;
+        var none = sec.querySelector('.nomatch');
+        var wanted = q && all.length && vis === 0;
+        if (wanted) {
+          if (!none) {
+            none = document.createElement('div');
+            none.className = 'state ecard nomatch';
+            // Under the rows, not under the folded summary: the reader is looking at
+            // the list they filtered, not at the appendices beneath it.
+            var fold = sec.querySelector('details.folded');
+            if (fold && fold.parentNode) fold.parentNode.insertBefore(none, fold);
+            else sec.appendChild(none);
+            var ico = document.createElement('span');
+            ico.className = 'ico';
+            ico.setAttribute('aria-hidden', 'true');
+            ico.textContent = 'i';
+            var body = document.createElement('div');
+            body.className = 'cbody';
+            none.appendChild(ico);
+            none.appendChild(body);
+          }
+          var cbody = none.querySelector('.cbody');
+          cbody.textContent = '';
+          var b = document.createElement('b');
+          b.textContent = 'No match on this date';
+          var p = document.createElement('p');
+          p.textContent = 'Nothing on this date matches \u201c' + q + '\u201d. Clear the search to see all ' + all.length + '.';
+          cbody.appendChild(b);
+          cbody.appendChild(p);
+          none.hidden = false;
+        } else if (none) {
+          none.hidden = true;
+        }
+      }
+      if (clear) clear.hidden = !input.value;
+      label(shown, q);
+    }
+    input.addEventListener('input', run);
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { input.value = ''; run(); }
+    });
+    if (clear) {
+      clear.addEventListener('click', function () { input.value = ''; run(); input.focus(); });
+    }
+  })();
+
   // A push names the event it was about: /?focus=<eventKey>. Land on the flight
   // itself, with the log entry that fired it lit, instead of at the top of a long
   // page. Nothing is fetched -- both the row and the event are already here.

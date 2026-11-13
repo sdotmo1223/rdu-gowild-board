@@ -557,6 +557,14 @@ export default {
           watches,
           channels,
           outbox,
+          // Every profile the Worker knows about, with the one this page is. The page
+          // must be able to show an origin it cannot serve rather than omit it.
+          origins: Object.keys(PROFILES).map((k) => ({
+            code: PROFILES[k].origin,
+            city: PROFILES[k].city,
+            routes: (PROFILES[k].routes || []).length,
+            live: k === PROFILE,
+          })),
           // Post-processing of stored observations only: the projection the page
           // draws costs no request.
           ledger: buildLedger(state, now),
@@ -604,6 +612,12 @@ export default {
           // No token, no bell: a public link must not be able to subscribe the
           // owner's phone to a stranger's question.
           canWatch: false,
+          origins: Object.keys(PROFILES).map((k) => ({
+            code: PROFILES[k].origin,
+            city: PROFILES[k].city,
+            routes: (PROFILES[k].routes || []).length,
+            live: k === pubOk,
+          })),
         }),
       );
     }

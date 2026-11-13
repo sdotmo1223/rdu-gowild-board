@@ -1049,3 +1049,48 @@ allowed to inject.
 **Not built:** TASK 4's search section, deferred by its own instruction ("after Task 2
 if budget does not permit"). TASK 1-residual's recheck affordance still waits on
 `/api/recheck`. TASKS 3 and 5 still wait on `/api/settings` and the briefing payload.
+
+## 2026-11-12 — TASK 4: find a departure, without a second copy of the list
+
+Deployed `fed4ac45-f25e-4536-9eb8-99df274fbc46`. The search box filters the rows that
+are already on the page — no request, no parallel store, and therefore no way for a
+result to disagree with the board it came from. Live, against real KV: 38 departures,
+`orl` matching `9 of 38`, with per-date chips reading `3 of 17` and `6 of 21`.
+
+**Origin is a control, not a footnote.** The Worker passes every profile it knows
+(`PROFILES`), the page marks the one it serves with `aria-current`, and renders the
+rest as `LGA available later` / `PHL available later` with one line stating why —
+*"defined but not scheduled: one request budget cannot keep three origins inside the
+freshness ceiling (2026-11-11)"*. Nothing is hidden and nothing is clickable-but-dead:
+the unserved origins are text, not disabled buttons pretending to be controls.
+
+**Three defects the pixels caught, all mine:**
+
+1. **The count disagreed with the triage.** Search said "109 departures" on a page whose
+   own header says 17 and 21 options, because the query swept the folded rows inside
+   `details.folded`. Scoped to the rows the board actually offers.
+2. **The hero was counted as a result.** The decision header's own `li.row` sits outside
+   the date sections and was adding one to the total (39 against a triage of 38). It is
+   excluded from the count and never filtered — it is the answer, not a result.
+3. **Four actions broke the row.** Adding `SEARCH ↗` to a strip of three pushed it onto
+   a second line at 412 px (measured: three items at y=226, the fourth at 246), costing
+   17 px on every row. Search now sits in the fare column, under the price and the route
+   chip — the act next to the number it is about — and the control strip is back to three
+   on one line.
+
+And one the suite caught before a browser ever saw it: with no rows the search line read
+"0 departures on this board", which is exactly the zero this project forbids. No rows now
+means no search box at all.
+
+**Evidence** (`docs/design-2026-11-12/`): `task4-live-search.png` (idle, real origins),
+`task4-live-results.png` (live, `orl`, per-date chips, SEARCH beside the price),
+`task4-no-match.png` (a date with no match states it in a card above the folded summary,
+never a blank list). Gates: lint 0, test 0 (17 suites, shapes 288), stress 70/70,
+check 0.
+
+**Still open:** TASKS 3 and 5 wait on `/api/settings` and the briefing payload; the
+recheck affordance waits on `/api/recheck`. No placeholder was built for any of them.
+
+**Joint live check:** standing. When the app agent opens the window I will be looking at
+the same push — the focus shot (`focus-arrival.png`) plus the log entry carrying the
+event key is what closes acceptance for both task sets at once.
