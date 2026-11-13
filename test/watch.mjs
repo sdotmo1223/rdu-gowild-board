@@ -24,6 +24,7 @@ import {
   textRequest,
   watchKey,
 } from '../src/watch.mjs';
+import { readOutbox } from '../src/outbox.mjs';
 import worker from '../src/index.js';
 
 let checks = 0;
@@ -333,7 +334,11 @@ await store2.put(watchKey('rdu', 'PHL'), JSON.stringify(watch({ last: baseline }
 const failedRun = await evaluateWatches({ BOARD: store2, NTFY_TOPIC: 'gowild-abc' }, 'rdu', oneRow, goneSnap, NOW + 180000);
 ok(failedRun !== null, 'evaluation returns instead of throwing');
 const saved2 = await store2.get(watchKey('rdu', 'PHL'), 'json');
-ok(saved2.lastEvent && saved2.lastEvent.failed.length === 1, 'the failure is recorded on the watch');
+// RANK 2 changed where a failure lives: it is no longer stamped on the watch as if
+// it had been sent, it is held in the outbox and retried.
+ok(saved2.lastEvent === null, 'a failed delivery is not recorded as if it had been sent');
+const held = await readOutbox(store2, 'rdu');
+ok(held.length === 1 && held[0].state === 'pending' && held[0].attempts === 1, 'the failure is held in the outbox for a retry');
 globalThis.fetch = realFetch;
 
 // A profile with no watches costs nothing and does not touch the network.

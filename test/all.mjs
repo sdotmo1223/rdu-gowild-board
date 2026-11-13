@@ -16,6 +16,13 @@ const suites = [
   ['sink', 'test/sink.mjs'],
   ['recovery', 'test/recovery.mjs'],
   ['watch', 'test/watch.mjs'],
+  ['attempt', 'test/attempt.mjs'],
+  ['outbox', 'test/outbox.mjs'],
+  ['dispatch', 'test/dispatch.mjs'],
+  ['zero', 'test/zero.mjs'],
+  ['freshness', 'test/freshness.mjs'],
+  ['shapes', 'test/shapes.mjs'],
+  ['doclint', 'test/doclint.mjs'],
 ];
 
 let failed = 0;

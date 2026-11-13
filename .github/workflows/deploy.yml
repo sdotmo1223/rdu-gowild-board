@@ -160,6 +160,22 @@ jobs:
           fi
           echo "edge reports a deployment created today"
 
+      # The page is the product, and no unit test loads it in a browser. This runs
+      # AFTER the upload, against the live edge, so a green deploy means a page that
+      # actually rendered -- not merely a script that uploaded. A failure turns the run
+      # red; it does not roll back, because the previous script is still what is served
+      # only until the next push, and a silent rollback would hide the failure.
+      - name: Browser smoke against the live edge
+        if: steps.token.outputs.have == 'true' && github.ref == 'refs/heads/main'
+        env:
+          SMOKE_URL: https://rdu-gowild-board.sdotmo1223.workers.dev/rdu
+        run: |
+          set -u
+          # Reuses the playwright dependency already in package.json; the deploy job
+          # installs with --ignore-scripts, so only the browser binary is missing.
+          npx playwright install chromium
+          node tools/smoke.mjs "${SMOKE_URL}"
+
       - name: Note why a non-main ref did not deploy
         if: github.ref != 'refs/heads/main'
         run: echo "::notice::Not main; gates ran, nothing deployed."

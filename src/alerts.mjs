@@ -1,4 +1,4 @@
-import { ORIGIN, MAX_ALL_IN } from './routes.js';
+import { ORIGIN, MAX_ALL_IN, ROUTES } from './routes.js';
 
 // Zero-cost push notifications via ntfy.sh.
 // No account, no key, no card: the topic name is the only secret and it lives in
@@ -28,10 +28,24 @@ export function shouldAlert(state, kind, now) {
 // nothing, at most once a day, so an empty page is a statement and not a void.
 export const ZERO_REPEAT_MS = 24 * 3600 * 1000;
 
+// The union of routes actually asked across the consecutive empty sweeps. A half-shard
+// tick answers seven of fourteen, so the alert may only speak once every route has
+// been asked at least once inside the window it is describing.
+export function zeroCoverage(prior, codes) {
+  const set = new Set(Array.isArray(prior && prior.routes) ? prior.routes.filter((c) => typeof c === 'string') : []);
+  for (const c of Array.isArray(codes) ? codes : []) if (typeof c === 'string') set.add(c);
+  return [...set].sort();
+}
+
 export function buildZeroAlert(state, now) {
   if (!state || state.lastError) return null;
   const z = state.zero;
   if (!z || !(Number(z.count) >= 3) || !z.since) return null;
+  // Measured 2026-11-11: three clean half-sweeps produced "3 healthy sweeps ... and
+  // not one GoWild seat under $50" while half the route list had never been asked.
+  // The board was honest; the alert was not. It now waits for full coverage.
+  const routes = Array.isArray(z.routes) ? z.routes : [];
+  if (routes.length < ROUTES.length) return null;
   // Its own timestamp, not state.lastAlert: a blocked alert in between used to
   // overwrite the record and let the "still nothing" push fire again the same day.
   const lastAt = Number(state.lastZeroAt) || 0;
@@ -41,7 +55,7 @@ export function buildZeroAlert(state, now) {
     kind: 'zero',
     title: `GoWild: still nothing from ${ORIGIN}`,
     message:
-      `${z.count} healthy sweeps over ${hrs}h and not one GoWild seat under $50.\n` +
+      `${z.count} healthy sweeps over ${hrs}h, covering all ${routes.length} routes, and not one GoWild seat under $50.\n` +
       'The collector is running; Frontier is simply not releasing seats here.\n' +
       `Open /${String(ORIGIN).toLowerCase()} to see the current state.`,
     priority: 'low',

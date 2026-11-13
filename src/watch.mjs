@@ -1,4 +1,5 @@
 import { validTopic } from './alerts.mjs';
+import { enqueueEntries, entryFor, sweepOutbox } from './outbox.mjs';
 import { buildBoard, MAX_ROW_AGE_MIN } from './board.js';
 import { easternStamp } from './routes.js';
 
@@ -220,6 +221,10 @@ export function planWatch(prev, next, watch, now = Date.now()) {
     if (plan.announced.includes(key)) continue;
     const ev = event('departing', watch, next, r);
     ev.minutes = Math.round(dep - nowMin);
+    // Which key to record in `announced` -- but the caller records it only after a
+    // delivery succeeds (see src/outbox.mjs). Marking it here, at plan time, is what
+    // used to lose a failed push forever.
+    ev.announce = key;
     plan.events.push(ev);
     plan.announced.push(key);
   }
@@ -410,9 +415,10 @@ function worthRetrying(status) {
   return status === 0 || status === 408 || status === 429 || status >= 500;
 }
 
-async function sendOnce(req) {
+async function sendOnce(req, tries = 2) {
   let last = 'not attempted';
-  for (let tryNo = 1; tryNo <= 2; tryNo += 1) {
+  const attempts = Math.max(1, Number(tries) || 1);
+  for (let tryNo = 1; tryNo <= attempts; tryNo += 1) {
     try {
       const res = await fetch(req.url, req.init);
       if (res && res.ok) return { ok: true, reason: null };
@@ -422,12 +428,15 @@ async function sendOnce(req) {
     } catch (err) {
       last = String((err && err.message) || err).slice(0, 120);
     }
-    if (tryNo === 1) await new Promise((r) => setTimeout(r, DELIVERY_RETRY_MS));
+    if (tryNo < attempts) await new Promise((r) => setTimeout(r, DELIVERY_RETRY_MS));
   }
   return { ok: false, reason: last };
 }
 
-export async function deliver(env, alert, channels) {
+export async function deliver(env, alert, channels, opts = {}) {
+  // The outbox sweeps across ticks and asks for a single try per sweep; an ad-hoc
+  // caller (the stale alert, or a test) keeps the bounded immediate retry.
+  const tries = Number(opts.tries) >= 1 ? Number(opts.tries) : 2;
   const sent = [];
   const failed = [];
   let reqs = [];
@@ -437,7 +446,7 @@ export async function deliver(env, alert, channels) {
     failed.push({ channel: 'build', reason: String((err && err.message) || err).slice(0, 120) });
   }
   for (const req of reqs) {
-    const res = await sendOnce(req);
+    const res = await sendOnce(req, tries);
     if (res.ok) sent.push(req.channel);
     else failed.push({ channel: req.channel, reason: res.reason });
   }
@@ -487,16 +496,20 @@ export async function removeWatch(env, profile, dest) {
 
 export async function evaluateWatches(env, profile, prevState, nextState, now = Date.now()) {
   try {
-    const watches = await listWatches(env, profile);
-    if (!watches.length) return { watched: 0, sent: 0 };
     // Resolve the topic once, from env or KV, then hand delivery an env-shaped
     // object that carries it. Without this a watch armed for push silently has its
     // only channel dropped by buildRequests().
     const topic = await resolveTopic(env);
     const eff = topic ? { ...env, NTFY_TOPIC: topic } : env;
+    const watches = await listWatches(env, profile);
+    if (!watches.length) {
+      // Nothing to plan, but a queued event may still owe a retry.
+      const delivery = await sweepOutbox(eff, profile, now);
+      return { watched: 0, sent: delivery.delivered, queued: 0, outbox: delivery };
+    }
     const nextView = buildBoard(nextState, now);
     const prevView = prevState ? buildBoard(prevState, now) : null;
-    let sent = 0;
+    let queued = 0;
     for (const w of watches) {
       const obs = observe(nextView, nextState, w, now);
       const before =
@@ -506,31 +519,34 @@ export async function evaluateWatches(env, profile, prevState, nextState, now = 
             ? observe(prevView, prevState, w, now)
             : null;
       const plan = planWatch(before, obs, w, now);
-      let lastEvent = w.lastEvent || null;
+      const entries = [];
       for (const ev of plan.events) {
-        if (!shouldNotify({ lastEvent }, ev, now)) continue;
+        if (!shouldNotify({ lastEvent: w.lastEvent || null }, ev, now)) continue;
         const msg = describeEvent(ev, String(profile || 'rdu').toUpperCase());
-        const res = await deliver(eff, msg, w.channels);
-        if (res.sent.length) sent += 1;
-        lastEvent = { kind: ev.kind, key: ev.key, at: now, sent: res.sent, failed: res.failed };
-        console.log(`watch ${w.dest} ${ev.kind}: sent ${res.sent.join(',') || 'none'}${res.failed.length ? ` failed ${res.failed.map((f) => f.channel).join(',')}` : ''}`);
+        entries.push(entryFor(ev, w, msg, now));
       }
-      const changed =
-        !w.last ||
-        w.last.sig !== obs.sig ||
-        plan.announced.length !== (Array.isArray(w.announced) ? w.announced.length : 0) ||
-        lastEvent !== (w.lastEvent || null);
-      if (changed) {
+      // Queued here, delivered below. Crucially `announced` and `lastEvent` are NOT
+      // written at this point: they move only after a 2xx, which is what makes a
+      // failed push retryable instead of lost.
+      if (entries.length) queued += await enqueueEntries(eff, profile, entries, now);
+      if (!w.last || w.last.sig !== obs.sig) {
         await saveWatch(env, profile, {
           ...w,
           last: { sig: obs.sig, rows: obs.rows, cheapest: obs.cheapest, stale: obs.stale, at: now },
-          announced: plan.announced,
-          lastEvent,
+          announced: Array.isArray(w.announced) ? w.announced : [],
+          lastEvent: w.lastEvent || null,
           updatedAt: now,
         });
       }
     }
-    return { watched: watches.length, sent };
+    const delivery = await sweepOutbox(eff, profile, now);
+    if (queued || delivery.attempted) {
+      console.log(
+        `watch outbox: queued ${queued}, attempted ${delivery.attempted}, delivered ${delivery.delivered}, ` +
+          `dead ${delivery.dead}, dropped ${delivery.dropped}`,
+      );
+    }
+    return { watched: watches.length, sent: delivery.delivered, queued, outbox: delivery };
   } catch (err) {
     // A notification failure must never cost the snapshot it was reporting on.
     console.error('watch evaluation failed', err && err.message);

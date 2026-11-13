@@ -188,8 +188,16 @@ jobs:
               echo "skip $P (single-origin cadence: RDU only)"
               continue
             fi
+            # RANK 6 (2026-11-12): RDU asks all 14 routes x 2 dates = 28 requests per
+            # tick, so every route is re-checked on every delivered tick. Pacing is
+            # unchanged: strictly sequential, 2-5 s randomized, one process.
+            #
+            # ROLLBACK RULE (pre-written): read state.refusalDays via /api/board. If
+            # over 7 days any tick is aborted by a refusal, or refused routes exceed
+            # about one tick in ten, set this back to 14, raise the collector row
+            # ceiling to 240 min, and label the board "checked every ~2h".
             case "$P" in
-              rdu) BUDGET=14 ;;
+              rdu) BUDGET=28 ;;
               lga) BUDGET=10 ;;
               phl) BUDGET=16 ;;
               *)   BUDGET=10 ;;

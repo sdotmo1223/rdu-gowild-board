@@ -23,11 +23,13 @@ import {
   mergeSweeps,
 } from './parse.mjs';
 import { appendTransitions, recordObservation, recordFirstSeen } from '../src/history.js';
+import { applyAttempt, buildLastAttempt } from '../src/attempt.mjs';
 import {
   buildAlert,
   buildZeroAlert,
   buildWatchAlert,
   buildHeartbeatAlert,
+  zeroCoverage,
   parseWatch,
   sendAlert,
 } from '../src/alerts.mjs';
@@ -377,7 +379,18 @@ async function main() {
       : explicitShard === 0 || explicitShard === 1
         ? explicitShard
         : nextShard(previous && previous.lastShard, startedAt);
-  const shardList = probeDue ? probePlan.routes : shardRoutes(routePool, shard);
+  // RANK 6 (2026-11-12): a budget large enough for every route on every date buys the
+  // WHOLE list. The shard exists only to keep the burst small, and 28 requests (14
+  // routes x 2 dates) is the largest burst this project has measured clean (28/28 on
+  // 2026-11-03). A smaller budget keeps the rotating shard, so reverting is one number.
+  //
+  // ROLLBACK RULE (pre-written so it is not re-argued later): read state.refusalDays.
+  // If, over 7 days, any tick is aborted by a refusal, or refused routes exceed about
+  // one tick in ten, revert SWEEP_MAX_REQUESTS in sweep.yml to 14, raise the row
+  // ceiling to 240 minutes, and label the page "checked every ~2h".
+  const requestedBudget = Number(process.env.SWEEP_MAX_REQUESTS) || 0;
+  const wholeList = !forced && !probeDue && requestedBudget >= routePool.length * dates.length;
+  const shardList = probeDue ? probePlan.routes : wholeList ? routePool.slice() : shardRoutes(routePool, shard);
   // A per-profile request budget. Several origins in one job would otherwise add
   // up to a burst big enough to earn a refusal, and a refusal aborts. The budget
   // keeps each profile's burst small and simply defers the rest to the next tick,
@@ -414,7 +427,7 @@ async function main() {
   console.log(
     `sweep plan: ${plannedRoutes.length}/${routePool.length} routes x ${dates.length} date(s) = ${
       dates.length * plannedRoutes.length
-    } requests (shard ${shard === null ? 'full' : shard}, budget ${budget}${
+    } requests (${wholeList ? 'whole list, no shard' : `shard ${shard === null ? 'full' : shard}`}, budget ${budget}${
       probeDue ? '; LEAD PROBE, board rows untouched' : ''
     }${skipToday ? '; today skipped, departures finished' : ''
     }${onlyCodes.length ? `; SWEEP_ONLY=${onlyCodes.join(',')}` : ''}${
@@ -623,7 +636,43 @@ async function main() {
     (f) => f.goWild && f.allin !== null && f.allin <= MAX_ALL_IN && (!f.dep || String(f.dep) >= boardStamp),
   );
 
+  // Refusal and block rate, per tick, in the coverage stats. The 28-request decision is
+  // a measured trade rather than a preference, so it needs evidence on both sides:
+  // this is the instrument the rollback rule above reads.
+  const dayKey = easternDate(0, now);
+  const refusalDays = state.refusalDays && typeof state.refusalDays === 'object' ? state.refusalDays : {};
+  const tally =
+    refusalDays[dayKey] && typeof refusalDays[dayKey] === 'object'
+      ? refusalDays[dayKey]
+      : { ticks: 0, requests: 0, refused: 0, blocked: 0, ok: 0 };
+  tally.ticks += 1;
+  tally.requests += requests;
+  tally.refused += refusedHits.length;
+  tally.blocked += blockedCount;
+  tally.ok += okCount;
+  refusalDays[dayKey] = tally;
+  // Eight days, so a seven-day judgement always has its full window.
+  const cutoff = easternDate(-8, now);
+  for (const k of Object.keys(refusalDays)) if (k < cutoff) delete refusalDays[k];
+  state.refusalDays = refusalDays;
+
   const everythingFailed = okCount === 0;
+  // Every attempt records itself, before the branch below decides what it may write.
+  // A failed tick therefore advances lastAttempt while updatedAt and aborted stay
+  // where the last successful sweep left them -- the two facts a reader needs to
+  // separate "the sweep worked" from "the sweep died" (see src/attempt.mjs).
+  const failureKind = everythingFailed ? classifyFailure(sweeps) || 'error' : null;
+  applyAttempt(
+    state,
+    buildLastAttempt({
+      at: now,
+      requests,
+      total,
+      okCount,
+      aborted: abortedAt,
+      error: failureKind ? { kind: failureKind } : null,
+    }),
+  );
   if (probeDue) {
     // A lead probe answers a different question from a board sweep, so it must never
     // reach the board. state.sweeps is left exactly as it was: twelve routes were
@@ -650,7 +699,7 @@ async function main() {
         `${requests} requests, ${grown} new first sighting(s); board rows untouched`,
     );
   } else if (everythingFailed) {
-    const kind = classifyFailure(sweeps) || 'error';
+    const kind = failureKind;
     state.lastError = {
       kind,
       at: now,
@@ -730,6 +779,12 @@ async function main() {
       total: ROUTES.length,
       skippedToday: skipToday,
       quarantined: quarantined.length,
+      // The burst's own cost and how much of it Frontier refused. A bigger budget is
+      // only defensible while these stay at zero, which is what the rollback rule reads.
+      requests,
+      refused: refusedHits.length,
+      blocked: blockedCount,
+      ok: okCount,
     };
 
     // Free schedule data: record what each route did on each swept date. No extra
@@ -762,6 +817,9 @@ async function main() {
       state.zero = {
         count: priorZero ? Number(priorZero.count || 0) + 1 : 1,
         since: priorZero && priorZero.since ? priorZero.since : now,
+        // Which routes this window actually asked. The alert refuses to claim "not
+        // one seat from RDU" until the union is every route (see buildZeroAlert).
+        routes: zeroCoverage(priorZero, plannedRoutes.map((r) => r.code)),
       };
     }
     const transition = appendTransitions(state, boardRows, now);

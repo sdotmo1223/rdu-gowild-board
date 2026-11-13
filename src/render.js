@@ -275,7 +275,18 @@ function dateSection(d, view, now, index = 0, ctx = {}) {
     body = `<div class="state warn">${esc(STATE_COPY.above(d))}${detail}</div>`;
   } else if (d.status === 'noflights') {
     body = `<div class="state">${esc(STATE_COPY.noflights)}</div>`;
-  } else if (d.status === 'nogowild' && view && view.zero && Number(view.zero.count) >= 3 && view.zero.since) {
+  } else if (
+    d.status === 'nogowild' &&
+    view &&
+    view.zero &&
+    Number(view.zero.count) >= 3 &&
+    view.zero.since &&
+    // "No GoWild from RDU in N sweeps" is a station-level claim, so it needs the whole
+    // route list behind it, not one half-shard. Same rule as the push in
+    // buildZeroAlert; without it the page and the alert disagreed about honesty.
+    Array.isArray(view.zero.routes) &&
+    view.zero.routes.length >= (Number(view.routeCount) || Infinity)
+  ) {
     const hrs = Math.max(1, Math.round((now - view.zero.since) / 3600000));
     body = `<div class="state warn">${d.total} departure${d.total === 1 ? '' : 's'}, but Frontier released no GoWild seats. <strong>No GoWild from ${esc(PAGE_ORIGIN)} in ${view.zero.count} sweeps over ${hrs}h</strong> &mdash; that reads as a station-level decision, not a quiet day.</div>`;
   } else {
@@ -522,6 +533,14 @@ export function renderPage(view, state, freq, now = Date.now(), opts = {}) {
   if (view.stale) {
     banner += `<div class="banner warn"><strong>Data is stale</strong>
       <span>${esc(ago(view.ageMin))} — collector may have stopped.</span></div>`;
+  }
+  // A bell that stopped ringing is silent by construction: nothing else on the page
+  // would ever mention it. A dead delivery is the one notification failure the board
+  // has to say out loud, because the reader is waiting for a push that will not come.
+  const ob = opts.outbox && typeof opts.outbox === 'object' ? opts.outbox : null;
+  if (ob && Number(ob.dead) > 0) {
+    banner += `<div class="banner bad"><strong>Watch delivery failing</strong>
+      <span>${Number(ob.dead)} notification${Number(ob.dead) === 1 ? '' : 's'} could not be delivered after every retry${ob.lastReason ? ` \u2014 ${esc(ob.lastReason)}` : ''}. The watch is still armed; that event will not be retried.</span></div>`;
   }
 
   const freqRows = (freq || [])

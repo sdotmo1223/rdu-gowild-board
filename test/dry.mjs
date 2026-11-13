@@ -63,6 +63,23 @@ try {
 if (state) {
   expect('snapshot has sweeps', Array.isArray(state.sweeps) && state.sweeps.length > 0);
   expect('snapshot records requests', Number(state.requests) > 0, String(state.requests));
+  // RANK 1: an attempt that produced this snapshot must describe itself, or a dead
+  // tick is indistinguishable from a clean one on /api/board.
+  expect(
+    'snapshot records the attempt',
+    Boolean(state.lastAttempt && Number(state.lastAttempt.at) > 0),
+    JSON.stringify(state.lastAttempt || null),
+  );
+  expect(
+    'a clean attempt says ok',
+    state.lastAttempt && state.lastAttempt.ok === true && state.lastAttempt.reason === 'ok',
+    JSON.stringify(state.lastAttempt || null),
+  );
+  expect(
+    'the attempt agrees with updatedAt when it succeeded',
+    state.lastAttempt && state.lastAttempt.at === state.updatedAt,
+    `attempt ${state.lastAttempt && state.lastAttempt.at} vs updatedAt ${state.updatedAt}`,
+  );
   // The two facts the timing model and the header need from the collector itself. A
   // first-look that is never written leaves censoring blind; a coverage ledger that is
   // never written leaves the oldest-route line empty forever, and both failures are

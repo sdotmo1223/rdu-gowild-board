@@ -100,7 +100,11 @@ function firstAskedByDate(state) {
   for (const [date, at] of Object.entries(look)) {
     if (/^\d{4}-\d{2}-\d{2}$/.test(date)) note(date, Number(at));
   }
-  for (const s of (state && state.sweeps) || []) {
+  // Array.isArray, not `|| []`: a corrupted or half-written snapshot can hold a
+  // non-array `sweeps`, and `for..of` on that throws. The board must degrade to the
+  // no-data banner, never to a 500 (found by the shape fuzz in test/shapes.mjs).
+  const sweeps = state && Array.isArray(state.sweeps) ? state.sweeps : [];
+  for (const s of sweeps) {
     if (s && typeof s === 'object') note(s.date, Number(s.at));
   }
   // A probe deliberately does not write `sweeps`, so its dates would otherwise look

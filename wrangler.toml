@@ -24,3 +24,16 @@ PUBLIC_PROFILE = "rdu"
 # BOARD_TOKEN is NOT set here. It is a secret:
 #   npx wrangler secret put BOARD_TOKEN      (production)
 #   BOARD_TOKEN=... in .dev.vars             (local)
+#
+# GH_DISPATCH_TOKEN is also a secret: a fine-grained PAT with Actions: write on this
+# repo. The Cron Trigger uses it to nudge the collector when the board is stale (see
+# src/dispatch.mjs). Unset is a supported state -- the receiver logs why it did
+# nothing and the sweep keeps running on GitHub's own schedule.
+#   npx wrangler secret put GH_DISPATCH_TOKEN
+
+# Every 15 minutes the Worker reads its own board age and dispatches the collector only
+# when the board is stale, with a 10-minute cooldown on top. GitHub drops schedule
+# events (measured 2026-11-11: three consecutive recovery slots produced no run at all),
+# and a dropped event cannot be recovered from inside a run that never started.
+[triggers]
+crons = ["*/15 * * * *"]

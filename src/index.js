@@ -6,6 +6,8 @@ import { releaseTiming } from './timing.mjs';
 import { weeklyPattern } from './schedule.mjs';
 import { ROUTES, PROFILES, PROFILE } from './routes.js';
 import { shouldSendStaleAlert, validTopic } from './alerts.mjs';
+import { outboxStatus } from './outbox.mjs';
+import { maybeDispatch } from './dispatch.mjs';
 import {
   channelStatus,
   evaluateWatches,
@@ -421,6 +423,16 @@ export default {
 
     if (url.pathname === '/api/ingest') return handleIngest(request, env, url, ctx);
 
+    // The same stale-board gate the Cron Trigger runs, callable by hand. Gated by the
+    // board token because it can spend a whole collector run; it is not public.
+    if (url.pathname === '/api/dispatch') {
+      const presented = bearerToken(request) || url.searchParams.get('token');
+      if (!sameSecret(presented, env.BOARD_TOKEN)) {
+        return json({ ok: false, state: 'unauthorized', message: 'Send ?token=<BOARD_TOKEN> or an Authorization: Bearer header.' }, 401);
+      }
+      return json({ ok: true, ...(await maybeDispatch(env, now)) });
+    }
+
     // The bell's endpoint. Gated inside the handler so the refusal is a sentence,
     // not an empty 401 body from a guard three screens away.
     if (url.pathname === '/api/watch') return handleWatch(request, env, url, now);
@@ -459,7 +471,13 @@ export default {
         // to every API caller, which is how a collector that crashed on every tick
         // could still look like a healthy board.
         requests: state.requests ?? null,
+        // RANK 1: what the LAST attempt did, separate from the last good snapshot.
+        // A dead tick advances lastAttempt while updatedAt stays put, and this is
+        // where a caller can see both at once.
+        lastAttempt: state.lastAttempt || null,
         lastSweep: state.lastSweep || null,
+        // Per-day requests / refusals / blocks for the current burst budget.
+        refusalDays: state.refusalDays || null,
         aborted: state.aborted || null,
         sweepError: view.error || null,
         routeCount: view.routeCount,
@@ -515,6 +533,9 @@ export default {
       // The bell can only be armed for a channel that resolves, and the topic usually
       // lives in KV rather than in the Worker's own environment.
       const channels = channelStatus(env, await resolveTopic(env));
+      // Dead deliveries are the only notification failure the page can report, and
+      // the only place the reader would ever find out.
+      const outbox = await outboxStatus(env, PROFILE).catch(() => null);
       if (ctx && typeof ctx.waitUntil === 'function') {
         ctx.waitUntil(maybeStaleAlert(env, now, 'state', PROFILES[PROFILE].origin));
       }
@@ -525,6 +546,7 @@ export default {
           canWatch: true,
           watches,
           channels,
+          outbox,
         }),
       );
     }
@@ -616,5 +638,14 @@ export default {
     }
 
     return new Response('Not found', { status: 404 });
+  },
+
+  // Cloudflare Cron Trigger, every 15 minutes (see [triggers] in wrangler.toml). It
+  // does not depend on GitHub's scheduler, which is the one thing sweep.yml cannot
+  // fix from inside: a dropped schedule event leaves no run to recover in.
+  async scheduled(controller, env, ctx) {
+    const work = maybeDispatch(env, Date.now());
+    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(work);
+    else await work;
   },
 };

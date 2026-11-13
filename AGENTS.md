@@ -88,8 +88,13 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `src/pricing.mjs` | fare mechanics: records **every** itinerary (pre-flip standard fare included) into `state.fares`, measures when a fare flips, whether it follows the flight or the load, and the GoWild/std ratio |
 | `src/schedule.mjs` | per-date operating matrix + week-over-week stable-vs-rotating verdict |
 | `src/alerts.mjs` | ntfy.sh push, deduped per error state to once / 6 h |
+| `src/attempt.mjs` | `buildLastAttempt()` / `applyAttempt()`: one record per sweep attempt, so a dead tick and the last good snapshot are separable |
+| `src/outbox.mjs` | the delivery outbox: `entryFor()`, `enqueueEntries()`, `sweepOutbox()` (5 attempts, 1/2/4/8 min backoff, DEAD tombstones, `departing` TTL) and `outboxStatus()` for the board banner |
+| `src/dispatch.mjs` | `maybeDispatch()`: the Cloudflare Cron Trigger's stale-board gate, the 10-minute cooldown, and the GitHub `workflow_dispatch` call |
+| `tools/smoke.mjs` | post-deploy browser smoke: the live page loads, emits its script, and logs no console errors |
+| `tools/doc-lint.mjs` | fails the gate when README/AGENTS name a missing path or workflow |
 | `src/watch.mjs` | per-route bells: `normalizeWatch()`, `observe()`, `planWatch()` (available / sold out / cheaper / departing), `channelStatus()`, push+email+text delivery, `evaluateWatches()` on ingest |
-| `.github/workflows/sweep.yml` | the only collector cron: every origin, sequential, per-profile request budget. The older `board.yml` and `lga.yml` were deleted 2026-11-11 — both were `disabled_manually` and both presented the read token to a write endpoint, so re-enabling either could only fail |
+| `.github/workflows/sweep.yml` | the only collector cron: every origin, sequential, per-profile request budget. The older board.yml and lga.yml workflows were deleted 2026-11-11 — both were disabled_manually and both presented the read token to a write endpoint, so re-enabling either could only fail. Their names are deliberately not in backticks: tools/doc-lint.mjs treats a backticked workflow name as a claim that the file exists, and these two must stay deleted |
 | `src/index.js` | Worker router: `/s/<TOKEN>`, `/api/board` (token-gated), `/api/ingest` (token-gated snapshot write), PWA assets |
 | `collector/collect.mjs` | Playwright sweep → KV (or `state.json` with no credentials) |
 | `collector/parse.mjs` | `extractJourneys`, `normalizeFlight`, `parseRoute`, `classifyFailure` |
@@ -111,10 +116,17 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `test/rotation.mjs` | 53 checks: tick-driven shard alternation, two-tick and budgeted coverage |
 | `test/carry.mjs` | 7 checks: a carried row keeps its real fetch time, never re-stamps |
 | `test/resilience.mjs` | 34 checks: one refusal must not end a sweep, three strikes retire a route, and a fare older than 3 h is withheld |
-| `test/health.mjs` | 34 checks: heartbeat, Worker-side stale alert, the collector-to-Worker topic bootstrap, and the read/write token split — including which credential each collector call site presents |
+| `test/health.mjs` | 48 checks: heartbeat, Worker-side stale alert, the collector-to-Worker topic bootstrap, and the read/write token split — including which credential each collector call site presents |
 | `test/sink.mjs` | 21 checks against `tools/sink.mjs` on its own free port: a refused row (400) writes no capture, a real row is stored, a preflight answers 204, `/done` answers 200 **and** leaves `.sweep/_done`, unknown routes answer 404. Written because `/done` was unchecked and a patch that deleted the route passed every other check |
 | `test/recovery.mjs` | 11 checks on `tools/recovery-gate.mjs`: the second cron entry sweeps only when the board is already 40 min old, and an unreadable age sweeps rather than skipping. **It cannot create a run GitHub never scheduled** — see the note below the throttle section |
-| `test/watch.mjs` | 127 checks: normalization, channel status, the five event kinds, dedupe, delivery payloads, the KV record |
+| `test/watch.mjs` | 128 checks: normalization, channel status, the five event kinds, dedupe, delivery payloads, the KV record, and that a failed delivery is held rather than stamped as sent |
+| `test/attempt.mjs` | `lastAttempt` on every path: the four fields, the aborted-and-failed overlap, and the invariant that a dead tick advances `lastAttempt` while `updatedAt`/`aborted` stay where the last good sweep put them (plus a 400-case fuzz) |
+| `test/outbox.mjs` | the delivery outbox: a 522 sequence never advances `announced`, backoff grows, the fifth failure is DEAD and shown on the board, a mid-sequence recovery delivers, a `departing` event past its departure is dropped without a request, a permanent 4xx dies on the first attempt, and a fuzz proves every entry reaches a terminal state inside the ceiling |
+| `test/dispatch.mjs` | the stale-board dispatcher: gate arithmetic, the cooldown double-gate, a missing `GH_DISPATCH_TOKEN` as a clean no-op, a rejected dispatch not burning the cooldown, the `scheduled` handler and the token-gated `/api/dispatch` route, an hour of ticks never flooding, and the token never surfacing in a result |
+| `test/zero.mjs` | the zero alert's coverage union: a half-shard window stays silent, the union across ticks fires, the once-a-day cap holds, and a 200-shuffle fuzz never fires on a proper subset |
+| `test/freshness.mjs` | the 28-request plan runs the real collector: 14/14 routes x 2 dates, every route in the coverage ledger, the per-tick refusal tally, worst per-route age under 90 min, and a 27-request budget degrading to the shard |
+| `test/shapes.mjs` | the payload matrix: clean, blocked, partial, aborted, empty, peak, above-ceiling, folded, departed, stale and malformed all produce a status and a visible reason, plus a 120-blob fuzz that found a real 500 in `src/timing.mjs` |
+| `test/doclint.mjs` | `tools/doc-lint.mjs`: a deliberately dangling `board-collect` reference fails, dead paths fail, prose/URLs/placeholders do not, the real README and AGENTS are clean, and a 200-document fuzz never accuses a live reference |
 | `test/all.mjs` | the registry `npm test` runs; a suite not listed here does not gate anything |
 | `test/stress.mjs` | 70 adversarial checks (hostile input, malformed state, volume, budget, fare retention, the timing sample floor, censored sightings, the durable first-look, the coverage ledger, the lead-probe budget) |
 
@@ -124,7 +136,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 
 ```bash
 npm run lint                 # no-undef: the defect class `node --check` cannot see
-npm test                     # every suite in test/all.mjs (10 suites, 341 checks); all must pass
+npm test                     # every suite in test/all.mjs (18 suites); all must pass
 npm run stress               # adversarial: 70 checks
 node test/profiles.mjs       # multi-origin: 9 checks
 node --check <file>          # syntax gate, used on every file
