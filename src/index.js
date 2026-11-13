@@ -565,6 +565,10 @@ export default {
         // distinct dates behind each time. Post-processing of data already stored --
         // no request is spent, and `n` is the confidence the UI must render.
         ledger: buildLedger(state, now),
+        // TASK A: what the notification tiers last did. A tier that fails silently is
+        // the failure this board exists to remove, so the outcome rides with the
+        // board instead of sitting in a log someone would have to go looking for.
+        policy: await env.BOARD.get('policy:last', 'json').catch(() => null),
         frequency: frequencyTable(state, ROUTES),
         schedule: weeklyPattern(state),
         heatmap: bookabilityHeatmap(state),
