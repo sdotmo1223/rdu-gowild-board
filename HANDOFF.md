@@ -1131,3 +1131,42 @@ there instead of at the menu.
 **Still open:** the token page (`/s/<token>`) was not exercised from the phone, because
 the token is a secret this pass will not paste into a device URL or a shell history. The
 installed app starts at the public profile, which is what its manifest says.
+
+## 2026-11-12 (later) — the private board installed as its own app, and the focus path driven on the device
+
+With the phone properly in hand, the two things left open after the first pass are closed,
+and one of them turned out to have a caveat worth knowing.
+
+**The private board installs as a second app.** `/s/<token>` carries its own manifest, so
+Chrome installs it as a separate WebAPK rather than folding it into the public one:
+`webapk` packages went 1 → 2, second `firstInstallTime` 2026-11-13 08:30:02, and launching
+it opens `/s/…` with **no browser chrome** at 411 CSS px. What is on screen there is the
+whole private surface working together: WATCHING `DTW Wed, Nov 11 PUSH STOP`, the delivery
+line (`Alerts: push · email, text not set up`), PROJECTED LEGS with the two real Tuesday and
+Wednesday legs marked `REPEATED · seen 2× in 14 days` and its ARM control, the FIND block
+with `RDU` current and `LGA`/`PHL — available later`, and 110 rows. Evidence:
+`phone-private-app-launch.png`, `phone-token-page.png`.
+
+**The `?focus=` receiver works at 411 px, on a real row, deep in the page.** Driven over
+CDP on the device: a row 3124 px down (Sat Nov 14, 9:30 PM Orlando) received `is-focus`,
+its event entry received `ev-active`, the log opened, and the page anchored on it. Evidence:
+`phone-focus-arrival.png`.
+
+**The caveat, which matters more than the pass.** That test needed an event entry to exist.
+The board's 24 h alert log is currently **empty**, and `eventLogHtml` returns nothing when
+it is, so `.evlog` is not in the DOM at all — and the receiver bails at its first lookup.
+So today a push that links `?focus=<eventKey>` would open the page at the top with nothing
+lit, silently. Three separable things follow:
+
+1. `?focus=` arrives with nothing to light when the entry has aged out of the 24 h log (or
+   the entry was never written because the send failed before `recent` was updated).
+2. The key itself carries `<date>|<dep>|…`, so the row can still be found without the log
+   entry — the receiver could fall back to `data-target` parsed from the `focus` value and
+   still land on the flight, lighting nothing. That is one change in the focus IIFE.
+3. None of this is reachable until the push actually carries a click URL, which is the infra
+   item still outstanding. The receiver being correct in isolation is not the same as the
+   flow working.
+
+**Not built here on purpose:** the fallback in (2) and the click URL in (3) are collector /
+infra work, and this pass was scoped to the design surfaces. They are written down so the
+next round starts from the measurement rather than from a guess.
