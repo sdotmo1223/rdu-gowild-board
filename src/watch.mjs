@@ -523,7 +523,7 @@ export async function evaluateWatches(env, profile, prevState, nextState, now = 
       for (const ev of plan.events) {
         if (!shouldNotify({ lastEvent: w.lastEvent || null }, ev, now)) continue;
         const msg = describeEvent(ev, String(profile || 'rdu').toUpperCase());
-        entries.push(entryFor(ev, w, msg, now));
+        entries.push(entryFor(ev, w, msg, now, { focusBase: `/${String(profile || 'rdu').toLowerCase()}` }));
       }
       // Queued here, delivered below. Crucially `announced` and `lastEvent` are NOT
       // written at this point: they move only after a 2xx, which is what makes a

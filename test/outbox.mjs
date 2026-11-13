@@ -474,5 +474,28 @@ const http = (status) => async () => new Response('', { status });
   ok(deadRow && !('payload' in deadRow) && !('channels' in deadRow), 'the log carries no push payload or topic');
 }
 
+// --- 12. every event carries its own front door --------------------------------
+// Task A / Phase A. A tap must land on the board (token-free), and the board must
+// offer a Frontier SEARCH link -- never a checkout, and never anything carrying the
+// board token. The focus key is the outbox key verbatim, because that is what the
+// page's reader already looks up.
+{
+  const store = kv();
+  const s = await armedWatch(store, NOW - 60000);
+  const env = pushEnv(store);
+  globalThis.fetch = async () => new Response('', { status: 500 }); // held, so it survives planning
+  await evaluateWatches(env, 'rdu', s, s, NOW);
+
+  const list = await readOutbox(store, 'rdu');
+  eq(list.length, 1, 'the event is held for inspection');
+  const e = list[0];
+  ok(/^https:\/\/booking\.flyfrontier\.com\/Flight\/Select\?/.test(e.bookingUrl || ''), 'the entry stores its Frontier search link');
+  ok(/\bd1=PHL\b/.test(e.bookingUrl || ''), 'carrying the destination');
+  ok(/dd1=Nov%20/.test(e.bookingUrl || ''), 'and the date in Frontier\'s own param shape');
+  ok(/^\/rdu\?focus=/.test(e.focusPath || ''), 'the entry stores a token-free focus path');
+  eq(decodeURIComponent(String(e.focusPath).split('focus=')[1] || ''), e.key, 'the focus key is the outbox key verbatim');
+  ok(!/token/i.test(String(e.bookingUrl) + String(e.focusPath)), 'neither link carries a secret');
+}
+
 globalThis.fetch = realFetch;
 console.log(`outbox: ${checks} checks passed`);

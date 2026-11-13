@@ -20,6 +20,8 @@
 // KV, not a queue: there is one writer (the ingest path) and one profile, so a
 // single JSON array per profile is enough, and it costs one read and at most one
 // write per sweep.
+import { bookingUrl as booking } from './liveness.mjs';
+
 export const OUTBOX_KEY_PREFIX = 'out:';
 
 // Five attempts, spaced 1, 2, 4 and 8 minutes apart. The sweep runs on ingest, which
@@ -82,7 +84,11 @@ export async function readOutbox(env, profile) {
 
 // The payload is rendered once, at plan time, and stored. Re-rendering on a retry
 // hours later would describe a board that has since changed.
-export function entryFor(ev, watch, alert, now) {
+export function entryFor(ev, watch, alert, now, opts = {}) {
+  // Task A: the event carries its own front door, decided at creation so the UI and
+  // the push read the same strings. The focus path is token-free by construction:
+  // the public board is /<profile>, and the key rides as a query param.
+  const focusBase = typeof opts.focusBase === 'string' && opts.focusBase.startsWith('/') ? opts.focusBase : '/rdu';
   const minutes = Number(ev && ev.minutes);
   const expAt =
     ev && ev.kind === 'departing' && Number.isFinite(minutes)
@@ -95,7 +101,16 @@ export function entryFor(ev, watch, alert, now) {
     // The key planWatch records in `announced` (date|HH:MM), carried here so the
     // watch can be advanced from the outbox after a 2xx, not before.
     announce: ev.announce || null,
-    payload: { title: alert.title, body: alert.body, priority: alert.priority || 'default' },
+    // The click target travels with the payload, so a retry hours later still opens
+    // the row it was written about.
+    focusPath: `${focusBase}?focus=${encodeURIComponent(String(ev.key))}`,
+    bookingUrl: booking(ev.dest, ev.date),
+    payload: {
+      title: alert.title,
+      body: alert.body,
+      priority: alert.priority || 'default',
+      clickPath: `${focusBase}?focus=${encodeURIComponent(String(ev.key))}`,
+    },
     channels: Array.isArray(watch && watch.channels) ? watch.channels.slice() : [],
     attempts: 0,
     nextAt: now,

@@ -24,6 +24,8 @@ const suites = [
   ['shapes', 'test/shapes.mjs'],
   ['doclint', 'test/doclint.mjs'],
   ['ledger', 'test/ledger.mjs'],
+  ['settings', 'test/settings.mjs'],
+  ['liveness', 'test/liveness.mjs'],
 ];
 
 let failed = 0;
