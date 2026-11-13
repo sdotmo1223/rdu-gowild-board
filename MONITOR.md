@@ -316,3 +316,25 @@ A `sed` backreference written through a shell heredoc reached the file as a lite
 The deploy was fine; the file was not. Check for `[[:cntrl:]]` after any scripted
 YAML edit, and confirm `gh workflow list` still shows the workflow by name.
 
+### 2026-11-13 — I0: the ledger suite was proved able to fail
+
+`test/ledger.mjs` passed on its first run, so nothing had ever been seen rejecting
+anything. The modal-time sort in `src/ledger.mjs` was inverted deliberately
+(`b.dates.length - a.dates.length` became `a.dates.length - b.dates.length`):
+
+```
+AssertionError [ERR_ASSERTION]: the modal Wednesday time wins over the stray 06:30
+  actual: '06:30'
+  expected: '15:30'
+LEDGER_RED_EXIT=1
+```
+
+The module was restored byte-for-byte from a copy and re-run:
+
+```
+ledger: 32 checks passed
+LEDGER_GREEN_EXIT=0
+```
+
+Rule from here: a new suite is not finished until it has been *seen* failing for the
+reason it claims to test. "Written first" is not the same as "watched fail".
