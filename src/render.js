@@ -3,6 +3,7 @@ import { bookabilityHeatmap } from './heatmap.mjs';
 import { releaseTiming, MIN_SAMPLES } from './timing.mjs';
 import { weeklyPattern } from './schedule.mjs';
 import { fareMechanics, median, MIN_SAMPLES as FARE_MIN } from './pricing.mjs';
+import { projectLeg, WEEKDAYS } from './ledger.mjs';
 
 const esc = (s) =>
   String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -28,7 +29,11 @@ function fmtDuration(d) {
 }
 
 function shortDay(iso) {
+  // Refuses garbage instead of printing "Invalid Date" on the owner's page. A watch
+  // record with a broken date is a record to repair, not a word to render.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso == null ? '' : iso))) return '';
   const d = new Date(`${iso}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return '';
   return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
@@ -237,6 +242,50 @@ function eventLogHtml(ob) {
 // How old this row's route reading is, under the price. It says "checked" and not
 // "this fare was checked", because the ledger is per route per sweep and the row has
 // no timestamp of its own.
+// What the schedule ledger has actually seen, on the destinations this owner has
+// chosen to watch. A projection is a count wearing a clock: the ink carries the
+// count, so "established" and "single sighting" cannot be mistaken for each other,
+// and neither is ever drawn like a row that is on sale right now.
+const CONFIDENCE_INK = {
+  established: { cls: 'ok', label: 'established' },
+  repeated: { cls: 'mid', label: 'repeated' },
+  single: { cls: 'weak', label: 'single sighting' },
+};
+
+function planHtml(ledger, ctx) {
+  const watches = (ctx && Array.isArray(ctx.watches) ? ctx.watches : []).filter((w) => w && w.dest);
+  if (!ledger || !ledger.routes || !watches.length) return '';
+  const cards = [];
+  for (const w of watches) {
+    const dest = String(w.dest).toUpperCase();
+    const route = ledger.routes[dest];
+    if (!route || !route.byDow) continue;
+    const picks = [];
+    for (const dow of Object.keys(route.byDow)) {
+      const p = projectLeg(ledger, dest, dow);
+      if (p) picks.push(p);
+    }
+    picks.sort((a, b) => b.n - a.n || a.dow - b.dow);
+    if (!picks.length) continue;
+    const legs = picks
+      .slice(0, 2)
+      .map((p) => {
+        const ink = CONFIDENCE_INK[p.confidence] || { cls: 'weak', label: p.confidence };
+        return `<li class="pleg ${ink.cls}"><div class="ptime"><b>${esc(String(WEEKDAYS[p.dow] || '').slice(0, 3))}</b> ${esc(fmtTime(p.dep))}</div><div class="pmeta"><span class="pconf ${ink.cls}">${esc(ink.label)}</span> \u00b7 seen ${p.n}\u00d7 in ${Number(ledger.windowDays) || 14} days</div></li>`;
+      })
+      .join('');
+    cards.push(
+      `<li class="pcard"><div class="phead"><b>${esc(dest)}</b><span>${esc(w.mode === 'date' ? 'one date' : 'every day')}</span></div><ul class="plegs">${legs}</ul>${ctx.canWatch ? `<button type="button" class="act arm" data-dest="${esc(dest)}">Arm a watch on ${esc(dest)}</button>` : ''}</li>`,
+    );
+  }
+  if (!cards.length) return '';
+  return `<section class="plan" aria-label="Projected legs">
+    <div class="dtop"><span class="dk">Projected legs</span><span class="dage">from ${Number(ledger.windowDays) || 14} days of sweeps</span></div>
+    <p class="plead">A projection is a pattern, not a ticket: this board only sweeps departures from its own origin, so these are that route's real departure times, never a held seat. Arming one puts it under the normal watch, where it has to be confirmed by an actual sweep before anything fires.</p>
+    <ul class="pcards">${cards.join('')}</ul>
+  </section>`;
+}
+
 function routeCheck(r, ctx) {
   const ages = ctx && ctx.routeAges;
   if (!ages || !Object.prototype.hasOwnProperty.call(ages, r.dest)) return '';
@@ -358,7 +407,8 @@ function watchBar(ctx) {
   }
   const chips = list
     .map((w) => {
-      const scope = w.mode === 'always' ? 'every date' : esc(shortDay(w.date));
+      const day = shortDay(w.date);
+      const scope = w.mode === 'always' ? 'every date' : esc(day || 'one date');
       const live = (w.channels || []).filter((c) => st[c] && st[c].ready);
       return `<span class="wchip"><b>${esc(w.dest)}</b><em>${scope}</em><i>${esc(live.length ? live.join(' + ') : 'no channel ready')}</i><button type="button" class="act unwatch" data-dest="${esc(w.dest)}">stop</button></span>`;
     })
@@ -657,6 +707,7 @@ export function renderPage(view, state, freq, now = Date.now(), opts = {}) {
     // timestamp of their own, and inventing one would be the lie this board exists
     // not to tell.
     routeAges: (view.coverage && view.coverage.byRoute) || {},
+    ledger: opts.ledger || null,
   };
   // Only what the sheet needs to draw itself: no observation rows, no KV keys and
   // no secrets. `<` is escaped so a reason string can never close the script tag.
@@ -894,6 +945,31 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
   .agechip.warn { color:var(--warn); border-color:rgba(240,173,60,.4); }
   .badge.best { color:var(--acid); border-color:rgba(217,242,77,.5); }
 
+  /* projected legs: a pattern, inked by how much evidence stands behind it */
+  .plan { margin:14px 0 0; border:1px solid var(--rule-2); background:var(--ink-2); }
+  .plead { margin:0; padding:8px 12px 0; font-family:var(--mono); font-size:8px;
+           letter-spacing:.03em; line-height:1.7; color:var(--faint); }
+  .pcards { list-style:none; margin:0; padding:12px; display:flex; flex-direction:column; gap:10px; }
+  .pcard { border:1px solid var(--rule); padding:10px; }
+  .phead { display:flex; align-items:baseline; justify-content:space-between; gap:8px;
+           font-family:var(--mono); font-size:8.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--faint); }
+  .phead b { color:var(--bone); }
+  .plegs { list-style:none; margin:9px 0 0; padding:0; display:flex; flex-direction:column; gap:8px; }
+  .pleg { padding-left:9px; border-left:2px solid var(--rule-2); }
+  .pleg.ok { border-left-color:var(--acid); }
+  .pleg.mid { border-left-color:var(--bone-2); }
+  .pleg.weak { border-left-style:dashed; border-left-color:var(--faint); }
+  .ptime { font-family:var(--mono); font-size:10px; letter-spacing:.06em; color:var(--bone-2); }
+  .ptime b { letter-spacing:.14em; color:var(--bone); }
+  .pleg.weak .ptime, .pleg.weak .ptime b { color:var(--dim); }
+  .pmeta { margin-top:3px; font-family:var(--mono); font-size:7.5px;
+           letter-spacing:.04em; color:var(--faint); }
+  .pconf { letter-spacing:.12em; text-transform:uppercase; }
+  .pconf.ok { color:var(--acid); }
+  .pconf.mid { color:var(--bone-2); }
+  .pconf.weak { color:var(--warn); }
+  .pcard .act.arm { margin-top:10px; }
+
   /* what fired, so a push and its row are the same object to the eye */
   .evlog { margin:12px 0 0; padding:9px 0; border-top:1px solid var(--rule); border-bottom:1px solid var(--rule); }
   .evlog summary { font-size:8.5px; }
@@ -1045,6 +1121,7 @@ ${bestDealHtml(view, now, watchCtx)}
 ${coverageHtml(view)}
 ${banner}
 ${watchBar(watchCtx)}
+${planHtml(watchCtx.ledger, watchCtx)}
 ${eventLogHtml(ob)}
 <div class="pinbar"><span>Pinned</span><b id="pinlist"></b><button type="button" class="act" id="pinclear">clear</button></div>
 ${view.dates.map((d, i) => dateSection(d, view, now, i, watchCtx)).join('')}
@@ -1294,6 +1371,34 @@ window.__wcfg = ${watchJson};
       }
     }
   })();
+
+  // One confirmation to arm a projected leg. It creates the same watch the bell
+  // creates -- no second kind of subscription, no separate store -- so the armed leg
+  // rides the normal flow: the next sweep confirms it, a failure is visible, and the
+  // push points at its row like any other.
+  function readyChannels() {
+    var out = [];
+    var ch = (CFG && CFG.channels) || {};
+    for (var k in ch) if (ch[k] && ch[k].ready) out.push(k);
+    return out;
+  }
+  var arms = document.querySelectorAll('button.arm');
+  for (var ai = 0; ai < arms.length; ai++) {
+    (function (b) {
+      if (!readyChannels().length) {
+        b.disabled = true;
+        b.title = 'no delivery channel is set up on this Worker';
+        return;
+      }
+      b.addEventListener('click', function () {
+        b.disabled = true;
+        api({ dest: b.getAttribute('data-dest'), mode: 'always', channels: readyChannels() }).then(function (r) {
+          if (r && r.ok) location.reload();
+          else { b.disabled = false; b.textContent = (r && r.message) || 'Not saved'; }
+        });
+      });
+    })(arms[ai]);
+  }
 
   var pinClear = document.getElementById('pinclear');
   if (pinClear) {

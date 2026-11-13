@@ -557,6 +557,9 @@ export default {
           watches,
           channels,
           outbox,
+          // Post-processing of stored observations only: the projection the page
+          // draws costs no request.
+          ledger: buildLedger(state, now),
         }),
       );
     }

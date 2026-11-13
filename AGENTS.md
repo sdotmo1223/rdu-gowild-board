@@ -107,7 +107,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `collector/cookies.mjs` | optional cookie loading, never logs the value |
 | `tools/headless-probe.mjs` | one-request diagnostic; `HEADLESS=0` / `IGNORE_COOKIE=1` |
 | `tools/route-probe.mjs` | one-request "does Frontier sell this city pair?" probe: real Chromium + the collector parser |
-| `tools/render-state.mjs` | render `board.html` from a real collector snapshot. `NOW=` pins the clock; `STATE_IN=` picks the snapshot; `OUTBOX=` renders the alert log from an outbox fixture |
+| `tools/render-state.mjs` | render `board.html` from a real collector snapshot. `NOW=` pins the clock; `STATE_IN=` picks the snapshot; `OUTBOX=` renders the alert log from an outbox fixture; `WATCHES=ATL,MCO` + `LEDGER=1` render the token page's projected legs |
 | `tools/shot.mjs` | Playwright screenshot of a rendered page at 412×915 @2x (`SHOT_FULL=0` first screen, `SHOT_SCROLL=` offset, `SHOT_BODYCLASS=` a state the page only enters by clicking) |
 | `tools/shotdiff.mjs` | CLI pixel diff of two PNGs: prints the share changed and the bounding box, exits 1 when identical |
 | `tools/pngdiff.mjs` | the diff itself (Chromium canvas, no image dependency); shared by the CLI and the smoke gate |

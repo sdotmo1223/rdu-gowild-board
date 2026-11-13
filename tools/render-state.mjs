@@ -29,10 +29,27 @@ if (process.env.OUTBOX) {
   const { outboxStatus } = await import('../src/outbox.mjs');
   outbox = await outboxStatus(store, 'rdu', now);
 }
+// WATCHES=ATL,MCO renders the page as the token path does, with those watches armed,
+// and LEDGER=1 attaches the schedule ledger the projected legs are drawn from.
+const watchDests = (process.env.WATCHES || '')
+  .split(',')
+  .map((s) => s.trim().toUpperCase())
+  .filter(Boolean);
+let ledger = null;
+if (process.env.LEDGER) {
+  const { buildLedger } = await import('../src/ledger.mjs');
+  ledger = buildLedger(state, now);
+}
 const html = renderPage(view, state, frequencyTable(state, ROUTES), now, {
   basePath: '/s/LOCALPREVIEW',
   origin: ORIGIN,
   outbox,
+  ledger,
+  canWatch: watchDests.length > 0,
+  // mode 'always' is a real watch mode (src/watch.mjs WATCH_MODES); 'dest' is not,
+  // and normalizing it produced a date watch with no date -- the "Invalid Date" chip.
+  watches: watchDests.map((dest) => ({ dest, mode: 'always', channels: ['push'] })),
+  channels: { push: { ready: true } },
 });
 writeFileSync('board.html', html);
 

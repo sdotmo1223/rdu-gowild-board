@@ -15,6 +15,7 @@ import assert from 'node:assert/strict';
 import { buildBoard } from '../src/board.js';
 import { renderPage } from '../src/render.js';
 import { ROUTES } from '../src/routes.js';
+import { buildLedger } from '../src/ledger.mjs';
 
 let checks = 0;
 const ok = (cond, msg) => {
@@ -349,6 +350,58 @@ for (const [name, state] of Object.entries(shapes)) {
   ok(/class="act book" href="https:\/\/booking\.flyfrontier\.com\/Flight\/InternalSelect\?o1=RDU&amp;d1=ATL;&/.test(ledgerPage) || /d1=ATL&dd1=2026-11-12/.test(ledgerPage), 'the row links to Frontier\'s search for its own date');
   ok(/est\. all-in/.test(ledgerPage), 'the row still labels the fare estimated all-in beside it');
   ok(!/<form|method="post"/i.test(ledgerPage), 'the page itself submits nothing');
+
+  // Projected legs: a projection is a count wearing a clock. The ink has to carry
+  // the count, and a projection must never be drawn like a row that is on sale.
+  const hist = [];
+  for (const d of ['2026-11-04', '2026-11-11']) hist.push({ dest: 'ATL', date: d, dep: `${d} 06:30:00` });
+  const ledState = { ...two, history: hist };
+  const led = buildLedger(ledState, NOW);
+  const planPage = renderPage(buildBoard(ledState, NOW), ledState, [], NOW, {
+    basePath: '/s/abcdefgh1234',
+    origin: 'RDU',
+    canWatch: true,
+    watches: [{ dest: 'ATL', mode: 'dest', channels: ['push'] }],
+    channels: { push: { ready: true } },
+    ledger: led,
+  });
+  ok(/class="plan"/.test(planPage), 'watched destinations get a projected-legs block');
+  ok(/Projected legs/.test(planPage), 'and it is named');
+  ok(/class="pleg mid"/.test(planPage), 'two Wednesdays is "repeated", not "established"');
+  ok(/single sighting|repeated/.test(planPage), 'the confidence is printed, not implied');
+  ok(/data-dest="ATL"/.test(planPage) && /class="act arm"/.test(planPage), 'arming is one control on the card');
+  const planStart = planPage.indexOf('class="plan"');
+  const planEnd = planPage.indexOf('id="d-');
+  const planBlock = planPage.slice(planStart, planEnd > planStart ? planEnd : planStart + 1400);
+  ok(!/<li class="row"/.test(planBlock), 'no projection is rendered as a flight row');
+  ok(/never a held seat/.test(planPage), 'the block says what a projection is not');
+
+  // A watch record with a missing or broken date must never print "Invalid Date".
+  const brokenWatch = renderPage(buildBoard(ledState, NOW), ledState, [], NOW, {
+    basePath: '/s/abcdefgh1234',
+    origin: 'RDU',
+    canWatch: true,
+    watches: [{ dest: 'ATL', mode: 'date', date: null, channels: ['push'] }],
+    channels: { push: { ready: true } },
+    ledger: led,
+  });
+  ok(!/Invalid Date/i.test(brokenWatch), 'a malformed watch date renders as "one date", never "Invalid Date"');
+
+  // No ledger, or nothing watched, and the block does not appear at all.
+  const noLed = renderPage(buildBoard(two, NOW), two, [], NOW, {
+    basePath: '/s/abcdefgh1234',
+    origin: 'RDU',
+    canWatch: true,
+    watches: [{ dest: 'ATL', mode: 'dest' }],
+    channels: { push: { ready: true } },
+  });
+  ok(!/class="plan"/.test(noLed), 'no ledger, no projections');
+  const noWatch = renderPage(buildBoard(ledState, NOW), ledState, [], NOW, {
+    basePath: '/s/abcdefgh1234',
+    origin: 'RDU',
+    ledger: led,
+  });
+  ok(!/class="plan"/.test(noWatch), 'nothing watched, nothing to project');
 
   // The alert log is drawn from the outbox the Worker already reads.
   const ob = {

@@ -994,3 +994,58 @@ next to. The chip already states thin in the same grammar as the header.
 link, `href` verified as `…InternalSelect?o1=RDU&d1=DTW&dd1=2026-11-13&ADT=1&mon=true&promo=`,
 and the chips read `checked ≤ 3 min` against real KV. Gates: lint 0, test 0 (17
 suites, shapes 269), stress 70/70, check 0.
+
+## 2026-11-12 — TASK 2: projected legs, and the limit of what the ledger knows
+
+Deployed `2a793928-8277-4feb-9def-5fb80945a43c`. The page now draws a **Projected legs**
+block on the token path, built only from `src/ledger.mjs` — so it costs no request and
+reuses a 126-check module rather than inventing a second source.
+
+**The finding that changed the design.** TASK 2 asked for a *return* leg: "ATL→RDU
+Wednesday 15:30". The ledger cannot produce that. `buildLedger` reads `state.history`
+and `state.firstSeen`, and every row in them is a departure **from RDU** — so 15:30 on
+a Wednesday, if it were there, would describe RDU→ATL, not the flight home. Rather than
+label an outbound time as a return, the block says exactly what it is, in its own copy:
+*"this board only sweeps departures from its own origin, so these are that route's real
+departure times, never a held seat."* A reverse leg needs a producer that collects it;
+when that lands, `projectLeg` already takes the destination it is asked about and this
+surface is where the result goes.
+
+**Confidence is drawn, not asserted.** Three inks, from `confidenceFor(n)`:
+`established` (n ≥ 6) in acid with a solid rail, `repeated` (2–5) in bone with a solid
+rail, `single` in **warn** with a dashed rail and the words "single sighting". A
+projection is a `li.pcard`, never an `li.row`: no price, no seats, no PIN/CALENDAR —
+`test/shapes.mjs` asserts that the block contains no flight row at all.
+
+**Two bugs the pixels found, both real:**
+
+1. **The arm control would have been a dead end.** `normalizeWatch` accepts only
+   `date` and `always`; the button sent `mode: 'dest'`, which falls back to a date watch
+   with no date — the server would have refused it and the button would have reported a
+   validation error the owner could not act on. It now sends `always`.
+2. **`shortDay()` printed "Invalid Date."** A watch record with a missing date rendered
+   the literal string into the chip. The guard is in `shortDay` now (a malformed record
+   reads "one date"), asserted against a watch with a null date.
+
+The "Invalid Date" I first saw was actually produced by my own render fixture, which
+passed the same invalid mode. Worth writing down: the fixture was wrong, and checking
+that before "fixing" production copy is the difference between a repair and a lie.
+
+**Evidence, all in `docs/design-2026-11-12/`:**
+`task2-live-dtw.png` is the block rendered from the **real KV snapshot and the owner's
+real watch** (`w:rdu:DTW`): Tue 10:12 AM and Wed 4:00 PM, both `repeated · seen 2× in
+14 days`. `task2-projected-legs.png` is the n=1 contrast — ATL Wed `repeated` beside MCO
+Wed `single sighting` in warn ink — from a storyboard fixture whose extra history rows
+are synthesized (`.dry/`), because the live ledger has no n ≥ 6 case yet.
+`task2-watchbar.png` shows the armed chip (`DTW every date push stop`).
+
+**Storyboard status, honestly:** projection → arm surface → armed state verified;
+"fired → opened via `?focus`" verified separately in `focus-arrival.png` using the
+Task 1 machinery unchanged (the log entry carries the key, the page scrolls and
+outlines the row). What is **not** demonstrated is one continuous tap-through on the
+phone, because arming and tapping require presses on the device that this pass is not
+allowed to inject.
+
+**Not built:** TASK 4's search section, deferred by its own instruction ("after Task 2
+if budget does not permit"). TASK 1-residual's recheck affordance still waits on
+`/api/recheck`. TASKS 3 and 5 still wait on `/api/settings` and the briefing payload.
