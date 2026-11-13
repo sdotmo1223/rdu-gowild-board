@@ -1,0 +1,5 @@
+// AGP 8.2.2 is already in this machine's Gradle cache, and compileSdk 34 is the only
+// platform installed. Nothing here downloads at build time.
+plugins {
+    id 'com.android.application' version '8.2.2' apply false
+}

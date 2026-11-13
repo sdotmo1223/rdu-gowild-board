@@ -93,6 +93,8 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `src/dispatch.mjs` | `maybeDispatch()`: the Cloudflare Cron Trigger's stale-board gate, the 10-minute cooldown, and the GitHub `workflow_dispatch` call |
 | `tools/smoke.mjs` | post-deploy browser smoke: the live page loads, emits its script, and logs no console errors |
 | `tools/doc-lint.mjs` | fails the gate when README/AGENTS name a missing path or workflow |
+| `android/` | the phone app: **two** design directions tied to the system theme — FLAP in dark mode, GRID in light mode — each drawn with `Canvas` and `Paint`. No AndroidX, Material, Compose, Kotlin or font assets, because the generic look it competes with comes from default components. Built by `android/build-apk.sh` (aapt2 → javac → d8 → apksigner); Gradle dies here for want of memory. `android/README.md` has the run, override and capture commands |
+| `tools/android-fixture.mjs` | builds `android/app/src/main/assets/board.json` from a real capture, rebased to today/tomorrow at a 04:00 clock so every row is still ahead. Real observed fares only: the app labels itself `SAMPLE` because a bundled snapshot is not a live board |
 | `src/watch.mjs` | per-route bells: `normalizeWatch()`, `observe()`, `planWatch()` (available / sold out / cheaper / departing), `channelStatus()`, push+email+text delivery, `evaluateWatches()` on ingest |
 | `.github/workflows/sweep.yml` | the only collector cron: every origin, sequential, per-profile request budget. The older board.yml and lga.yml workflows were deleted 2026-11-11 — both were disabled_manually and both presented the read token to a write endpoint, so re-enabling either could only fail. Their names are deliberately not in backticks: tools/doc-lint.mjs treats a backticked workflow name as a claim that the file exists, and these two must stay deleted |
 | `src/index.js` | Worker router: `/s/<TOKEN>`, `/api/board` (token-gated), `/api/ingest` (token-gated snapshot write), PWA assets |
@@ -101,7 +103,11 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `collector/cookies.mjs` | optional cookie loading, never logs the value |
 | `tools/headless-probe.mjs` | one-request diagnostic; `HEADLESS=0` / `IGNORE_COOKIE=1` |
 | `tools/route-probe.mjs` | one-request "does Frontier sell this city pair?" probe: real Chromium + the collector parser |
-| `tools/render-state.mjs` | render `board.html` from a real collector snapshot |
+| `tools/render-state.mjs` | render `board.html` from a real collector snapshot. `NOW=` pins the clock; `STATE_IN=` picks the snapshot; `OUTBOX=` renders the alert log from an outbox fixture |
+| `tools/shot.mjs` | Playwright screenshot of a rendered page at 412×915 @2x (`SHOT_FULL=0` first screen, `SHOT_SCROLL=` offset, `SHOT_BODYCLASS=` a state the page only enters by clicking) |
+| `tools/shotdiff.mjs` | CLI pixel diff of two PNGs: prints the share changed and the bounding box, exits 1 when identical |
+| `tools/pngdiff.mjs` | the diff itself (Chromium canvas, no image dependency); shared by the CLI and the smoke gate |
+| `tools/board-fixture.mjs` | rebases a real snapshot to a 06:00 ET morning clock and writes the fresh/thin/empty/blocked fixtures a design review renders from |
 | `tools/seed-schedule.mjs` | rebuild `state.json` (incl. schedule) from `.sweep/` captures |
 | `TASKS.md` | the running list: one outcome per item, its evidence bar, and what it prevents. The first `open` item is the one being worked; never two at once. Update status in the same commit as the work |
 | `FAILURES.md` | every failure, why the first look missed it, the four patterns behind them, and a drill list per role. Read your role before touching its code |

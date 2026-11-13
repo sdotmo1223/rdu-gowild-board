@@ -192,6 +192,9 @@ for (const [name, state] of Object.entries(shapes)) {
       page.includes(`id="d-${d.date}"`),
       `${name}: the empty date ${d.date} still has its own section`,
     );
+    // A reason is a card now, not a footnote: a bordered block with a title, the
+    // sentence and a next step. The copy is unchanged; the frame is the upgrade.
+    ok(/class="state ecard/.test(page), `${name}: the reason on ${d.date} is a card`);
   }
   const emptyDates = view.dates.filter((d) => !d.rows.length).length;
   if (emptyDates) {
@@ -263,6 +266,74 @@ for (const [name, state] of Object.entries(shapes)) {
     }
   }
   eq(pages, 120, 'every fuzzed blob produced a page');
+}
+
+// --- the decision header, ranking and reason cards ---------------------------
+{
+  const two = snap({
+    flights: [
+      fl({ allin: 31.27, dep: `${D0} 18:30:00` }),
+      fl({ allin: 15.41, dep: `${D0} 21:20:00` }),
+      fl({ dest: 'MCO', allin: 25.21, dep: `${D0} 19:12:00` }),
+    ],
+  });
+  const view = buildBoard(two, NOW);
+  const page = renderPage(view, two, [], NOW, { basePath: '/s/abcdefgh1234', origin: 'RDU' });
+
+  ok(/class="decide"/.test(page), 'the decision header renders');
+  ok(/Best move/.test(page), 'the header names the answer');
+  ok(/all 14 routes checked within the hour/.test(page), 'a fresh snapshot says so in the header');
+
+  const section = page.slice(page.indexOf('id="d-'));
+  const order = [...section.matchAll(/data-allin="([\d.]+)"/g)].map((m) => Number(m[1]));
+  ok(order.length >= 3, 'the date section lists its rows');
+  eq(order[0], 15.41, 'the cheapest departure is ranked first, not the earliest');
+  ok(order.indexOf(31.27) > order.indexOf(25.21), 'and price ascends after it');
+
+  // The badge has to distinguish: ATL has two options, MCO has one.
+  eq((section.match(/badge best/g) || []).length, 1, 'the lowest-fare badge marks only a route with more than one option');
+
+  // Staleness must change the ruling, not only the banner.
+  const old = { ...two, updatedAt: NOW - 200 * 60000 };
+  const oldPage = renderPage(buildBoard(old, NOW), old, [], NOW, { basePath: '/s/abcdefgh1234', origin: 'RDU' });
+  ok(/treat every fare here as thin/.test(oldPage), 'a stale board is ruled thin in the header');
+  ok(!/all 14 routes checked within the hour/.test(oldPage), 'and never claims fresh coverage');
+
+  // Carried rows make the ledger look fresh for a date nobody re-asked. Found on the
+  // live board on 2026-11-12: the header claimed a full fresh check above a banner
+  // that said 13 rows were carried.
+  const carriedState = {
+    sweeps: [
+      {
+        date: D0,
+        dest: 'ATL',
+        ok: true,
+        at: NOW - 1200000,
+        carried: true,
+        carriedAt: NOW - 1200000,
+        flights: [fl({ dep: `${D0} 18:30:00` })],
+      },
+    ],
+    updatedAt: NOW,
+    routeCount: 14,
+  };
+  const carriedPage = renderPage(buildBoard(carriedState, NOW), carriedState, [], NOW, {
+    basePath: '/s/abcdefgh1234',
+    origin: 'RDU',
+  });
+  ok(/carried/.test(carriedPage), 'a carried row is named in the ruling');
+  ok(/not re-checked this hour/.test(carriedPage), 'and the ruling says what that means');
+  ok(!/all 14 routes checked within the hour/.test(carriedPage), 'the header never claims a fresh check over carried rows');
+
+  // The alert log is drawn from the outbox the Worker already reads.
+  const ob = {
+    recent: [{ state: 'dead', kind: 'soldout', dest: 'PHL', at: NOW - 3600000, createdAt: NOW - 3700000 }],
+    dead: 1,
+  };
+  const logPage = renderPage(view, two, [], NOW, { basePath: '/s/abcdefgh1234', origin: 'RDU', outbox: ob });
+  ok(/class="evlog"/.test(logPage), 'the alert log renders when the outbox has entries');
+  ok(/class="ev dead"/.test(logPage), 'a dead event keeps its own state class');
+  ok(!/class="evlog"/.test(page), 'and no log is invented when the outbox is empty');
 }
 
 console.log(`shapes: ${checks} checks passed`);

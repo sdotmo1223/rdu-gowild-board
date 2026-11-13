@@ -176,7 +176,10 @@ check('every date with rows emits real rows, never an empty list', () => {
   const view = buildBoard(state, NOW);
   const html = renderPage(view, state, [], NOW);
   assert.ok(!/<ul class="rows"><\/ul>/.test(html), 'no empty row list anywhere');
-  assert.equal((html.match(/<li class="row"/g) || []).length, 6);
+  // The decision header repeats the single best row above the fold, so count the
+  // rows inside the date sections: those are the ones this check is about.
+  const dated = html.slice(html.indexOf('id="d-'));
+  assert.equal((dated.match(/<li class="row"/g) || []).length, 6);
 });
 
 check('hostile city/stop strings are escaped, not executed', () => {

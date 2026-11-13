@@ -855,3 +855,111 @@ once and feeds the sheet, the arming call and delivery.
 **Still unproven:** no watch has ever delivered a push in production. The code path is
 covered by 127 checks and 9 more on topic resolution, but the only evidence that counts
 is one real notification on the phone (TASKS T1).
+
+## 2026-11-12 — the board as an instrument (five upgrades)
+
+The page was honest and slow to read: the answer to "is there a move right now?" sat
+900px down, rows were in clock order, and every empty date read like a log line. This
+pass changed presentation only — same KV, same numbers, no new endpoint, no collector
+change.
+
+**A. Decision header.** A `Best move` card above the coverage banner: the cheapest
+bookable departure, its date, the snapshot's age, and one ruling line built from the
+same coverage union the stale-alert path uses. It is a real `li.row` (data attributes,
+pin and calendar intact), so the hero cannot drift from the list it summarises. The
+ruling has three shapes — fresh, thin (a route's oldest reading ≥ 60 min, or a route
+that never answered), bad (snapshot stale, or no snapshot at all) — and the fresh form
+is the only one that claims the whole route count.
+
+**B. Ranked rows.** Rows sort by fare ascending with departure as the tie-break, so the
+price column reads as a sorted column. A `lowest fare` badge marks the cheapest row on
+a route only where that route has more than one option; on a one-option route it would
+mark every row and mean nothing. Date headers stick while reading and carry
+`checked ≤ X`. That is an upper bound, not a per-row age: rows do not store their own
+`at`, so the honest claim is the oldest readable one.
+
+**C. Reasons as cards.** Every empty reason — blocked, error, no flights, stale,
+folded, above the ceiling, peak, no GoWild — is a bordered card with a title, the
+existing sentence and one next-step line. Same vocabulary, same rule (no unlabelled
+empty date); `class="state ecard"` keeps the shapes count honest.
+
+**D. Alert continuity.** `outboxStatus` returns a bounded `recent` (last 24h, newest
+last, 8 max, no payload, no channels) and the page renders it as a log with per-state
+styling: delivered, retrying, dead, expired. Found while looking at the pixels: the
+dead-delivery banner took its reason from a dropped tombstone, so a correctly expired
+`departing` event printed "departure passed" under "could not be delivered". Fixed in
+`outboxStatus`, covered in `test/outbox.mjs`; a dropped event now reads `expired`.
+
+**E. Untouched surfaces.** Pin kept and made visible: a pinned bar names the pinned
+destinations and offers `clear`. The hero carries the same PIN and CALENDAR controls as
+every row, so ICS export has parity by construction. **PWA install on the S23 is still
+unverified** — it needs one human tap on the phone, and this pass did not have one.
+
+**Evidence.** Real Chromium at 412×915 @2x, on fixtures rebased to a 06:00 ET clock:
+31.2% of pixels changed on the fresh fixture and 34.1% on the empty one. The page grew
+from 4033 to 4853 px for 33 rows (+20%) — the decision card, the alert log and card
+padding. `SMOKE_SHOT=` captures a mobile screenshot during the live smoke;
+`SMOKE_BASELINE=` drives the same pixel diff as a pass/fail gate.
+
+Screenshots, 412 CSS px wide (`docs/design-2026-11-12/`):
+
+| file | what it shows |
+|---|---|
+| `before-fold-fresh.png` | the first screen before: masthead, then straight into a chronological list |
+| `after-fold-fresh.png` | the same snapshot after: best move, ruling, alert log, sticky date header |
+| `after-ranked-rows.png` | fare-ascending rows with one `lowest fare` badge per route that has a cheaper alternative |
+| `after-empty-cards.png` | empty dates as titled cards with a next step |
+| `after-pinbar.png` | the pinned bar (body class forced for the shot; the pins themselves live in `localStorage`) |
+
+## 2026-11-12 — TASK 0: the page is shipped
+
+The Worker was still serving the pre-A–E page: `/rdu` returned 150,689 bytes with
+**zero** `class="decide"`. It now returns this work, and the owner's phone can see it.
+
+| step | version | result |
+|---|---|---|
+| first deploy of the A–E surfaces | `90adaee6-d771-48d3-92e5-789cd705f138` | `/rdu` 158,800 B, `.decide` present |
+| carried-row ruling + grammar fix | `8e9a1bca-b6d3-41aa-b31b-5a1d695548c2` | header stops claiming a fresh check over carried rows |
+| copy tighten, stamp wrap | `ae773b57-bf92-426e-a68c-ca054f8df1fb`, `7eb76fb0-e82e-4370-a09b-9c7525814f67` | first screen 412 px wide, no horizontal overflow |
+
+**The live board immediately produced a real overclaim, which is why the first deploy
+was not the last.** The rendering at 50 min old read: *"all 14 routes checked within
+the hour · snapshot 50 min old"* directly above a PARTIAL SWEEP banner saying 13 rows
+were carried from 05:17 ET and 2026-11-14 reached 1/14 planned routes. The route
+ledger was fresh; a whole date had never been re-asked. `freshnessRuling` now orders
+its claims stale > carried-or-partial > route-never-answered > oldest ≥ 60 min > fresh,
+and refuses to name a route count at all when there is no ledger. It now reads:
+*"13 rows carried from 05:17 ET — not re-checked this hour"*, in the same warn ink as
+the banner below it. `test/shapes.mjs` pins the branch (261 checks), including that the
+fresh sentence cannot appear over a carried row.
+
+**Measured on the live origin, 412×915 @2x, real KV state:**
+`.decide` starts at **y=131** (limit 300); `scrollWidth == clientWidth == 412`; the
+masthead stamp ends at x=398. The first deploy also exposed a masthead wrap — the
+kicker broke across two lines and then the stamp ran off the right edge, where
+`overflow-x:hidden` would have clipped it on the phone. Both are fixed and the fix is
+the one that was measured, not the one that was assumed.
+
+**Tolerance, and what the pixel gate can honestly do.** Fixture-vs-live is **27.87%**
+of pixels: different fares, different rows, a different date. That number is recorded,
+not gated — content differs and no threshold makes it meaningful. `SMOKE_MAX_DIFF=2`
+against `docs/design-2026-11-12/live-baseline.png` is the layout gate for a redeploy
+with stable state (it passed at 0.01%), and `SMOKE_ASSERT_DECIDE=1` (y < 300) is the
+assertion that holds regardless of content, which is why it is the one wired to the
+acceptance criterion.
+
+**Owner-verify, recorded rather than implied:**
+
+1. **PWA install on the S23.** Needs one human tap in Chrome on the phone. Injected
+   taps are forbidden, so this pass could not do it.
+2. **Pin → bar wiring on the live page.** The bar itself is shot
+   (`after-pinbar.png`) with the body class forced; pinning two destinations and
+   watching the bar name them, then screenshotting it from the phone, was not done.
+
+**Infra audit for TASK 1–5 (checked in this tree, 2026-11-12):** no `?focus=` reader,
+no `/api/settings`, no itinerary store, no briefing payload, no click URL or booking
+deep link in any push. `src/index.js` routes are `/`, `/api/ingest`, `/api/dispatch`,
+`/api/watch`, `/api/board`. The per-route ledger (`state.coverage[route].lastOkAt`)
+and the collector's own `InternalSelect` URL template (`/Flight/InternalSelect?o1=…
+&d1=…&dd1=…&ADT=1&mon=true&promo=`) do exist, so the route-age line and a purchase
+link are sourceable today; the rest waits on its producer.

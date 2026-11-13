@@ -15,11 +15,24 @@ try {
   process.exit(1);
 }
 
-const now = Date.now();
+// NOW lets a design review render against the same clock the fixture was built for.
+// Default stays the real clock: nothing in a deploy path should pin time.
+const now = process.env.NOW ? Number(process.env.NOW) : Date.now();
 const view = buildBoard(state, now);
+
+// OUTBOX lets a design review show the alert log without a live Worker: the file is
+// a plain array of outbox entries, which is exactly what the KV key holds.
+let outbox = null;
+if (process.env.OUTBOX) {
+  const entries = JSON.parse(readFileSync(process.env.OUTBOX, 'utf8'));
+  const store = { get: async () => entries, put: async () => {} };
+  const { outboxStatus } = await import('../src/outbox.mjs');
+  outbox = await outboxStatus(store, 'rdu', now);
+}
 const html = renderPage(view, state, frequencyTable(state, ROUTES), now, {
   basePath: '/s/LOCALPREVIEW',
   origin: ORIGIN,
+  outbox,
 });
 writeFileSync('board.html', html);
 

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- debuggable=true so `adb run-as` can pull the design captures this app writes.
+         AGP adds this for debug builds; the raw aapt2 pipeline does not. -->
+    <application
+        android:allowBackup="false"
+        android:debuggable="true"
+        android:label="RDU GoWild"
+        android:supportsRtl="false"
+        android:theme="@style/Theme.Gowild">
+
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
+            android:exported="true"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.Gowild">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

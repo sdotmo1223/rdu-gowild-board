@@ -437,5 +437,42 @@ const http = (status) => async () => new Response('', { status });
   ok(!/gowild-abc/.test(page), 'without putting the topic on the page');
 }
 
+// A correctly expired `departing` event is the system working, so its reason must
+// never be printed under "could not be delivered". Found in the pixel review on
+// 2026-11-12: the dead banner quoted "departure passed" from a dropped tombstone.
+{
+  const deadEntry = {
+    key: 'k1',
+    kind: 'soldout',
+    dest: 'PHL',
+    payload: { title: 'PHL sold out' },
+    channels: ['push'],
+    attempts: MAX_ATTEMPTS,
+    state: 'dead',
+    createdAt: NOW - 7200000,
+    deadAt: NOW - 3000000,
+    lastReason: 'push: HTTP 522',
+  };
+  const expired = {
+    key: 'k2',
+    kind: 'departing',
+    dest: 'DEN',
+    payload: { title: 'DEN departing' },
+    channels: ['push'],
+    attempts: 1,
+    state: 'dropped',
+    createdAt: NOW - 7000000,
+    deadAt: NOW - 600000,
+    lastReason: 'departure passed',
+  };
+  const store = { get: async () => [deadEntry, expired], put: async () => {} };
+  const status = await outboxStatus(store, 'rdu', NOW);
+  eq(status.lastReason, 'push: HTTP 522', 'the dead banner quotes a dead event, not an expired one');
+  eq(status.dead, 1, 'one dead event');
+  eq(status.recent.length, 2, 'both events are in the page alert log');
+  const deadRow = status.recent.find((e) => e.state === 'dead');
+  ok(deadRow && !('payload' in deadRow) && !('channels' in deadRow), 'the log carries no push payload or topic');
+}
+
 globalThis.fetch = realFetch;
 console.log(`outbox: ${checks} checks passed`);

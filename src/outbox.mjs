@@ -268,8 +268,29 @@ export async function outboxStatus(env, profile, now = Date.now()) {
     pending
       .filter((e) => e.lastReason)
       .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))[0] || null;
-  const ended = [...dead, ...dropped].sort((a, b) => Number(b.deadAt || 0) - Number(a.deadAt || 0))[0] || null;
+  // The banner's reason must come from a DEAD entry. `ended` used to include dropped
+  // tombstones, so a correctly expired `departing` event (reason: "departure passed")
+  // could supply the reason printed under "could not be delivered" — the page
+  // blaming a provider for a plane that left on time.
+  const ended = dead.sort((a, b) => Number(b.deadAt || 0) - Number(a.deadAt || 0))[0] || null;
+  // The page's alert log. Bounded, and stripped of the rendered payload and the
+  // channels: the reader needs to know that MCO "cheaper" fired at 18:04 and whether
+  // it arrived, not what the push said or which topic carried it.
+  const DAY_MS = 24 * 3600 * 1000;
+  const recent = list
+    .filter((e) => Number(e.createdAt) > 0 && now - Number(e.createdAt) <= DAY_MS)
+    .sort((a, b) => Number(b.createdAt) - Number(a.createdAt))
+    .slice(0, 8)
+    .map((e) => ({
+      state: e.state,
+      kind: e.kind,
+      dest: e.dest,
+      createdAt: Number(e.createdAt) || null,
+      at: Number(e.state === 'sent' ? e.deliveredAt : e.state === 'pending' ? e.nextAt : e.deadAt) || Number(e.createdAt) || null,
+      reason: e.state === 'dead' ? e.lastReason || null : null,
+    }));
   return {
+    recent,
     pending: pending.length,
     dead: dead.length,
     dropped: dropped.length,

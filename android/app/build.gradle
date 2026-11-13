@@ -1,0 +1,33 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.freebuff.gowild'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.freebuff.gowild'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '0.1-designs'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+// No AndroidX, no AppCompat, no Material, no Compose, and no Kotlin: every pixel is
+// drawn by the five design classes against the framework Canvas, so nothing in this
+// UI inherits a default component look.
+dependencies {
+}

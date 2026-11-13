@@ -87,6 +87,153 @@ function coverageHtml(view) {
   return `<p class="meta cov">${c.warn ? `<strong>${text}</strong>` : text}</p>`;
 }
 
+function rowKey(r) {
+  return `${r.dest}|${r.dep}`;
+}
+
+// Cheapest-first, then the earlier departure as the tie-break. A list in clock order
+// answers "what happens next"; the owner's question is "what is the move", and a
+// sorted price column answers it before the copy is read. Rows keep their real data;
+// ranking is the only thing this changes, so a pinned or watched row cannot be lost.
+function rankRows(rows) {
+  const cheapestOnRoute = new Map();
+  const secondOnRoute = new Map();
+  for (const r of rows) {
+    const v = Number(r.allin);
+    const low = cheapestOnRoute.get(r.dest);
+    const next = secondOnRoute.get(r.dest);
+    if (low === undefined || v < low) {
+      if (low !== undefined) secondOnRoute.set(r.dest, low);
+      cheapestOnRoute.set(r.dest, v);
+    } else if (v > low && (next === undefined || v < next)) {
+      secondOnRoute.set(r.dest, v);
+    }
+  }
+  const isCheapest = (r) => Number(r.allin) === cheapestOnRoute.get(r.dest);
+  // The badge only earns its space where it distinguishes something: on a route with
+  // a single option it would mark every row on the page and mean nothing.
+  // Plain fare-ascending: the price column then reads as a sorted column, which is
+  // the fastest thing the eye can check. Tiering route-cheapest above cheaper rows
+  // elsewhere made the column jump ($38.01 above three $25.21s) and cost the glance.
+  const sorted = rows.slice().sort((a, b) => {
+    if (Number(a.allin) !== Number(b.allin)) return Number(a.allin) - Number(b.allin);
+    return String(a.dep).localeCompare(String(b.dep));
+  });
+  // The badge has to be worth a line of chrome: it marks a departure that is strictly
+  // cheaper than another departure to the same place. Ties and one-option routes drop
+  // it — marking ten of sixteen rows said nothing, and "lowest fare" on a tie is not a
+  // saving. The slot stays for the percentile work (bottom-25%, cheapest-seen).
+  const best = new Set();
+  const marked = new Set();
+  for (const r of sorted) {
+    const spread = secondOnRoute.get(r.dest);
+    if (isCheapest(r) && spread !== undefined && spread > Number(r.allin) && !marked.has(r.dest)) {
+      best.add(rowKey(r));
+      marked.add(r.dest);
+    }
+  }
+  return { rows: sorted, best };
+}
+
+// The one freshness sentence the header is allowed to say. It reuses the coverage
+// rule the stale-alert path uses, so the header cannot claim more than a push would:
+// a snapshot that is fresh over a route that never answered is not a fresh board.
+function freshnessRuling(view) {
+  const cov = view && view.coverage;
+  const neverN = Number(cov && cov.neverAnswered) || 0;
+  const oldest = cov && Number.isFinite(Number(cov.oldestRouteAgeMin)) ? Number(cov.oldestRouteAgeMin) : null;
+  if (view && view.stale) {
+    return { tone: 'bad', line: `last full check ${spanText(view.ageMin)} ago \u2014 treat every fare here as thin` };
+  }
+  if (!view || !Array.isArray(view.dates) || !view.dates.length) {
+    return { tone: 'bad', line: 'no snapshot has been written \u2014 this is a missing run, not an empty board' };
+  }
+  // Carried rows are real fares from an earlier sweep, so the route ledger can look
+  // fresh while a whole date was never re-asked. Measured on the live board
+  // 2026-11-12: the ledger said "all 14 routes checked within the hour" directly above
+  // a banner saying 13 rows were carried -- the header overclaiming, which is the one
+  // thing this line exists to prevent. Carried or partial now outranks fresh.
+  const dates = Array.isArray(view.dates) ? view.dates : [];
+  const carried = dates.reduce((n, d) => n + (Number(d.carriedRoutes) || 0), 0);
+  const carriedFrom = dates.map((d) => Number(d.carriedAt)).filter((n) => Number.isFinite(n) && n > 0);
+  const partial = Boolean(view && view.error && view.error.kind === 'partial');
+  if (partial || carried > 0) {
+    const when = carriedFrom.length ? ` from ${hhmm(Math.min(...carriedFrom))} ET` : '';
+    const what = carried
+      ? `${carried} row${carried === 1 ? '' : 's'} carried${when}`
+      : 'the last sweep was partial';
+    return { tone: 'warn', line: `${what} \u2014 not re-checked this hour` };
+  }
+  if (!cov) {
+    return { tone: 'warn', line: 'no route ledger yet \u2014 cannot say when each route was last checked' };
+  }
+  if (neverN) {
+    return {
+      tone: 'warn',
+      line: `${neverN} route${neverN === 1 ? '' : 's'} never answered a sweep \u2014 coverage is incomplete`,
+    };
+  }
+  if (oldest !== null && oldest >= 60) {
+    return { tone: 'warn', line: `oldest route reading is ${spanText(oldest)} old \u2014 treat this board as thin` };
+  }
+  return {
+    tone: 'ok',
+    line: `all ${Number(view.routeCount) || 0} routes checked within the hour \u00b7 snapshot ${spanText(view.ageMin)} old`,
+  };
+}
+
+// Above the fold, always: the single best bookable departure and the ruling on how
+// much to trust it. The hero is a real row (same data attributes, same pin/calendar
+// controls), so it cannot drift from the list it summarises.
+function bestDealHtml(view, now, ctx) {
+  const pool = [];
+  for (const d of view.dates) for (const r of d.rows) pool.push({ r, d });
+  pool.sort((a, b) => Number(a.r.allin) - Number(b.r.allin) || String(a.r.dep).localeCompare(String(b.r.dep)));
+  const ruling = freshnessRuling(view);
+  const pick = pool[0] || null;
+  const stamp = pick ? `${shortDay(pick.d.date)} \u00b7 ${ago(view.ageMin)}` : ago(view.ageMin);
+  const body = pick
+    ? `<ul class="rows drows">${rowHtml(pick.r, ctx)}</ul>`
+    : `<p class="dnone">${view.dates.length ? 'Nothing under the ceiling is bookable right now. Every date below says why.' : 'Nothing is loaded yet.'}</p>`;
+  return `<section class="decide" aria-label="Best move right now">
+    <div class="dtop"><span class="dk">Best move</span><span class="dage">${esc(stamp)}</span></div>
+    ${body}
+    <p class="drule ${ruling.tone}">${esc(ruling.line)}</p>
+  </section>`;
+}
+
+// A reason is not a footnote. Each empty date gets a card that says what happened in
+// the words the board already uses, plus what the reader can do about it. The copy
+// itself is unchanged: this is presentation, not new logic.
+function stateCard(cls, title, html, hint) {
+  const ico = cls === 'bad' ? '!' : cls === 'warn' ? '\u00b7' : 'i';
+  return `<div class="state ecard ${cls}"><span class="ico" aria-hidden="true">${ico}</span><div class="cbody"><b>${esc(title)}</b><p>${html}</p>${hint ? `<em>${esc(hint)}</em>` : ''}</div></div>`;
+}
+
+const ALERT_KIND = {
+  available: 'seats opened',
+  soldout: 'sold out',
+  cheaper: 'cheaper',
+  departing: 'departing soon',
+  departed: 'left',
+};
+
+// A push that fired must leave a trace the board can show, or the reader taps a
+// notification and lands on a list with no memory of it. Entries come from the
+// outbox that already exists in KV; nothing is fetched and nothing is invented.
+function eventLogHtml(ob) {
+  const list = ob && Array.isArray(ob.recent) ? ob.recent : [];
+  if (!list.length) return '';
+  const state = { sent: 'delivered', pending: 'retrying', dead: 'dead', dropped: 'expired' };
+  const rows = list
+    .map(
+      (e) =>
+        `<li class="ev ${esc(e.state)}"><b>${esc(e.dest)}</b><span class="ek">${esc(ALERT_KIND[e.kind] || e.kind)}</span><time>${esc(hhmm(e.at))}</time><span class="est">${esc(state[e.state] || e.state)}</span></li>`,
+    )
+    .join('');
+  return `<details class="evlog"${Number(ob.dead) > 0 ? ' open' : ''}><summary>Last 24h of alerts \u00b7 ${list.length}</summary><p class="evnote">Times are ET. A dead event is one that never reached you; the watch that fired it is still armed.</p><ul class="evlist">${rows}</ul></details>`;
+}
+
 function rowHtml(r, ctx = {}) {
   const watched = Boolean(ctx && ctx.canWatch && ctx.watched && ctx.watched.has(r.dest));
   const nextDay = dayOf(r.arr) && dayOf(r.dep) && dayOf(r.arr) !== dayOf(r.dep);
@@ -111,6 +258,7 @@ function rowHtml(r, ctx = {}) {
           <span class="arr">${arrive}</span>
           <span>${esc(fmtDuration(r.dur))}</span>
           ${r.nonstop ? '<span class="badge nonstop">nonstop</span>' : `<span class="badge stops">${esc(r.stops)}</span>`}
+          ${ctx && ctx.best && ctx.best.has(rowKey(r)) ? '<span class="badge best">lowest fare</span>' : ''}
           ${seats}
           ${r.leaveBy ? `<span class="leave ${r.tight ? 'tight' : ''}">leave by ${fmtTime(r.leaveBy)}${r.tight ? ' &middot; leave now' : ''}</span>` : ''}
         </p>
@@ -206,6 +354,9 @@ function watchBar(ctx) {
 }
 
 function dateSection(d, view, now, index = 0, ctx = {}) {
+  // Ranked for action, not chronology: cheapest seat on each route first.
+  const ranked = d.status === 'ok' ? rankRows(d.rows) : { rows: d.rows || [], best: new Set() };
+  const rowCtx = { ...ctx, best: ranked.best };
   const label = d.blackout || d.peak ? `<span class="badge peak">${esc(PEAK_LABEL)}</span>` : '';
   const freshN = d.freshRoutes == null ? d.routesScanned : d.freshRoutes;
   const carriedNote = d.carriedRoutes
@@ -216,8 +367,8 @@ function dateSection(d, view, now, index = 0, ctx = {}) {
   if (d.status === 'ok') {
     // Only departures that can still be booked are listed. If some of this date's
     // options have already flown, that is stated rather than left as a silent gap.
-    const live = d.rows;
-    body = `<ul class="rows">${live.map((r) => rowHtml(r, ctx)).join('')}</ul>`;
+    const live = ranked.rows;
+    body = `<ul class="rows">${live.map((r) => rowHtml(r, rowCtx)).join('')}</ul>`;
     const gone = Number(d.pastCount) || 0;
     if (gone) {
       body += `<div class="state">${gone} more under $${MAX_ALL_IN.toFixed(2)} on this date already departed and cannot be booked.</div>`;
@@ -239,18 +390,18 @@ function dateSection(d, view, now, index = 0, ctx = {}) {
     }
     if (d.above > 0) body += `<p class="note">${d.above} further GoWild departure${d.above === 1 ? '' : 's'} priced above $${MAX_ALL_IN.toFixed(2)}.</p>`;
   } else if (d.status === 'peak') {
-    body = `<div class="state peakbox"><strong>${esc(PEAK_LABEL)}</strong><span>GoWild is not bookable at the normal fare on this date${d.lowest ? ` — lowest GoWild fare seen $${d.lowest.toFixed(2)}` : ''}.</span></div>`;
+    body = stateCard('warn', PEAK_LABEL, `GoWild is not bookable at the normal fare on this date${d.lowest ? ` — lowest GoWild fare seen $${d.lowest.toFixed(2)}` : ''}.`, 'Blackout dates come from the calendar in src/routes.js, not from Frontier.');
   } else if (d.status === 'blocked') {
-    body = `<div class="state bad">${esc(STATE_COPY.blocked)}</div>`;
+    body = stateCard('bad', 'Frontier blocked the check', esc(STATE_COPY.blocked), 'The next sweep tries again; nothing on this date is hidden.');
   } else if (d.status === 'error') {
-    body = `<div class="state bad">${esc(STATE_COPY.error)}</div>`;
+    body = stateCard('bad', 'The check failed', esc(STATE_COPY.error), 'No reading came back — different from a date with no seats.');
   } else if (d.status === 'stale') {
     // The rows exist and are priced, but their provenance is older than the board
     // will stand behind. Withholding them is the only honest option.
-    body = `<div class="state warn">Every option on this date was last checked more than 3 hours ago${d.carriedAt ? ` (${esc(hhmm(d.carriedAt))} ET)` : ''}, so none is offered as bookable. A re-check is pending.</div>`;
+    body = stateCard('warn', 'Too old to stand behind', `Every option on this date was last checked more than 3 hours ago${d.carriedAt ? ` (${esc(hhmm(d.carriedAt))} ET)` : ''}, so none is offered as bookable.`, 'A stale fare shown as an offer would be a lie, so it is withheld instead.');
   } else if (d.status === 'folded') {
     const cap = `${MAX_STOPS} stop${MAX_STOPS === 1 ? '' : 's'} / ${Math.round(MAX_DURATION_MIN / 60)}h`;
-    body = `<div class="state warn">${d.folded.length} GoWild option${d.folded.length === 1 ? '' : 's'} under $${MAX_ALL_IN.toFixed(2)}, all beyond ${cap}.</div><details class="folded" open><summary>Show them anyway</summary><ul class="rows">${d.folded.map((f) => rowHtml(f, ctx)).join('')}</ul></details>`;
+    body = `${stateCard('warn', 'Under the ceiling, over the limits', `${d.folded.length} GoWild option${d.folded.length === 1 ? '' : 's'} under $${MAX_ALL_IN.toFixed(2)}, all beyond ${cap}.`, 'Real departures, just long ones — open them if time is cheaper than money today.')}<details class="folded" open><summary>Show them anyway</summary><ul class="rows">${d.folded.map((f) => rowHtml(f, rowCtx)).join('')}</ul></details>`;
     // The cheaper rows that already left are stated here too: showing only the
     // over-limit options would imply this date had nothing better to offer.
     const goneHere = Number(d.pastCount) || 0;
@@ -272,9 +423,9 @@ function dateSection(d, view, now, index = 0, ctx = {}) {
     if (Number(d.cheapDeparted)) {
       detail += ` ${d.cheapDeparted} cheaper option${d.cheapDeparted === 1 ? '' : 's'} on this date already departed.`;
     }
-    body = `<div class="state warn">${esc(STATE_COPY.above(d))}${detail}</div>`;
+    body = stateCard('warn', 'Everything is above the ceiling', `${esc(STATE_COPY.above(d))}${detail}`, 'Raising the ceiling is a code change (MAX_ALL_IN), not a setting.');
   } else if (d.status === 'noflights') {
-    body = `<div class="state">${esc(STATE_COPY.noflights)}</div>`;
+    body = stateCard('', 'No departures published', esc(STATE_COPY.noflights), 'An empty schedule, not a failed check.');
   } else if (
     d.status === 'nogowild' &&
     view &&
@@ -288,9 +439,9 @@ function dateSection(d, view, now, index = 0, ctx = {}) {
     view.zero.routes.length >= (Number(view.routeCount) || Infinity)
   ) {
     const hrs = Math.max(1, Math.round((now - view.zero.since) / 3600000));
-    body = `<div class="state warn">${d.total} departure${d.total === 1 ? '' : 's'}, but Frontier released no GoWild seats. <strong>No GoWild from ${esc(PAGE_ORIGIN)} in ${view.zero.count} sweeps over ${hrs}h</strong> &mdash; that reads as a station-level decision, not a quiet day.</div>`;
+    body = stateCard('warn', 'No GoWild seats released', `${d.total} departure${d.total === 1 ? '' : 's'}, but Frontier released no GoWild seats. <strong>No GoWild from ${esc(PAGE_ORIGIN)} in ${view.zero.count} sweeps over ${hrs}h</strong> &mdash; that reads as a station-level decision, not a quiet day.`, 'Every route in the profile was asked, so this is a station-wide claim.');
   } else {
-    body = `<div class="state warn">${esc(STATE_COPY.nogowild(d))}</div>`;
+    body = stateCard('warn', 'No GoWild on this date yet', esc(STATE_COPY.nogowild(d)), 'Frontier releases GoWild seats close-in; the next sweeps will say if that changes.');
   }
 
   return `<section class="date" id="d-${esc(d.date)}">
@@ -300,6 +451,7 @@ function dateSection(d, view, now, index = 0, ctx = {}) {
         <h2>${esc(shortDay(d.date))}${label}</h2>
         <span class="dsub">${dateSub(d, now)}</span>
       </div>
+      ${d.rows.length ? `<span class="agechip${Number(d.oldestAgeMin) > 60 ? ' warn' : ''}">checked \u2264 ${esc(spanText(d.oldestAgeMin))}</span>` : ''}
       <a class="perm" href="#d-${esc(d.date)}" aria-label="Link to ${esc(d.date)}">#</a>
     </div>
     ${body}
@@ -589,12 +741,13 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
 
   /* masthead — record-sleeve lockup over a departure board */
   .mast { display:flex; flex-direction:column; gap:9px; padding:0 0 13px; border-bottom:1px solid var(--rule-2); }
-  .mast-top { display:flex; align-items:center; justify-content:space-between; gap:12px; }
-  .kicker { display:flex; align-items:center; gap:7px; min-width:0;
+  .mast-top { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+  .kicker { display:flex; align-items:center; gap:7px; min-width:0; flex:none; white-space:nowrap;
             font-family:var(--mono); font-size:8.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--dim); }
   .kicker .live { flex:none; width:5px; height:5px; background:var(--acid); font-style:normal;
                   box-shadow:0 0 0 2px rgba(217,242,77,.16); }
-  .stamp { font-family:var(--mono); font-size:9.5px; letter-spacing:.05em; color:var(--dim); white-space:nowrap; }
+  .stamp { font-family:var(--mono); font-size:9.5px; letter-spacing:.05em; color:var(--dim);
+           min-width:0; text-align:right; }
   .stamp.stale { color:var(--warn); }
   h1 { margin:0; display:flex; align-items:center; flex-wrap:wrap; gap:11px;
        font-family:var(--display); font-weight:700; font-size:clamp(38px,12.5vw,58px);
@@ -685,6 +838,73 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
   .state.peakbox strong { display:block; margin-bottom:3px; font-family:var(--mono);
                           font-size:9px; letter-spacing:.13em; text-transform:uppercase; color:var(--warn); }
 
+  /* the decision header: the answer above the fold, always */
+  .decide { margin:14px 0 0; border:1px solid var(--rule-2); background:var(--ink-2); }
+  .dtop { display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:9px 12px 0; }
+  .dk { font-family:var(--mono); font-size:8px; letter-spacing:.24em; text-transform:uppercase; color:var(--acid); }
+  .dage { font-family:var(--mono); font-size:8px; letter-spacing:.1em; color:var(--faint); }
+  .drows { margin:6px 0 0; }
+  .drows li.row { padding:10px 12px; border-top:1px solid var(--rule); }
+  .dnone { margin:0; padding:12px; font-size:12.5px; line-height:1.5; color:var(--bone-2); }
+  .drule { margin:0; padding:8px 12px; border-top:1px solid var(--rule); font-family:var(--mono);
+           font-size:8.5px; letter-spacing:.04em; line-height:1.6; color:var(--faint); }
+  .drule.warn { color:var(--warn); }
+  .drule.bad { color:var(--bad); }
+
+  /* a reason is a card, not a debug line */
+  .ecard { display:flex; align-items:flex-start; gap:11px; margin:12px 0; padding:12px;
+           border:1px solid var(--rule); border-left:3px solid var(--rule-2); background:var(--ink); }
+  .ecard .ico { flex:none; width:17px; height:17px; margin-top:1px; display:grid; place-items:center;
+                border:1px solid var(--rule-2); font-family:var(--mono); font-size:9px; line-height:1; color:var(--dim); }
+  .ecard .cbody { min-width:0; }
+  .ecard b { display:block; margin-bottom:4px; font-family:var(--mono); font-size:8.5px;
+             letter-spacing:.15em; text-transform:uppercase; color:var(--bone); }
+  .ecard p { margin:0; font-size:12.5px; line-height:1.5; color:var(--bone-2); }
+  .ecard p strong { color:var(--bone); }
+  .ecard em { display:block; margin-top:6px; font-style:normal; font-family:var(--mono);
+              font-size:8px; letter-spacing:.08em; line-height:1.6; color:var(--faint); }
+  .ecard.bad { border-color:#5c2a22; border-left-color:var(--bad); }
+  .ecard.bad .ico { color:var(--bad); border-color:#5c2a22; }
+  .ecard.bad p { color:#f0b6ab; }
+  .ecard.warn { border-color:#5c4520; border-left-color:var(--warn); }
+  .ecard.warn .ico { color:var(--warn); border-color:#5c4520; }
+  .ecard.warn p { color:#e8c894; }
+
+  /* freshness on every date header, and a header that stays put while reading */
+  .dhead { position:sticky; top:0; z-index:4; background:var(--ink-2); }
+  .agechip { flex:none; margin-left:auto; align-self:flex-start; padding:2px 5px; border:1px solid var(--rule-2);
+             font-family:var(--mono); font-size:7.5px; letter-spacing:.08em; color:var(--faint); white-space:nowrap; }
+  .agechip.warn { color:var(--warn); border-color:rgba(240,173,60,.4); }
+  .badge.best { color:var(--acid); border-color:rgba(217,242,77,.5); }
+
+  /* what fired, so a push and its row are the same object to the eye */
+  .evlog { margin:12px 0 0; padding:9px 0; border-top:1px solid var(--rule); border-bottom:1px solid var(--rule); }
+  .evlog summary { font-size:8.5px; }
+  .evnote { margin:8px 0 0; font-family:var(--mono); font-size:8px; letter-spacing:.04em;
+            line-height:1.6; color:var(--faint); }
+  .evlist { list-style:none; margin:8px 0 0; padding:0; display:flex; flex-direction:column; gap:5px; }
+  .ev { display:flex; align-items:baseline; gap:8px; font-family:var(--mono); font-size:9px;
+        letter-spacing:.04em; color:var(--faint); }
+  .ev b { color:var(--bone); letter-spacing:.1em; }
+  .ev .ek { color:var(--bone-2); }
+  .ev time { margin-left:auto; }
+  .ev .est { min-width:62px; text-align:right; font-size:8px; letter-spacing:.12em; text-transform:uppercase; }
+  .ev.sent .est { color:var(--acid); }
+  .ev.pending .est { color:var(--warn); }
+  .ev.dead .est { color:var(--bad); }
+  /* an expired departing event is the system working, not a failure */
+  .ev.dropped .est { color:var(--faint); }
+  .ev.dead b { color:#f0b6ab; }
+
+  /* pins, said out loud instead of being an invisible localStorage trick */
+  .pinbar { display:none; align-items:baseline; gap:9px; margin:10px 0 0; padding:7px 10px;
+            border:1px solid var(--acid); background:rgba(217,242,77,.06);
+            font-family:var(--mono); font-size:8.5px; letter-spacing:.1em;
+            text-transform:uppercase; color:var(--acid); }
+  body.pinned-mode .pinbar { display:flex; }
+  .pinbar b { color:var(--bone); letter-spacing:.06em; }
+  .pinbar .act { margin-left:auto; color:var(--acid); border-color:var(--acid); }
+
   /* liner notes */
   .sect { margin:26px 0 0; display:flex; align-items:center; gap:10px;
           font-family:var(--mono); font-size:8.5px; letter-spacing:.24em; text-transform:uppercase; color:var(--faint); }
@@ -767,6 +987,11 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
   /* phone: the row keeps its three columns and gives back only what it can spare */
   @media (max-width:430px) {
     body { padding:16px 14px 30px; }
+    /* the masthead is a signpost, not the answer: it must not push the best-move
+       card past the first screen on the phone this is read on */
+    h1 { font-size:clamp(34px,10.5vw,44px); }
+    .mast { gap:7px; padding-bottom:11px; }
+    .strap { font-size:8px; }
     li.row { grid-template-columns:54px minmax(0,1fr) auto; column-gap:10px; }
     .dep { font-size:11.5px; }
     .dest { font-size:15px; }
@@ -788,9 +1013,12 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
     <span>Read-only</span>
   </div>
 </header>
+${bestDealHtml(view, now, watchCtx)}
 ${coverageHtml(view)}
 ${banner}
 ${watchBar(watchCtx)}
+${eventLogHtml(ob)}
+<div class="pinbar"><span>Pinned</span><b id="pinlist"></b><button type="button" class="act" id="pinclear">clear</button></div>
 ${view.dates.map((d, i) => dateSection(d, view, now, i, watchCtx)).join('')}
 <p class="sect">Liner notes</p>
 <div class="notes">
@@ -951,6 +1179,8 @@ window.__wcfg = ${watchJson};
   function applyPins() {
     var p = pins();
     document.body.classList.toggle('pinned-mode', p.length > 0);
+    var lbl = document.getElementById('pinlist');
+    if (lbl) lbl.textContent = p.length ? p.join(' \u00b7 ') : '';
     var rows = document.querySelectorAll('li.row');
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i], on = p.indexOf(r.dataset.dest) !== -1;
@@ -1006,6 +1236,13 @@ window.__wcfg = ${watchJson};
     localStorage.setItem(PINS, JSON.stringify(p));
     applyPins();
   });
+  var pinClear = document.getElementById('pinclear');
+  if (pinClear) {
+    pinClear.addEventListener('click', function () {
+      localStorage.setItem(PINS, '[]');
+      applyPins();
+    });
+  }
   applyPins();
   setInterval(function () { if (!document.hidden && !document.getElementById('wsheet')) location.reload(); }, 60000);
   if (window.__basePath && 'serviceWorker' in navigator) {

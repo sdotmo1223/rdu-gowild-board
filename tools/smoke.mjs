@@ -49,6 +49,42 @@ async function once(target) {
   }
 }
 
+// Optional visual gate. A page that renders, runs its script and logs nothing can
+// still be laid out wrong -- the header could be pushed off the first screen, or the
+// rows could reflow at 412px. With SMOKE_SHOT set, the smoke run also captures the
+// page at the owner's device width; with SMOKE_BASELINE set it diffs against a known
+// good shot and fails when more than SMOKE_MAX_DIFF percent of pixels moved.
+async function visualCheck(target) {
+  const shotPath = process.env.SMOKE_SHOT;
+  if (!shotPath) return null;
+  const { chromium: cc } = await import('playwright');
+  const browser = await cc.launch();
+  try {
+    const context = await browser.newContext({ viewport: { width: 412, height: 915 }, deviceScaleFactor: 2 });
+    const page = await context.newPage();
+    await page.goto(target, { waitUntil: 'domcontentloaded', timeout: TIMEOUT_MS });
+    await page.waitForTimeout(1200);
+    await page.screenshot({ path: shotPath, fullPage: false });
+    // Structure, measured rather than eyeballed: the decision header has to be inside
+    // the first screen at the owner's device width, against real KV state.
+    /* eslint-disable no-undef */ // this callback runs inside the page, not in node
+    const decideTop = await page.evaluate(() => {
+      const el = document.querySelector('.decide');
+      return el ? Math.round(el.getBoundingClientRect().top + globalThis.scrollY) : null;
+    });
+    /* eslint-enable no-undef */
+    if (process.env.SMOKE_ASSERT_DECIDE) {
+      const limit = Number(process.env.SMOKE_DECIDE_MAX_Y || 300);
+      if (decideTop === null) problems.push('no .decide header on the live page');
+      else if (decideTop >= limit) problems.push(`.decide starts at y=${decideTop}, limit ${limit}`);
+      else console.log(`smoke decide: header starts at y=${decideTop} (limit ${limit})`);
+    }
+    return shotPath;
+  } finally {
+    await browser.close();
+  }
+}
+
 const problems = [];
 let result = null;
 for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
@@ -64,6 +100,21 @@ for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
   if (result.text.length < 200) problems.push(`the page text is only ${result.text.length} chars`);
   if (!result.scripts) problems.push('no client script was emitted');
   if (result.errors.length) problems.push(`console errors: ${result.errors.slice(0, 3).join(' | ')}`);
+  if (problems.length === 0 && (process.env.SMOKE_SHOT || process.env.SMOKE_BASELINE)) {
+    try {
+      const shot = await visualCheck(url);
+      if (shot) console.log(`smoke shot: ${shot}`);
+      if (shot && process.env.SMOKE_BASELINE) {
+        const { diffPngs } = await import('./pngdiff.mjs');
+        const d = await diffPngs(process.env.SMOKE_BASELINE, shot);
+        const max = Number(process.env.SMOKE_MAX_DIFF || 2);
+        console.log(`smoke visual: ${d.pct.toFixed(2)}% of pixels differ from baseline (limit ${max}%)`);
+        if (d.pct > max) problems.push(`visual change ${d.pct.toFixed(2)}% exceeds ${max}%`);
+      }
+    } catch (err) {
+      problems.push(`screenshot failed: ${String((err && err.message) || err).slice(0, 160)}`);
+    }
+  }
   if (problems.length === 0) {
     console.log(`smoke ok: ${url} (${result.title || 'no title'}, ${result.text.length} chars, ${result.scripts} script tag(s))`);
     process.exit(0);
