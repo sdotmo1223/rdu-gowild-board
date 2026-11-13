@@ -168,7 +168,11 @@ function stubFetch(status = 204) {
   await worker.scheduled({ cron: '*/15 * * * *', scheduledTime: NOW }, env, ctx);
   ok(waited && typeof waited.then === 'function', 'the cron handler schedules the work off the platform path');
   await waited;
-  eq(calls.length, 1, 'and the cron really dispatches a stale board');
+  // The cron now also runs the notification policy, which makes its own fetch (the
+  // weekly link probe). Count the dispatch itself, not every request the tick makes.
+  const dispatches = calls.filter((c) => /api\.github\.com/.test(c.url));
+  eq(dispatches.length, 1, 'and the cron really dispatches a stale board');
+  eq(calls.filter((c) => /flyfrontier\.com/.test(c.url)).length, 1, 'and the weekly probe makes exactly one request of its own');
 
   const anon = await worker.fetch(new Request('https://b.test/api/dispatch'), env, {});
   eq(anon.status, 401, 'the manual route is gated by the board token');

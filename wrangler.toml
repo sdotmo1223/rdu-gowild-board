@@ -20,6 +20,9 @@ id = "fec311a9eda84b90a8490061cda5d4bf"
 # Each public page reads only its own KV key, so no origin can see another's.
 [vars]
 PUBLIC_PROFILE = "rdu"
+# The public origin every push opens with one tap. No token: notifications land on
+# /rdu?focus=<event key>, and the key grammar is the outbox entry key verbatim.
+BOARD_URL = "https://rdu-gowild-board.sdotmo1223.workers.dev"
 
 # BOARD_TOKEN is NOT set here. It is a secret:
 #   npx wrangler secret put BOARD_TOKEN      (production)

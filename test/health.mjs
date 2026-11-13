@@ -1,143 +1,92 @@
-// Liveness and capability: the board must be able to say that nothing is writing to
-// it, and a shared read link must not be able to replace what it reads.
+// TASK A: the HEALTH tier -- quiet until something is wrong, then loudly once.
+//
+// Two rules make this tier usable rather than noisy:
+//   - it fires on a STATE TRANSITION, not on every evaluation. A push that repeats
+//     every 15 minutes is a machine talking to itself;
+//   - "degraded" means the trigger stopped recovering the board: neither a dispatch
+//     nor a successful run inside 90 minutes. That is the Upgrade 1 residual, and it
+//     lives here now.
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import {
-  buildHeartbeatAlert,
-  shouldSendStaleAlert,
-  STALE_ALERT_AFTER_MIN,
-  HEARTBEAT_REPEAT_MS,
-} from '../src/alerts.mjs';
-import { validTopic } from '../src/alerts.mjs';
-import { ingestAuthorized } from '../src/index.js';
-import { channelStatus, deliver, resolveTopic } from '../src/watch.mjs';
-import { STALE_AFTER_MIN } from '../src/board.js';
+  DEGRADED_AFTER_MIN,
+  buildHealthNotice,
+  healthFingerprint,
+  isDegraded,
+} from '../src/health.mjs';
 
 let checks = 0;
 const ok = (cond, msg) => {
   checks += 1;
   assert.ok(cond, msg);
 };
-const HOUR = 3600000;
-const now = Date.now();
-
-// The threshold itself. 180 is not a taste: it is three measured median gaps.
-ok(STALE_AFTER_MIN === 180, 'stale means three missed hourly ticks');
-ok(STALE_AFTER_MIN > 81, 'above the worst gap measured on 2026-11-04, or a healthy board goes amber');
-
-// Collector heartbeat
-ok(buildHeartbeatAlert({ updatedAt: now - 10 * 60000 }, now) === null, 'a fresh snapshot is silent');
-const hb = buildHeartbeatAlert({ updatedAt: now - 5 * HOUR }, now);
-ok(Boolean(hb) && hb.kind === 'heartbeat', 'silence past the limit alerts');
-ok(/collector silent/.test(String(hb && hb.title)), 'the push says what happened, not just that something did');
-ok(/5h/.test(String(hb && hb.title)), 'the age is in the title');
-ok(buildHeartbeatAlert({ updatedAt: now - 5 * HOUR, lastHeartbeatAt: now - HOUR }, now) === null, 'deduped inside six hours');
-ok(
-  Boolean(buildHeartbeatAlert({ updatedAt: now - 5 * HOUR, lastHeartbeatAt: now - HEARTBEAT_REPEAT_MS - 1 }, now)),
-  're-fires after six hours',
-);
-ok(buildHeartbeatAlert(null, now) === null, 'no snapshot is not an alert');
-ok(buildHeartbeatAlert({}, now) === null, 'an empty record is not an alert');
-ok(buildHeartbeatAlert({ updatedAt: 'yesterday' }, now) === null, 'an unparseable clock is not an alert');
-
-// Worker decision: the only thing alive when the cron is dead.
-ok(shouldSendStaleAlert(200, 0, now) === true, 'four hours of silence from the Worker alerts');
-ok(shouldSendStaleAlert(10, 0, now) === false, 'a healthy board is silent');
-ok(shouldSendStaleAlert(200, now - HOUR, now) === false, 'deduped inside six hours');
-ok(shouldSendStaleAlert(200, now - HEARTBEAT_REPEAT_MS - 1, now) === true, 're-fires after six hours');
-ok(shouldSendStaleAlert(null, 0, now) === false, 'no age, no claim');
-ok(shouldSendStaleAlert(Number.NaN, 0, now) === false, 'NaN is not an age');
-ok(STALE_ALERT_AFTER_MIN === STALE_AFTER_MIN, 'alert and banner share a threshold, or one of them lies');
-
-// The topic bootstrap: a value that is not a topic is ignored, never posted.
-ok(validTopic('gowild-rdu-abc123') === true, 'a plain topic is accepted');
-ok(validTopic('has space') === false, 'a topic with a space is refused');
-ok(validTopic('') === false, 'an empty topic is refused');
-ok(validTopic('x'.repeat(65)) === false, 'an over-long topic is refused');
-ok(validTopic(null) === false && validTopic(undefined) === false, 'absence is not a topic');
-
-// Read and write are different capabilities.
-const post = (token) =>
-  new Request('https://b.test/api/ingest', {
-    method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-const split = { BOARD_TOKEN: 'read-token-aaaaaaaa', BOARD_WRITE_TOKEN: 'write-token-bbbb' };
-ok(ingestAuthorized(post('write-token-bbbb'), split) === true, 'the write token writes');
-ok(ingestAuthorized(post('read-token-aaaaaaaa'), split) === false, 'a shared read link cannot replace the snapshot');
-ok(ingestAuthorized(post(''), split) === false, 'no token cannot write');
-ok(ingestAuthorized(post('read-token-aaaaaaaa'), { BOARD_TOKEN: 'read-token-aaaaaaaa' }) === true, 'before the split the old token still writes, so the deploy cannot break the cron');
-ok(ingestAuthorized(post('wrong'), { BOARD_TOKEN: 'read-token-aaaaaaaa' }) === false, 'the fallback still checks the value');
-ok(ingestAuthorized(post('read-token-aaaaaaaa'), {}) === false, 'no configuration cannot write');
-
-// The handler was right and the collector was wrong: both were "the token", and only
-// one of them is accepted in each direction. This reads the collector, because the
-// defect lived in its choice of credential, not in any response it got.
-const collectorSrc = readFileSync(new URL('../collector/collect.mjs', import.meta.url), 'utf8');
-ok(/method: 'GET', token: ingest\.readToken/.test(collectorSrc), 'the pre-flight read presents the read token');
-ok(/method: 'POST', body: blob, token: ingest\.writeToken/.test(collectorSrc), 'the snapshot write presents the write token');
-// Scoped to the ingest helper: the KV path legitimately carries one credential.
-const ingestRegion = collectorSrc.slice(collectorSrc.indexOf('async function ingestFetch'), collectorSrc.indexOf('async function openFaresPage'));
-ok(ingestRegion.length > 100 && !/env\.token/.test(ingestRegion), 'the ingest helper has no shared token to borrow');
-ok(!/const token = \(process\.env\.BOARD_WRITE_TOKEN/.test(collectorSrc), 'the ingest credential is not collapsed into one variable');
-ok(/readToken = process\.env\.BOARD_TOKEN/.test(collectorSrc), 'the read credential is BOARD_TOKEN, never the write token');
-
-// --- The bell's channel: one topic, two places it can live -------------------
-// Measured 2026-11-11: the collector stores the ntfy topic in KV with every snapshot
-// and the stale alert already read it there, while every bell read `env.NTFY_TOPIC`
-// only. The sheet therefore drew push as *off* and refused to arm a watch it could
-// have delivered. These pin the resolution, not the plumbing.
-const kvStub = (v) => ({ get: async () => v });
-const throwingKv = {
-  get: async () => {
-    throw new Error('kv down');
-  },
+const eq = (a, b, msg) => {
+  checks += 1;
+  assert.equal(a, b, msg);
 };
-ok((await resolveTopic({ NTFY_TOPIC: 'env-topic' })) === 'env-topic', 'a Worker secret wins');
-ok(
-  (await resolveTopic({ BOARD: kvStub('kv-topic') })) === 'kv-topic',
-  'the collector-bootstrapped topic is used when no secret exists',
-);
-ok((await resolveTopic({ BOARD: throwingKv })) === null, 'a KV failure is not a topic');
-ok((await resolveTopic({ BOARD: kvStub('has space') })) === null, 'an invalid stored value is refused');
-ok((await resolveTopic(null)) === null, 'no env is not a topic');
-ok(channelStatus({}, 'kv-topic').push.ready === true, 'push is ready when only the resolved topic exists');
-ok(channelStatus({}).push.ready === false, 'push stays off when nothing resolves');
-ok(/NTFY_TOPIC/.test(channelStatus({}).push.reason), 'the off reason still names the variable');
-ok(channelStatus({ NTFY_TOPIC: 'env-topic' }).push.ready === true, 'a Worker secret still reads ready');
 
-// --- Delivery: one bounded retry, and only for a transient error ------------
-// Measured 2026-11-11: the first real watch delivery reached ntfy.sh and got HTTP
-// 522 (Cloudflare origin timeout). The event's dedupe stamp is written whether or
-// not the push landed, so one transient error used to cost six hours of silence.
-const realFetch = globalThis.fetch;
-const alert = { title: 't', body: 'b', priority: 'default' };
+const NOW = Date.UTC(2026, 10, 13, 12, 0, 0);
+const minsAgo = (m) => NOW - m * 60000;
 
-let calls = 0;
-globalThis.fetch = async () => {
-  calls += 1;
-  return calls === 1 ? { ok: false, status: 522 } : { ok: true, status: 200 };
-};
-const retried = await deliver({ NTFY_TOPIC: 'topic' }, alert, ['push']);
-ok(retried.sent.join(',') === 'push', 'a transient 522 is retried and the push lands');
-ok(calls === 2, 'exactly one retry, not a loop');
+// --- 1. degraded arithmetic ---------------------------------------------------
+{
+  eq(DEGRADED_AFTER_MIN, 90, 'ninety minutes is the rule');
+  eq(isDegraded(minsAgo(10), null, NOW), false, 'a fresh run is not degraded');
+  eq(isDegraded(minsAgo(100), null, NOW), true, 'an old run with no dispatch is degraded');
+  eq(isDegraded(minsAgo(100), minsAgo(20), NOW), false, 'a recent dispatch is enough');
+  eq(isDegraded(minsAgo(100), minsAgo(200), NOW), true, 'both old is degraded');
+  eq(isDegraded(null, null, NOW), true, 'never having run counts as degraded');
+  eq(isDegraded(undefined, 'garbage', NOW), true, 'unreadable stamps degrade to degraded');
+}
 
-calls = 0;
-globalThis.fetch = async () => {
-  calls += 1;
-  return { ok: false, status: 400 };
-};
-const refused = await deliver({ NTFY_TOPIC: 'topic' }, alert, ['push']);
-ok(refused.sent.length === 0 && calls === 1, 'a permanent refusal (400) is not retried');
-ok(/400/.test(String(refused.failed[0].reason)), 'the failure still names the status');
+// --- 2. fingerprints are the transition key -----------------------------------
+{
+  eq(healthFingerprint({ pending: 0, dead: 0, degraded: false }), healthFingerprint({ pending: 0, dead: 0, degraded: false }), 'the same state hashes the same');
+  ok(healthFingerprint({ pending: 1, dead: 0, degraded: false }) !== healthFingerprint({ pending: 0, dead: 0, degraded: false }), 'a change in pending changes the key');
+  ok(healthFingerprint({ pending: 0, dead: 0, degraded: true }) !== healthFingerprint({ pending: 0, dead: 0, degraded: false }), 'a change in degraded changes the key');
+}
 
-calls = 0;
-globalThis.fetch = async () => {
-  calls += 1;
-  return { ok: false, status: 522 };
-};
-const dead = await deliver({ NTFY_TOPIC: 'topic' }, alert, ['push']);
-ok(dead.sent.length === 0 && calls === 2, 'a persistent 522 gives up after one retry');
-globalThis.fetch = realFetch;
+// --- 3. what is worth a push --------------------------------------------------
+{
+  eq(buildHealthNotice({ pending: 0, dead: 0, degraded: false }, null, NOW), null, 'healthy says nothing');
+  const pending = buildHealthNotice({ pending: 1, dead: 0, degraded: false, reason: 'push: HTTP 429' }, null, NOW);
+  ok(pending, 'a pending delivery raises a notice');
+  eq(pending.tier, 'health', 'in the health tier');
+  ok(/429/.test(pending.message), 'with the provider reason');
+  ok(/retry|held/i.test(pending.message), 'and what is happening to it');
+
+  const dead = buildHealthNotice({ pending: 0, dead: 2, degraded: false, reason: 'push: HTTP 522' }, null, NOW);
+  ok(dead, 'a dead delivery raises a notice');
+  eq(dead.priority, 'high', 'and it is urgent');
+
+  const degraded = buildHealthNotice({ pending: 0, dead: 0, degraded: true }, null, NOW);
+  ok(degraded, 'a degraded trigger raises a notice');
+  ok(/trigger|dispatch/i.test(degraded.message), 'naming the thing that stopped');
+}
+
+// --- 4. transitions only ------------------------------------------------------
+{
+  const signal = { pending: 1, dead: 0, degraded: false, reason: 'push: HTTP 429' };
+  const first = buildHealthNotice(signal, null, NOW);
+  ok(first, 'the first observation of a problem is a notice');
+  eq(buildHealthNotice(signal, first.fingerprint, NOW), null, 'the same state again is silent');
+  eq(buildHealthNotice(signal, first.fingerprint, NOW + 15 * 60000), null, 'still silent a tick later');
+
+  const worse = { ...signal, dead: 1 };
+  const second = buildHealthNotice(worse, first.fingerprint, NOW);
+  ok(second, 'a different problem is a new notice');
+  ok(second.fingerprint !== first.fingerprint, 'with a new fingerprint');
+
+  eq(buildHealthNotice({ pending: 0, dead: 0, degraded: false }, second.fingerprint, NOW), null, 'recovery does not page anyone');
+}
+
+// --- 5. the link probe rides the same tier ------------------------------------
+{
+  const link = buildHealthNotice({ pending: 0, dead: 0, degraded: false, link: 'broken', linkStatus: 404 }, null, NOW);
+  ok(link, 'a broken search link is a health notice');
+  ok(/search link|404/i.test(link.message), 'naming the link and the status');
+  const drift = buildHealthNotice({ pending: 0, dead: 0, degraded: false, link: 'drifted', linkStatus: 302 }, null, NOW);
+  ok(drift, 'pattern drift is a health notice too');
+  eq(buildHealthNotice({ pending: 0, dead: 0, degraded: false, link: 'challenged' }, null, NOW), null, 'a bot challenge is not');
+}
 
 console.log(`health: ${checks} checks passed`);

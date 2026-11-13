@@ -511,4 +511,33 @@ try {
 }
 ok(parsed, 'the script with the watch sheet actually parses');
 
+// --- Phase A: the tap has to land somewhere ------------------------------------
+// A notification that only opens the topic list is a dead end. The Click header is
+// the whole handoff, and it must never carry the board token: ntfy keeps messages for
+// ~12 hours, so a secret in a payload outlives the phone's lock screen.
+{
+  const withBase = { NTFY_TOPIC: 'gowild-abc123', BOARD_URL: 'https://board.example.dev/' };
+  const alert = {
+    title: 'GoWild soon: PHL Nov 12',
+    body: 'body',
+    priority: 'high',
+    clickPath: '/rdu?focus=departing%7CPHL%7C2026-11-12%7C21%3A53%7C15.41',
+  };
+  const req = pushRequest(withBase, alert);
+  ok(req && req.init && req.init.headers, 'a push request is built');
+  eq(
+    req.init.headers.Click,
+    'https://board.example.dev/rdu?focus=departing%7CPHL%7C2026-11-12%7C21%3A53%7C15.41',
+    'Click is the public board plus the focus path, with one slash between them',
+  );
+  ok(!/token/i.test(req.init.headers.Click), 'the click target carries no token');
+  ok(!/token/i.test(JSON.stringify(req.init.headers)), 'and no header does');
+
+  const noBase = pushRequest({ NTFY_TOPIC: 'gowild-abc123' }, alert);
+  ok(noBase && noBase.init && !noBase.init.headers.Click, 'without a configured board URL there is no Click, not a broken one');
+
+  const noPath = pushRequest(withBase, { title: 't', body: 'b' });
+  ok(noPath && !noPath.init.headers.Click, 'an alert with no focus path gets no Click');
+}
+
 console.log(`watch: ${checks} checks passed`);

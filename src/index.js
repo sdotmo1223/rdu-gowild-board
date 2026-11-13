@@ -9,6 +9,8 @@ import { shouldSendStaleAlert, validTopic } from './alerts.mjs';
 import { outboxStatus } from './outbox.mjs';
 import { maybeDispatch } from './dispatch.mjs';
 import { buildLedger } from './ledger.mjs';
+import { runPolicy } from './policy.mjs';
+import { readSettings, writeSettings } from './settings.mjs';
 import {
   channelStatus,
   evaluateWatches,
@@ -439,6 +441,27 @@ export default {
       return json({ ok: true, ...(await maybeDispatch(env, now)) });
     }
 
+    // TASK A: the policy numbers the notification tiers read. Token-gated like every
+    // other write, because a briefing time is a setting of the owner's phone.
+    if (url.pathname === '/api/settings') {
+      const presented = bearerToken(request) || url.searchParams.get('token');
+      if (!sameSecret(presented, env.BOARD_TOKEN)) {
+        return json({ ok: false, state: 'unauthorized', message: 'Send ?token=<BOARD_TOKEN> or an Authorization: Bearer header.' }, 401);
+      }
+      if (request.method === 'GET') return json({ ok: true, settings: await readSettings(env) });
+      if (request.method !== 'POST') return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, POST' } });
+      let patch = null;
+      try {
+        patch = await request.json();
+      } catch {
+        patch = null;
+      }
+      if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+        return json({ ok: false, state: 'bad-shape', message: 'Expected a JSON object.' }, 400);
+      }
+      return json({ ok: true, settings: await writeSettings(env, patch) });
+    }
+
     // The bell's endpoint. Gated inside the handler so the refusal is a sentence,
     // not an empty 401 body from a guard three screens away.
     if (url.pathname === '/api/watch') return handleWatch(request, env, url, now);
@@ -671,7 +694,19 @@ export default {
   // does not depend on GitHub's scheduler, which is the one thing sweep.yml cannot
   // fix from inside: a dropped schedule event leaves no run to recover in.
   async scheduled(controller, env, ctx) {
-    const work = maybeDispatch(env, Date.now());
+    const now = Date.now();
+    const work = (async () => {
+      const dispatched = await maybeDispatch(env, now);
+      // The tiers never get to block the dispatch gate: recovering a stalled board is
+      // the one job that must survive a notification provider having a bad day.
+      let policy = null;
+      try {
+        policy = await runPolicy(env, now);
+      } catch (err) {
+        console.error('policy failed', err && err.message);
+      }
+      return { dispatched, policy };
+    })();
     if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(work);
     else await work;
   },

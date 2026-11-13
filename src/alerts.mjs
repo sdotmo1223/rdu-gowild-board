@@ -183,7 +183,16 @@ export function buildWatchAlert(state, fresh, spec, now) {
   };
 }
 
-export async function sendAlert(topic, alert) {
+// Same rule as the watch path: an absolute, token-free Click target or nothing at
+// all. Callers that do not know the board's public origin simply do not get one.
+function clickHeader(boardUrl, alert) {
+  const base = typeof boardUrl === 'string' ? boardUrl.replace(/\/+$/, '') : '';
+  const path = alert && typeof alert.clickPath === 'string' ? alert.clickPath : '';
+  if (!base || !path.startsWith('/') || /token/i.test(path)) return {};
+  return { Click: `${base}${path}` };
+}
+
+export async function sendAlert(topic, alert, opts = {}) {
   if (!topic || !alert) return { sent: false, reason: 'no-topic-or-alert' };
   // The dry-run harness must execute this branch (it is where the 2026-11-04
   // ReferenceError lived) without pushing anything to a real phone.
@@ -198,6 +207,7 @@ export async function sendAlert(topic, alert) {
       Priority: alert.priority || 'default',
       Tags: 'airplane',
       'Content-Type': 'text/plain; charset=utf-8',
+      ...clickHeader(opts.boardUrl, alert),
     },
     body: alert.message,
   });

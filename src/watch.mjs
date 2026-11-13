@@ -318,6 +318,16 @@ export function describeEvent(ev, origin = 'RDU') {
 // One request builder per channel, exported so the payload shape is asserted in a
 // test instead of discovered in production. None of them puts a secret in a URL.
 
+// An absolute Click target, or null when the Worker has not been told its public
+// origin. A missing Click is a small loss; a guessed one sends the phone to a host
+// that does not exist.
+function clickTarget(env, alert) {
+  const base = env && typeof env.BOARD_URL === 'string' ? env.BOARD_URL.replace(/\/+$/, '') : '';
+  const path = alert && typeof alert.clickPath === 'string' ? alert.clickPath : '';
+  if (!base || !path.startsWith('/') || /token/i.test(path)) return null;
+  return `${base}${path}`;
+}
+
 export function pushRequest(env, alert) {
   const topic = env && env.NTFY_TOPIC;
   if (!validTopic(topic)) return null;
@@ -331,6 +341,10 @@ export function pushRequest(env, alert) {
         Priority: alert.priority || 'default',
         Tags: 'airplane',
         'Content-Type': 'text/plain; charset=utf-8',
+        // Phase A: the tap opens the public board at the row this push is about.
+        // The path never carries a token, so a message sitting in ntfy's cache for
+        // twelve hours cannot hand anyone a key to the board.
+        ...(clickTarget(env, alert) ? { Click: clickTarget(env, alert) } : {}),
       },
       body: alert.body,
     },

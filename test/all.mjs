@@ -26,6 +26,8 @@ const suites = [
   ['ledger', 'test/ledger.mjs'],
   ['settings', 'test/settings.mjs'],
   ['liveness', 'test/liveness.mjs'],
+  ['briefing', 'test/briefing.mjs'],
+  ['health', 'test/health.mjs'],
 ];
 
 let failed = 0;
