@@ -23,6 +23,7 @@ const suites = [
   ['freshness', 'test/freshness.mjs'],
   ['shapes', 'test/shapes.mjs'],
   ['doclint', 'test/doclint.mjs'],
+  ['ledger', 'test/ledger.mjs'],
 ];
 
 let failed = 0;

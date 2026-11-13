@@ -8,6 +8,7 @@ import { ROUTES, PROFILES, PROFILE } from './routes.js';
 import { shouldSendStaleAlert, validTopic } from './alerts.mjs';
 import { outboxStatus } from './outbox.mjs';
 import { maybeDispatch } from './dispatch.mjs';
+import { buildLedger } from './ledger.mjs';
 import {
   channelStatus,
   evaluateWatches,
@@ -519,6 +520,10 @@ export default {
           rows: d.rows,
         })),
         departed: (view.departed || []).map((d) => ({ date: d.date, past: d.pastCount })),
+        // TASK 3a: what actually departed, by route and weekday, with the count of
+        // distinct dates behind each time. Post-processing of data already stored --
+        // no request is spent, and `n` is the confidence the UI must render.
+        ledger: buildLedger(state, now),
         frequency: frequencyTable(state, ROUTES),
         schedule: weeklyPattern(state),
         heatmap: bookabilityHeatmap(state),
