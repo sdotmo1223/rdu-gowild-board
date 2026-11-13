@@ -26,7 +26,15 @@ not doing, with the reason).
 
 ### T1 — Prove a watch actually rings
 
-- **Status:** open · **Size:** 15 min · **Needs:** one sweep tick · **Channel changed 2026-11-13:** the app now notifies for itself (Web Push) and ntfy is retired. The transport is proven end to end on the S23 — a `/api/push/test` notification renders with its payload and the subscription is enrolled — so what remains is the same evidence bar it always had: **one watch event, caused by a sweep, arriving on the phone**.
+- **Status:** in progress (delivery proven 2026-11-13 18:10Z, tap pending) · **Size:** 15 min · **Needs:** one sweep tick and an idle phone ·
+- **Evidence so far (2026-11-13):** a CLE `always` bell was armed at 17:10Z; the
+  17:45Z sweep set its baseline and correctly stayed silent (the 21:04Z departure was
+  195 min out, past the 180 min window); a dispatched sweep at 18:07Z found it 177 min
+  out and fired. `lastEvent={"kind":"departing","at":1794593404682,"sent":["push"],"failed":[]}`,
+  and the device holds a live record: `pkg=org.chromium.webapk.a5c5d5d90ba07bc01_v2`,
+  tag `#1gowild`, title `GoWild soon: CLE Nov 13`, subtext the board host. What is NOT
+  yet proven is the tap: the phone was on an active call when the test window opened,
+  so the notification was left untouched rather than driven through a call screen. · **Channel changed 2026-11-13:** the app now notifies for itself (Web Push) and ntfy is retired. The transport is proven end to end on the S23 — a `/api/push/test` notification renders with its payload and the subscription is enrolled — so what remains is the same evidence bar it always had: **one watch event, caused by a sweep, arriving on the phone**.
 - **Intent:** a bell that cannot deliver is worse than no bell, because it looks armed.
 - **Why (re-diagnosed 2026-11-11):** the original note blamed a missing Worker
   secret. The real defect was narrower and worse: `NTFY_TOPIC` **is** a repo secret
@@ -39,7 +47,8 @@ not doing, with the reason).
 - **Do:** deploy the Worker, arm a bell on the token page for a route that is
   bookable, and wait for one tick.
 - **Done when:** one real push arrives on the phone, caused by a sweep that changed
-  that route's state — and the sheet showed push as *on* before the tick.
+  that route's state — and the sheet showed push as *on* before the tick — **and**
+  tapping it lands on that row in the UPDATES block.
 - **Prevents:** shipping a notification feature that has never notified.
 
 ### T2 — Make the documented suite count true again

@@ -338,3 +338,56 @@ LEDGER_GREEN_EXIT=0
 
 Rule from here: a new suite is not finished until it has been *seen* failing for the
 reason it claims to test. "Written first" is not the same as "watched fail".
+
+### 2026-11-13 — Web Push replaces ntfy, and the channel learned to doubt itself
+
+ntfy is retired. The app notifies for itself (RFC 8291/8292 on WebCrypto, no
+dependency), so a notification can carry the token page because its body is encrypted
+to the device, and the tap lands on the row the event was about.
+
+**Two failure modes the old outbox could not name.** It was tuned for 429/522, which
+mean "try later". Web Push has different ones:
+
+- **410 Gone** is permanent: the device cleared its subscription. Retrying five times
+  reports a device fact as an outage, so the subscription is deleted on the spot.
+- **A payload Chrome cannot decrypt is dropped without an error.** The push service
+  answers 201, the Worker logs a delivery, and the phone shows nothing. Nothing on the
+  Worker side can see it. Fixed with a canary: the service worker acknowledges receipt
+  from inside the encrypted payload, the Worker stores `push:lastdelivery` and
+  `push:lastseen`, and `readCanary` calls an unacknowledged delivery older than 30
+  minutes a **gap** — which the health tier announces once, on the transition.
+
+Red first, as usual: `test/push.mjs` was written before the canary existed and died at
+import with `does not provide an export named 'CANARY_GAP_MIN'`. It now runs 21 checks
+(410 un-enrolment, the delivery log, monotonic acknowledgement, the four canary states,
+and one-notice-per-gap). `test/updates.mjs` (39 checks) was written by the UI agent and
+was **not in `test/all.mjs`**, so it gated nothing; the registry now carries it, and the
+duplicate `health` entry is gone.
+
+**T1 delivery, proven end to end.** Armed a CLE `always` bell at 17:10Z. The 17:45Z
+sweep set its baseline and stayed silent — correct, the 21:04Z departure was 195
+minutes out against a 180-minute window. A dispatched sweep at 18:07Z found it at 177
+minutes and fired:
+
+```
+lastEvent={"kind":"departing","at":1794593404682,"sent":["push"],"failed":[]}
+canary={"deliveredAt":1794593405894,"seenAt":null,"state":"waiting","gapMin":1}
+```
+
+and the phone, read without touching it, held `tag #1gowild`, `GoWild soon: CLE Nov 13`,
+subtext the board host. The **tap** is not yet proven: the phone was on an active call
+when the window opened. A wake/expand intended to reach the shade landed on
+`com.samsung.android.incallui` — the shade overlay never took focus and the call screen
+was restored untouched, but the lesson stands: **check `mCurrentFocus` for an in-call
+window before driving anything.** A notification is not worth someone's phone call.
+
+**One concurrency note for the next agent.** Two agents held `src/render.js` at once;
+`npm test` was red in `shapes` for a while purely because that file was mid-refactor.
+Stashing it proved the failure was not ours, and the UI agent's own commit carried the
+one user-facing string this round needed (`set NTFY_TOPIC` → `press Enable app
+notifications`). Stage your own files; a full-tree `git add -A` would have committed
+someone else's half-finished work twice over.
+
+**ntfy, fully retired.** `sendAlert`, `validTopic`, `resolveTopic`, the collector's
+duplicate delivery path, `NTFY_TOPIC` in `sweep.yml`, and the secret on both the Worker
+and GitHub are gone. What remains in the repo is history and rationale in comments.
