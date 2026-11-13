@@ -82,7 +82,23 @@ self.addEventListener('notificationclick', (event) => {
   event.waitUntil((async () => {
     const open = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (let i = 0; i < open.length; i += 1) {
-      if (open[i].url.split('?')[0] === bare) return open[i].focus();
+      if (open[i].url.split('?')[0] === bare) {
+        const client = open[i];
+        // A client already sitting on the same page used to be focused and left there,
+        // which silently dropped the focus query: the tap opened the board at the top
+        // and the row the notification was about never moved. Measured 2026-11-13 while
+        // proving T1 with the app already open. Navigate before focusing when the target
+        // differs. (No backticks in here: this whole script is one template literal.)
+        if (client.url !== absolute && typeof client.navigate === 'function') {
+          try {
+            await client.navigate(absolute);
+          } catch (e) {
+            // A navigation Chrome refused still leaves the focused tab usable; the
+            // openWindow fallback below is for the case where nothing matched at all.
+          }
+        }
+        return client.focus();
+      }
     }
     return self.clients.openWindow(absolute);
   })());
