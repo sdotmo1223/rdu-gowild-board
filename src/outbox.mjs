@@ -36,6 +36,13 @@ export const BACKOFF_MAX_MS = 6 * 3600 * 1000;
 // would be re-queued the moment the watch's silence expired.
 export const TOMBSTONE_TTL_MS = 7 * 24 * 3600 * 1000;
 
+// Delivered events are remembered too, because the page's log is the only place a
+// reader can see that something rang. Measured 2026-11-13: a real CLE push was
+// delivered, acknowledged, and the log was empty -- a sent entry was deleted the
+// moment it succeeded, so the reader could not see what had rung and the notification's
+// focus key pointed at nothing. Compactly: no payload, no channels, capped.
+export const MAX_LOG_ENTRIES = 200;
+
 export function outboxKey(profile) {
   return `${OUTBOX_KEY_PREFIX}${String(profile || 'rdu').toLowerCase()}`;
 }
@@ -137,7 +144,7 @@ export async function enqueueEntries(env, profile, entries, now = Date.now()) {
     added += 1;
   }
   const pruned = list.filter(
-    (e) => !(e.state !== 'pending' && now - Number(e.deadAt || e.createdAt || 0) > TOMBSTONE_TTL_MS),
+    (e) => !(e.state !== 'pending' && now - Number(e.deadAt || e.deliveredAt || e.createdAt || 0) > TOMBSTONE_TTL_MS),
   );
   if (added || pruned.length !== list.length) {
     await kv.put(outboxKey(profile), JSON.stringify(pruned));
@@ -233,6 +240,17 @@ export async function sweepOutbox(env, profile, now = Date.now(), opts = {}) {
       out.delivered += 1;
       changed = true;
       await markDelivered(env, profile, e, res, now);
+      keep.push({
+        key: e.key,
+        kind: e.kind,
+        dest: e.dest,
+        announce: e.announce || null,
+        state: 'sent',
+        createdAt: e.createdAt,
+        deliveredAt: now,
+        channels: [],
+        attempts: Number(e.attempts || 0),
+      });
       continue;
     }
 
@@ -261,6 +279,19 @@ export async function sweepOutbox(env, profile, now = Date.now(), opts = {}) {
     out.failed += 1;
     changed = true;
     keep.push(e);
+  }
+
+  // Bounded memory: the newest MAX_LOG_ENTRIES delivered records survive, and pending
+  // or failed entries are never dropped to make room for them.
+  const sent = keep.filter((e) => e && e.state === 'sent');
+  if (sent.length > MAX_LOG_ENTRIES) {
+    const excess = sent
+      .sort((a, b) => Number(a.deliveredAt || 0) - Number(b.deliveredAt || 0))
+      .slice(0, sent.length - MAX_LOG_ENTRIES)
+      .map((e) => e.key);
+    const drop = new Set(excess);
+    keep.splice(0, keep.length, ...keep.filter((e) => !(e.state === 'sent' && drop.has(e.key))));
+    changed = true;
   }
 
   if (changed) await kv.put(outboxKey(profile), JSON.stringify(keep));

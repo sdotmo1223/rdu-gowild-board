@@ -203,10 +203,17 @@ const http = (status) => async () => new Response('', { status });
   list = await readOutbox(store, 'rdu');
   eq(list[0].attempts, 2, 'attempt 2 failed');
   eq(list[0].state, 'pending', 'a recoverable failure stays pending');
-  const res = await sweepOutbox(env, 'rdu', list[0].nextAt); // attempt 3 succeeds
+  const landedAt = list[0].nextAt;
+  const res = await sweepOutbox(env, 'rdu', landedAt); // attempt 3 succeeds
   eq(res.delivered, 1, 'attempt 3 delivers');
   list = await readOutbox(store, 'rdu');
-  eq(list.length, 0, 'a delivered event leaves no tombstone');
+  // Reversed on purpose 2026-11-13: this used to assert the entry was gone. A log that
+  // empties the moment something works cannot show the reader that it worked, and a
+  // notification's focus key then points at nothing.
+  eq(list.length, 1, 'a delivered event is remembered, not deleted');
+  eq(list[0].state, 'sent', 'marked sent rather than left as a tombstone');
+  eq(Number(list[0].deliveredAt), landedAt, 'stamped with the moment it landed');
+  ok(list[0].payload == null && !(list[0].channels || []).length, 'and carrying no payload or channel to remember');
   const saved = await store.get(watchKey('rdu', 'PHL'), 'json');
   ok(Array.isArray(saved.lastEvent && saved.lastEvent.sent) && saved.lastEvent.sent.includes('push'), 'the watch records the delivery');
   eq(saved.lastEvent.kind, 'departing', 'and records which event landed');
@@ -296,7 +303,8 @@ const http = (status) => async () => new Response('', { status });
     at = entry ? entry.nextAt : at;
   }
   const left = await readOutbox(store, 'rdu');
-  eq(left.length, 0, 'a success on the final permitted attempt clears the entry');
+  eq(left.length, 1, 'a success on the final permitted attempt is recorded as sent, not cleared');
+  eq(left[0].state, 'sent', 'with the state the log renders');
   const saved = await store.get(watchKey('rdu', 'PHL'), 'json');
   eq(saved.announced.length, 1, 'and advances announced exactly once');
 }
@@ -332,7 +340,8 @@ const http = (status) => async () => new Response('', { status });
   const res = await sweepOutbox(env, 'rdu', at);
   eq(res.delivered, 1, 'delivery still counts as delivered');
   const left = await readOutbox(store, 'rdu');
-  eq(left.length, 0, 'and the entry is cleared even with no watch record to stamp');
+  eq(left.length, 1, 'and the entry is recorded even with no watch record to stamp');
+  eq(left[0].state, 'sent', 'as sent rather than pending');
   eq(await store.get(watchKey('rdu', 'PHL'), 'json'), null, 'no watch is resurrected by a late delivery');
   ok(at > 0, 'the retry time was real');
 }
@@ -502,6 +511,27 @@ const http = (status) => async () => new Response('', { status });
   ok(/^\/rdu\?focus=/.test(e.focusPath || ''), 'the entry stores a token-free focus path');
   eq(decodeURIComponent(String(e.focusPath).split('focus=')[1] || ''), e.key, 'the focus key is the outbox key verbatim');
   ok(!/token/i.test(String(e.bookingUrl) + String(e.focusPath)), 'neither link carries a secret');
+}
+
+// --- 13. a delivered event stays in the log -----------------------------------
+// Measured 2026-11-13: the CLE departing push was delivered and acknowledged, and the
+// UPDATES block was empty -- because a sent entry was deleted from the outbox the
+// moment it succeeded. The reader could not see what had rung, and a tap had nothing
+// to land on.
+{
+  const store = kv();
+  const s = await armedWatch(store, NOW - 60000);
+  const env = pushEnv(store);
+  globalThis.fetch = async () => new Response('', { status: 201 });
+  await evaluateWatches(env, 'rdu', s, s, NOW);
+  const list = await readOutbox(store, 'rdu');
+  eq(list.length, 1, 'a delivered event is remembered, not deleted');
+  eq(list[0].state, 'sent', 'with its delivered state');
+  ok(Number(list[0].deliveredAt) === NOW, 'and when it was delivered');
+  ok(!('payload' in list[0]) || list[0].payload == null, 'without keeping the rendered payload for a week');
+  const status = await outboxStatus(store, 'rdu', NOW);
+  eq(status.recent.length, 1, 'so the page log can show it');
+  eq(status.pending, 0, 'while nothing is left pending');
 }
 
 globalThis.fetch = realFetch;
