@@ -62,7 +62,10 @@ export function buildBriefing(state, board, settings, now = Date.now()) {
     .filter((r) => Number.isFinite(Number(r.allin)))
     .sort((a, b) => Number(a.allin) - Number(b.allin))[0];
 
-  let clickPath = `/${String(ORIGIN).toLowerCase()}`;
+  // The board focuses [data-ev] -- an outbox event key, which a briefing does not
+  // have. A fabricated date|dest|dep key matches nothing and lands at the top with no
+  // explanation, so the briefing opens the board itself.
+  const clickPath = `/${String(ORIGIN).toLowerCase()}`;
   if (best) {
     lines.push(`Best today: ${best.dest} at ${Number(best.allin).toFixed(2)} (${clockOf(best.dep)}), estimated all-in.`);
     const p = farePercentile(state, best.dest, best.allin, now);
@@ -71,7 +74,6 @@ export function buildBriefing(state, board, settings, now = Date.now()) {
         `Cheapest ${best.dest} fare seen in ${p.windowDays} days: seen ${p.n} times, and this one sits at the bottom of that range.`,
       );
     }
-    clickPath = `/${String(ORIGIN).toLowerCase()}?focus=${encodeURIComponent(`${best.date}|${best.dest}|${best.dep}`)}`;
   } else {
     const why = todays[0] && todays[0].status && todays[0].status !== 'ok' ? todays[0].status : 'no GoWild under $50';
     lines.push(`Nothing bookable from ${ORIGIN} today: ${why}.`);

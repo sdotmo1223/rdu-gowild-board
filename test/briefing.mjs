@@ -81,6 +81,9 @@ const settings = { briefing: true, briefingTime: '06:00', health: true, windowDa
   ok(/seen \d+ times|cheapest/i.test(b.message), 'and speaks in observations, not vibes');
   ok(b.clickPath && b.clickPath.startsWith('/rdu'), 'it opens the board');
   ok(!/token/i.test(b.clickPath), 'without a token');
+  // The board only focuses [data-ev], which is an outbox event key. A fabricated
+  // date|dest|dep key lands nowhere, so the briefing must not pretend to focus.
+  ok(!/focus=/.test(b.clickPath), 'and does not name a row the board cannot focus');
 }
 
 // --- 3. thin history omits the line rather than guessing ----------------------
