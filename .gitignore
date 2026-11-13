@@ -35,6 +35,10 @@ board.live.html
 # dispatched agent specs and reports
 .agents/
 
+# android agent harness scratch: crash-safety pointer and probe cache, not evidence
+# (retained evidence lives in docs/android-agent/evidence/)
+android/agent/.runs/
+
 # local scratch artifacts (not produced or owned by this repo)
 /rdu.html
 /rdu-chart.png

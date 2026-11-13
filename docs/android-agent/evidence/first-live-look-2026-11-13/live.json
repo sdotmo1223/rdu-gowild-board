@@ -1,0 +1,296 @@
+{
+  "at": "2026-11-13T15:13:02.882Z",
+  "serial": "adb-R5CW1040A1A-Utkq1e._adb-tls-connect._tcp",
+  "probe": {
+    "schema": 1,
+    "at": "2026-11-13T15:12:06.419Z",
+    "serial": "adb-R5CW1040A1A-Utkq1e._adb-tls-connect._tcp",
+    "device": {
+      "model": "SM-S918U",
+      "release": "17",
+      "sdk": 37
+    },
+    "inputDisplayFlag": true,
+    "inputUsage": "Usage: input [<source>] [-d DISPLAY_ID] <command> [<arg>...]",
+    "displaysBefore": [
+      0
+    ],
+    "displayTableBefore": [
+      {
+        "id": 0,
+        "name": "Built-in Screen",
+        "width": 1080,
+        "height": 2316,
+        "type": "INTERNAL",
+        "state": "ON"
+      }
+    ],
+    "overlaySettingBefore": "null",
+    "surfaceFlingerBefore": [
+      {
+        "physicalId": "4630947093241269891",
+        "kind": "HWC display 0",
+        "displayName": ""
+      }
+    ],
+    "displayZeroBefore": {
+      "displayId": 0,
+      "currentFocus": "Window{c27a43d u0 com.facebook.katana/com.facebook.katana.LoginActivity}",
+      "focusedApp": "ActivityRecord{198000027 u0 com.facebook.katana/.LoginActivity t5199}",
+      "focusedWindow": "Window{c27a43d u0 com.facebook.katana/com.facebook.katana.LoginActivity}",
+      "topFocusedDisplayId": 0,
+      "at": "2026-11-13T15:12:09.439Z"
+    },
+    "topFocusedBefore": 0,
+    "owner": {
+      "at": "2026-11-13T15:12:10.575Z",
+      "wakefulness": "Awake",
+      "screenOff": false,
+      "locked": false,
+      "inCall": null,
+      "verdict": "active",
+      "signals": [
+        "wakefulness=Awake"
+      ],
+      "detail": ""
+    },
+    "open": {
+      "ok": true,
+      "created": true,
+      "id": 138,
+      "sfId": "11529215049306993292",
+      "sfIdSource": "display-name",
+      "name": "Overlay #1",
+      "width": 720,
+      "height": 1280,
+      "spec": "720x1280/320",
+      "openedAt": "2026-11-13T15:12:11.902Z",
+      "baselineDisplays": [
+        0
+      ],
+      "focus": {
+        "before": {
+          "displayId": 0,
+          "currentFocus": "Window{c27a43d u0 com.facebook.katana/com.facebook.katana.LoginActivity}",
+          "focusedApp": "ActivityRecord{198000027 u0 com.facebook.katana/.LoginActivity t5199}",
+          "focusedWindow": "Window{c27a43d u0 com.facebook.katana/com.facebook.katana.LoginActivity}",
+          "topFocusedDisplayId": 0,
+          "at": "2026-11-13T15:12:11.649Z"
+        },
+        "after": {
+          "displayId": 0,
+          "currentFocus": "null",
+          "focusedApp": "ActivityRecord{198000027 u0 com.facebook.katana/.LoginActivity t5199}",
+          "focusedWindow": null,
+          "topFocusedDisplayId": 138,
+          "at": "2026-11-13T15:12:13.068Z"
+        },
+        "displayZeroUnchanged": true,
+        "topFocusedBefore": 0,
+        "topFocusedAfter": 138
+      }
+    },
+    "overlayCapture": {
+      "ok": true,
+      "bytes": 351160,
+      "width": 720,
+      "height": 1280,
+      "reason": "ok",
+      "detail": null
+    },
+    "stubProbe": {
+      "bytes": 84,
+      "reason": "not-a-png",
+      "detected": true,
+      "text": "Failed to take take screenshot. Display Id '999999' is not valid. Capturing failed."
+    },
+    "teardown": {
+      "ok": true,
+      "residue": false,
+      "at": "2026-11-13T15:12:14.689Z",
+      "reason": "probe",
+      "attempts": 1,
+      "settingAfter": "null",
+      "displaysAfter": [
+        0
+      ],
+      "expectedDisplays": [
+        0
+      ],
+      "residues": {
+        "setting": null,
+        "displays": null
+      },
+      "focusAfter": {
+        "displayId": 0,
+        "currentFocus": "Window{77eca89 u0 com.facebook.katana/com.facebook.katana.immersiveactivity.ImmersiveActivity}",
+        "focusedApp": "ActivityRecord{138991597 u0 com.facebook.katana/.immersiveactivity.ImmersiveActivity t5199}",
+        "focusedWindow": "Window{77eca89 u0 com.facebook.katana/com.facebook.katana.immersiveactivity.ImmersiveActivity}",
+        "topFocusedDisplayId": 0,
+        "at": "2026-11-13T15:12:17.001Z"
+      },
+      "topFocusedAfter": 0,
+      "displayZeroUnchangedAcrossTeardown": false
+    },
+    "verdict": "degraded",
+    "limits": [
+      "display 0 changed focus across create/teardown",
+      "the system moved input focus to the overlay display (mTopFocusedDisplayId 0 -> 138); display 0 kept its own window, but a hardware keyboard would now type into the overlay"
+    ],
+    "overlayId": 138,
+    "overlaySfId": "11529215049306993292",
+    "overlaySfIdSource": "display-name",
+    "overlayName": "Overlay #1",
+    "overlaySize": "720x1280",
+    "topFocusedDuring": 138,
+    "displayZeroDuring": {
+      "displayId": 0,
+      "currentFocus": "null",
+      "focusedApp": "ActivityRecord{198000027 u0 com.facebook.katana/.LoginActivity t5199}",
+      "focusedWindow": null,
+      "topFocusedDisplayId": 138,
+      "at": "2026-11-13T15:12:13.068Z"
+    },
+    "displayZeroAfter": {
+      "displayId": 0,
+      "currentFocus": "Window{77eca89 u0 com.facebook.katana/com.facebook.katana.immersiveactivity.ImmersiveActivity}",
+      "focusedApp": "ActivityRecord{138991597 u0 com.facebook.katana/.immersiveactivity.ImmersiveActivity t5199}",
+      "focusedWindow": "Window{77eca89 u0 com.facebook.katana/com.facebook.katana.immersiveactivity.ImmersiveActivity}",
+      "topFocusedDisplayId": 0,
+      "at": "2026-11-13T15:12:18.133Z"
+    },
+    "topFocusedAfter": 0,
+    "displaysAfter": [
+      0
+    ]
+  },
+  "results": [
+    {
+      "id": "0",
+      "title": "the probe answers every capability question and leaves no residue",
+      "pass": true,
+      "evidence": [
+        "verdict DEGRADED · Android 17 (API 37)",
+        "input -d supported · overlay logical id 138 · screencap id 11529215049306993292",
+        "teardown setting=null displays=[0] residue=false",
+        "limit: display 0 changed focus across create/teardown",
+        "limit: the system moved input focus to the overlay display (mTopFocusedDisplayId 0 -> 138); display 0 kept its own window, but a hardware keyboard would now type into the overlay"
+      ],
+      "note": null
+    },
+    {
+      "id": "1",
+      "title": "creating an overlay leaves display 0 on the same focused app",
+      "pass": true,
+      "evidence": [
+        "before  Window{c27a43d u0 com.facebook.katana/com.facebook.katana.LoginActivity} / ActivityRecord{198000027 u0 com.facebook.katana/.LoginActivity t5199}",
+        "during  null / ActivityRecord{198000027 u0 com.facebook.katana/.LoginActivity t5199}",
+        "after   Window{77eca89 u0 com.facebook.katana/com.facebook.katana.immersiveactivity.ImmersiveActivity} / ActivityRecord{138991597 u0 com.facebook.katana/.immersiveactivity.ImmersiveActivity t5199}",
+        "system focus pointer 0 -> 138 -> 0"
+      ],
+      "note": "display 0 mCurrentFocus going null while the overlay owns system focus is measured and reported, not treated as a change"
+    },
+    {
+      "id": "5",
+      "title": "an unknown display id fails loudly instead of returning a 79-byte stub",
+      "pass": true,
+      "evidence": [
+        "84 bytes · reason not-a-png · \"Failed to take take screenshot. Display Id '999999' is not valid. Capturing failed.\""
+      ],
+      "note": null
+    },
+    {
+      "id": "2",
+      "title": "the app launched on the discovered display is visible there and absent from display 0",
+      "pass": true,
+      "evidence": [
+        "launch com.freebuff.gowild/.MainActivity on display 139",
+        "resumed on overlay: com.freebuff.gowild, com.sec.android.app.launcher",
+        "resumed on display 0: com.facebook.katana",
+        "3 overlay captures 720x1280 720x1280 720x1280 · 2 display-0 captures 1080 1080"
+      ],
+      "note": "absence from display 0 is proven by window attribution, not by pixel identity: the owner's own screen changes while the run is live"
+    },
+    {
+      "id": "3",
+      "title": "display-scoped input reaches the app and never changes display 0",
+      "pass": false,
+      "evidence": [
+        "swipe argv: ?",
+        "tap argv: ?",
+        "overlay pixels before/after the swipe: b40e0a5e95d1 -> a9a5d618aae8 (changed, so the input landed in the app)",
+        "display-0 focus stable around every action: false"
+      ],
+      "note": null
+    },
+    {
+      "id": "6",
+      "title": "the crown: a full run with the owner active, display 0 untouched",
+      "pass": false,
+      "evidence": [
+        "owner at start: active (wakefulness=Awake)",
+        "display 0 before: Window{c27a43d u0 com.facebook.katana/com.facebook.katana.LoginActivity} / ActivityRecord{198000027 u0 com.facebook.katana/.LoginActivity t5199}",
+        "display 0 after:  Window{5b036dd u0 com.amazon.mShop.android.shopping/com.amazon.mShop.navigation.MainActivity} / ActivityRecord{167396008 u0 com.amazon.mShop.android.shopping/com.amazon.mShop.navigation.MainActivity t4899}",
+        "per-action focus violations: 4 · churn moments: overlay-create, overlay-teardown",
+        "display-0 reads logged: capture display 0 (before), capture display 0 (after)"
+      ],
+      "note": "human-side confirmation from the owner is still required: the machine proves focus equality, only the owner can confirm the screen never flickered"
+    },
+    {
+      "id": "7",
+      "title": "every action reports the tier that ran it",
+      "pass": true,
+      "evidence": [
+        "tiers: {\"observe\":3,\"virtual\":7}",
+        "#1 capture -> observe",
+        "#2 launch -> virtual",
+        "#3 read-state -> observe",
+        "#4 capture -> virtual",
+        "#5 swipe -> virtual",
+        "#6 capture -> virtual",
+        "#7 tap -> virtual",
+        "#8 capture -> virtual",
+        "#9 back -> virtual",
+        "#10 capture -> observe"
+      ],
+      "note": null
+    },
+    {
+      "id": "8",
+      "title": "battery cost is measured per run, with its source named",
+      "pass": false,
+      "evidence": [
+        "null mAh (none) over 27.1s",
+        "charge counter delta 0 uAh · charging true · batterystats delta null mAh",
+        "device was charging, so the charge counter cannot fall; the batterystats estimate is reported instead",
+        "batterystats drain estimate unavailable",
+        "no battery cost could be measured for this run"
+      ],
+      "note": null
+    },
+    {
+      "id": "4",
+      "title": "teardown restores the phone even when the run throws mid-way",
+      "pass": true,
+      "evidence": [
+        "forced failure: forced exception: acceptance test 4",
+        "teardown setting=null displays=[0] residue=false",
+        "captures kept as evidence: 2"
+      ],
+      "note": null
+    },
+    {
+      "id": "S",
+      "title": "the stop switch leaves no display, no global setting and no app of ours running",
+      "pass": true,
+      "evidence": [
+        "delete-overlay-setting -> skipped (already-null)",
+        "force-stop com.freebuff.gowild -> ok",
+        "adb-disconnect -> skipped (the run did not create the connection)",
+        "apps still running: none",
+        "tasks on other displays: 0"
+      ],
+      "note": null
+    }
+  ]
+}

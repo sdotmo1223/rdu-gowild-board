@@ -28,6 +28,10 @@ const suites = [
   ['liveness', 'test/liveness.mjs'],
   ['briefing', 'test/briefing.mjs'],
   ['health', 'test/health.mjs'],
+  // Offline only: the android harness runs against a simulated transport and a
+  // verbatim device capture. The real-device suite (test/live.mjs) needs hardware and
+  // is deliberately not part of the gate.
+  ['android-agent', 'android/agent/test/run-all.mjs'],
 ];
 
 let failed = 0;

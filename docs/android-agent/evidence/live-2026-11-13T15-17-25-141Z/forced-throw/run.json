@@ -1,0 +1,427 @@
+{
+  "schema": 1,
+  "runId": "live-throw",
+  "startedAt": "2026-11-13T15:18:02.133Z",
+  "finishedAt": "2026-11-13T15:18:17.343Z",
+  "dir": "C:\\Users\\sdotm\\.config\\freebuff-desktop\\local-projects\\970ec98e-7a38-4f90-bd29-1f51f6150449\\docs\\android-agent\\evidence\\live-2026-11-13T15-17-25-141Z/forced-throw",
+  "device": {
+    "model": "SM-S918U",
+    "release": "17",
+    "sdk": 37
+  },
+  "serial": "adb-R5CW1040A1A-Utkq1e._adb-tls-connect._tcp",
+  "app": "com.freebuff.gowild",
+  "tier": "virtual",
+  "isolation": null,
+  "plan": "throw",
+  "policy": {
+    "decision": {
+      "allow": true,
+      "needsApproval": false,
+      "reason": "allowlisted",
+      "package": "com.freebuff.gowild"
+    },
+    "source": "C:\\Users\\sdotm\\.config\\freebuff-desktop\\local-projects\\970ec98e-7a38-4f90-bd29-1f51f6150449\\android\\agent\\config\\apps.json"
+  },
+  "ownerAtStart": {
+    "at": "2026-11-13T15:18:03.653Z",
+    "wakefulness": "Awake",
+    "screenOff": false,
+    "locked": false,
+    "inCall": null,
+    "verdict": "active",
+    "signals": [
+      "wakefulness=Awake"
+    ],
+    "detail": ""
+  },
+  "open": {
+    "ok": true,
+    "created": true,
+    "id": 143,
+    "sfId": "11529215046146686150",
+    "sfIdSource": "display-name",
+    "name": "Overlay #1",
+    "width": 720,
+    "height": 1280,
+    "spec": "720x1280/320",
+    "openedAt": "2026-11-13T15:18:06.866Z",
+    "baselineDisplays": [
+      0
+    ],
+    "focus": {
+      "before": {
+        "displayId": 0,
+        "currentFocus": "Window{673c3de u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity}",
+        "focusedApp": "ActivityRecord{113297694 u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity t5197}",
+        "focusedPackage": "com.instagram.android",
+        "focusedWindow": "Window{673c3de u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity}",
+        "topFocusedDisplayId": 0,
+        "at": "2026-11-13T15:18:06.434Z"
+      },
+      "after": {
+        "displayId": 0,
+        "currentFocus": "null",
+        "focusedApp": "ActivityRecord{113297694 u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity t5197}",
+        "focusedPackage": "com.instagram.android",
+        "focusedWindow": null,
+        "topFocusedDisplayId": 143,
+        "at": "2026-11-13T15:18:08.020Z"
+      },
+      "displayZeroUnchanged": true,
+      "topFocusedBefore": 0,
+      "topFocusedAfter": 143
+    }
+  },
+  "steps": [
+    {
+      "index": 1,
+      "action": "capture",
+      "label": "display-zero-before",
+      "tier": "observe",
+      "ok": true,
+      "display": 0,
+      "threw": false,
+      "at": "2026-11-13T15:18:09.612Z",
+      "ms": 1176,
+      "focusBefore": {
+        "displayId": 0,
+        "currentFocus": "null",
+        "focusedApp": "ActivityRecord{113297694 u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity t5197}",
+        "focusedPackage": "com.instagram.android",
+        "focusedWindow": null,
+        "topFocusedDisplayId": 143,
+        "at": "2026-11-13T15:18:08.432Z"
+      },
+      "focusAfter": {
+        "displayId": 0,
+        "currentFocus": "Window{673c3de u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity}",
+        "focusedApp": "ActivityRecord{113297694 u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity t5197}",
+        "focusedPackage": "com.instagram.android",
+        "focusedWindow": "Window{673c3de u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity}",
+        "topFocusedDisplayId": 0,
+        "at": "2026-11-13T15:18:09.883Z"
+      },
+      "displayZeroUnchanged": true,
+      "path": "C:\\Users\\sdotm\\.config\\freebuff-desktop\\local-projects\\970ec98e-7a38-4f90-bd29-1f51f6150449\\docs\\android-agent\\evidence\\live-2026-11-13T15-17-25-141Z\\forced-throw\\01-display-zero-before.png",
+      "width": 1080,
+      "height": 2316,
+      "bytes": 1296141,
+      "sha": "9e7a91724c2d"
+    },
+    {
+      "index": 2,
+      "action": "launch",
+      "label": "launch com.freebuff.gowild",
+      "tier": "virtual",
+      "ok": true,
+      "display": 143,
+      "threw": false,
+      "at": "2026-11-13T15:18:10.628Z",
+      "ms": 249,
+      "focusBefore": {
+        "displayId": 0,
+        "currentFocus": "Window{673c3de u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity}",
+        "focusedApp": "ActivityRecord{113297694 u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity t5197}",
+        "focusedPackage": "com.instagram.android",
+        "focusedWindow": "Window{673c3de u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity}",
+        "topFocusedDisplayId": 0,
+        "at": "2026-11-13T15:18:10.149Z"
+      },
+      "focusAfter": {
+        "displayId": 0,
+        "currentFocus": "null",
+        "focusedApp": "ActivityRecord{113297694 u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity t5197}",
+        "focusedPackage": "com.instagram.android",
+        "focusedWindow": null,
+        "topFocusedDisplayId": 143,
+        "at": "2026-11-13T15:18:10.943Z"
+      },
+      "displayZeroUnchanged": true,
+      "reason": null,
+      "component": "com.freebuff.gowild/.MainActivity",
+      "output": "Starting: Intent { cmp=com.freebuff.gowild/.MainActivity }",
+      "argv": "am start --display 143 -n com.freebuff.gowild/.MainActivity"
+    },
+    {
+      "index": 3,
+      "action": "capture",
+      "label": "before-throw",
+      "tier": "virtual",
+      "ok": true,
+      "display": 143,
+      "threw": false,
+      "at": "2026-11-13T15:18:14.152Z",
+      "ms": 921,
+      "focusBefore": {
+        "displayId": 0,
+        "currentFocus": "null",
+        "focusedApp": "ActivityRecord{113297694 u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity t5197}",
+        "focusedPackage": "com.instagram.android",
+        "focusedWindow": null,
+        "topFocusedDisplayId": 143,
+        "at": "2026-11-13T15:18:13.224Z"
+      },
+      "focusAfter": {
+        "displayId": 0,
+        "currentFocus": "null",
+        "focusedApp": "ActivityRecord{113297694 u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity t5197}",
+        "focusedPackage": "com.instagram.android",
+        "focusedWindow": null,
+        "topFocusedDisplayId": 143,
+        "at": "2026-11-13T15:18:14.562Z"
+      },
+      "displayZeroUnchanged": true,
+      "path": "C:\\Users\\sdotm\\.config\\freebuff-desktop\\local-projects\\970ec98e-7a38-4f90-bd29-1f51f6150449\\docs\\android-agent\\evidence\\live-2026-11-13T15-17-25-141Z\\forced-throw\\02-before-throw.png",
+      "width": 720,
+      "height": 1280,
+      "bytes": 413390,
+      "sha": "7b504d18cf27",
+      "sfId": "11529215046146686150"
+    }
+  ],
+  "tierCounts": {
+    "observe": 1,
+    "virtual": 2
+  },
+  "crown": {
+    "applies": true,
+    "before": {
+      "displayId": 0,
+      "currentFocus": "Window{673c3de u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity}",
+      "focusedApp": "ActivityRecord{113297694 u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity t5197}",
+      "focusedPackage": "com.instagram.android",
+      "focusedWindow": "Window{673c3de u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity}",
+      "topFocusedDisplayId": 0,
+      "at": "2026-11-13T15:18:06.434Z"
+    },
+    "afterActions": {
+      "displayId": 0,
+      "currentFocus": "null",
+      "focusedApp": "ActivityRecord{113297694 u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity t5197}",
+      "focusedPackage": "com.instagram.android",
+      "focusedWindow": null,
+      "topFocusedDisplayId": 143,
+      "at": "2026-11-13T15:18:14.562Z"
+    },
+    "afterTeardown": {
+      "displayId": 0,
+      "currentFocus": "Window{673c3de u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity}",
+      "focusedApp": "ActivityRecord{113297694 u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity t5197}",
+      "focusedPackage": "com.instagram.android",
+      "focusedWindow": "Window{673c3de u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity}",
+      "topFocusedDisplayId": 0,
+      "at": "2026-11-13T15:18:16.238Z"
+    },
+    "displayZeroStable": true,
+    "perActionViolations": 0,
+    "violations": [],
+    "controls": [
+      {
+        "index": 0,
+        "first": {
+          "displayId": 0,
+          "currentFocus": "null",
+          "focusedApp": "ActivityRecord{113297694 u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity t5197}",
+          "focusedPackage": "com.instagram.android",
+          "focusedWindow": null,
+          "topFocusedDisplayId": 143,
+          "at": "2026-11-13T15:18:11.244Z"
+        },
+        "second": {
+          "displayId": 0,
+          "currentFocus": "null",
+          "focusedApp": "ActivityRecord{113297694 u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity t5197}",
+          "focusedPackage": "com.instagram.android",
+          "focusedWindow": null,
+          "topFocusedDisplayId": 143,
+          "at": "2026-11-13T15:18:11.855Z"
+        },
+        "changed": false
+      },
+      {
+        "index": 1,
+        "first": {
+          "displayId": 0,
+          "currentFocus": "null",
+          "focusedApp": "ActivityRecord{113297694 u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity t5197}",
+          "focusedPackage": "com.instagram.android",
+          "focusedWindow": null,
+          "topFocusedDisplayId": 143,
+          "at": "2026-11-13T15:18:12.120Z"
+        },
+        "second": {
+          "displayId": 0,
+          "currentFocus": "null",
+          "focusedApp": "ActivityRecord{113297694 u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity t5197}",
+          "focusedPackage": "com.instagram.android",
+          "focusedWindow": null,
+          "topFocusedDisplayId": 143,
+          "at": "2026-11-13T15:18:12.824Z"
+        },
+        "changed": false
+      }
+    ],
+    "structural": {
+      "displayZeroInputCalls": 0,
+      "displayZeroLaunch": 0,
+      "appResumedOnDisplayZero": false
+    },
+    "attribution": {
+      "rule": "a display-0 change during an action is attributed to the owner when the control samples or the run-level comparison changed too; no action argv can target display 0 on the virtual tier",
+      "controlChanged": false,
+      "runLevelChanged": false,
+      "ownerChurnObserved": false,
+      "concurrentOwnerChanges": 0,
+      "unexplained": 0
+    },
+    "attributableViolations": 0,
+    "attributableStable": true,
+    "topFocusedBefore": 0,
+    "topFocusedDuring": 143,
+    "topFocusedAfter": 0
+  },
+  "battery": {
+    "elapsedMs": 14974,
+    "elapsedS": 15,
+    "charging": true,
+    "chargeDeltaUAh": 0,
+    "chargeDeltaMah": 0,
+    "drainDeltaMah": 0,
+    "levelDelta": 0,
+    "measureMah": 0,
+    "source": "batterystats-estimate",
+    "resolutionLimited": true,
+    "reliable": true,
+    "notes": [
+      "device was charging, so the charge counter cannot fall; the batterystats estimate is reported instead",
+      "0 mAh over 15s is below the counter's 1 mAh resolution: this run's cost is under the measurable floor, not zero"
+    ]
+  },
+  "teardown": {
+    "ok": true,
+    "residue": false,
+    "at": "2026-11-13T15:18:14.565Z",
+    "reason": "run-threw",
+    "attempts": 1,
+    "settingAfter": "null",
+    "displaysAfter": [
+      0
+    ],
+    "expectedDisplays": [
+      0
+    ],
+    "residues": {
+      "setting": null,
+      "displays": null
+    },
+    "focusAfter": {
+      "displayId": 0,
+      "currentFocus": "Window{673c3de u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity}",
+      "focusedApp": "ActivityRecord{113297694 u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity t5197}",
+      "focusedPackage": "com.instagram.android",
+      "focusedWindow": "Window{673c3de u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity}",
+      "topFocusedDisplayId": 0,
+      "at": "2026-11-13T15:18:16.238Z"
+    },
+    "topFocusedAfter": 0,
+    "displayZeroUnchangedAcrossTeardown": true
+  },
+  "disruption": {
+    "owner": {
+      "at": "2026-11-13T15:18:03.653Z",
+      "wakefulness": "Awake",
+      "screenOff": false,
+      "locked": false,
+      "inCall": null,
+      "verdict": "active",
+      "signals": [
+        "wakefulness=Awake"
+      ],
+      "detail": ""
+    },
+    "displayZeroTouched": [
+      {
+        "action": "capture display 0 (before)",
+        "tier": "observe",
+        "why": "read-only screencap of the default display; changes nothing on screen"
+      }
+    ],
+    "churnMoments": [
+      {
+        "moment": "overlay-create",
+        "at": "2026-11-13T15:18:06.866Z",
+        "display": 143,
+        "topFocusedBefore": 0,
+        "topFocusedAfter": 143
+      },
+      {
+        "moment": "overlay-teardown",
+        "at": "2026-11-13T15:18:14.565Z",
+        "topFocusedAfter": 0,
+        "residue": false
+      }
+    ],
+    "forbiddenTouches": []
+  },
+  "limits": [
+    "the virtual display is invisibility, not isolation: same user, same app data, same accounts",
+    "display-0 focus is sampled before and after each action, not continuously",
+    "the system moved input focus to the overlay (mTopFocusedDisplayId 0 -> 143). Touch on display 0 is not affected; a hardware keyboard would type into the overlay while it exists."
+  ],
+  "ok": false,
+  "failed": true,
+  "refused": false,
+  "reason": "run-threw: forced exception: acceptance test 4",
+  "controls": [
+    {
+      "index": 0,
+      "first": {
+        "displayId": 0,
+        "currentFocus": "null",
+        "focusedApp": "ActivityRecord{113297694 u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity t5197}",
+        "focusedPackage": "com.instagram.android",
+        "focusedWindow": null,
+        "topFocusedDisplayId": 143,
+        "at": "2026-11-13T15:18:11.244Z"
+      },
+      "second": {
+        "displayId": 0,
+        "currentFocus": "null",
+        "focusedApp": "ActivityRecord{113297694 u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity t5197}",
+        "focusedPackage": "com.instagram.android",
+        "focusedWindow": null,
+        "topFocusedDisplayId": 143,
+        "at": "2026-11-13T15:18:11.855Z"
+      },
+      "changed": false
+    },
+    {
+      "index": 1,
+      "first": {
+        "displayId": 0,
+        "currentFocus": "null",
+        "focusedApp": "ActivityRecord{113297694 u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity t5197}",
+        "focusedPackage": "com.instagram.android",
+        "focusedWindow": null,
+        "topFocusedDisplayId": 143,
+        "at": "2026-11-13T15:18:12.120Z"
+      },
+      "second": {
+        "displayId": 0,
+        "currentFocus": "null",
+        "focusedApp": "ActivityRecord{113297694 u0 com.instagram.android/com.instagram.mainactivity.InstagramMainActivity t5197}",
+        "focusedPackage": "com.instagram.android",
+        "focusedWindow": null,
+        "topFocusedDisplayId": 143,
+        "at": "2026-11-13T15:18:12.824Z"
+      },
+      "changed": false
+    }
+  ],
+  "failure": {
+    "name": "Error",
+    "message": "forced exception: acceptance test 4",
+    "detail": null
+  }
+}

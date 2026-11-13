@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "safe": [
+    "com.freebuff.gowild",
+    "com.android.deskclock"
+  ],
+  "sensitive": [
+    "com.android.vending",
+    "com.google.android.apps.walletnfcrel",
+    "com.samsung.android.spay",
+    "com.android.dialer",
+    "com.samsung.android.dialer",
+    "com.android.mms",
+    "com.google.android.apps.messaging",
+    "com.samsung.android.messaging",
+    "com.chase.sig.android",
+    "com.paypal.android.p2pmobile"
+  ],
+  "note": "safe = demo targets an agent may drive unasked. sensitive = payments, telephony, money, messaging. Anything not listed needs an explicit --approve. Isolation tier bypasses the list because it uses a separate device or user. Neither list is a security boundary the phone can enforce."
+}

@@ -97,6 +97,8 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `src/dispatch.mjs` | `maybeDispatch()`: the Cloudflare Cron Trigger's stale-board gate, the 10-minute cooldown, and the GitHub `workflow_dispatch` call |
 | `tools/smoke.mjs` | post-deploy browser smoke: the live page loads, emits its script, and logs no console errors |
 | `tools/doc-lint.mjs` | fails the gate when README/AGENTS name a missing path or workflow |
+| `android/agent/` | the quiet-workspace harness: capability probe, display lifecycle, Action API, disruption guard, stop switch, isolation seam. `android/agent/README.md` has the commands and the measured device facts |
+| `docs/android-agent/` | Phase 0 findings, the acceptance record (10/10 on 2026-11-13), the disruption report and the observed-red log |
 | `android/` | the phone app: **two** design directions tied to the system theme — FLAP in dark mode, GRID in light mode — each drawn with `Canvas` and `Paint`. No AndroidX, Material, Compose, Kotlin or font assets, because the generic look it competes with comes from default components. Built by `android/build-apk.sh` (aapt2 → javac → d8 → apksigner); Gradle dies here for want of memory. `android/README.md` has the run, override and capture commands |
 | `tools/android-fixture.mjs` | builds `android/app/src/main/assets/board.json` from a real capture, rebased to today/tomorrow at a 04:00 clock so every row is still ahead. Real observed fares only: the app labels itself `SAMPLE` because a bundled snapshot is not a live board |
 | `src/watch.mjs` | per-route bells: `normalizeWatch()`, `observe()`, `planWatch()` (available / sold out / cheaper / departing), `channelStatus()`, push+email+text delivery, `evaluateWatches()` on ingest |
@@ -149,7 +151,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 
 ```bash
 npm run lint                 # no-undef: the defect class `node --check` cannot see
-npm test                     # every suite in test/all.mjs (17 suites); all must pass
+npm test                     # every suite in test/all.mjs, including the android agent harness; all must pass
 npm run stress               # adversarial: 70 checks
 node test/profiles.mjs       # multi-origin: 9 checks
 node --check <file>          # syntax gate, used on every file
@@ -160,6 +162,13 @@ HEADLESS=0 node tools/headless-probe.mjs   # headed, parked offscreen
 
 node collector/collect.mjs   # 14 requests (7 routes x 2 dates), ~1 min, writes state.json without CF envs
 node tools/render-state.mjs  # renders board.html from state.json
+
+node android/agent/cli.mjs probe      # Phase 0; nothing acts before it speaks
+node android/agent/cli.mjs run --app com.freebuff.gowild
+node android/agent/cli.mjs stop       # teardown + what is still running
+node android/agent/test/run-all.mjs   # 148 offline checks, no device needed
+node android/agent/test/red.mjs       # observed-red: 10 mutations must each turn a suite red
+node android/agent/test/live.mjs      # the 8 acceptance criteria on the real phone
 ```
 
 Deploy (needs Cloudflare credentials this repo does not hold):
