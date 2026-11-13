@@ -43,6 +43,9 @@ jobs:
         run: |
           set -e
           npm run lint
+          # Documentation is a claim about this tree. README once told the reader to run
+          # a workflow that had been deleted; this fails the deploy instead of the reader.
+          node tools/doc-lint.mjs
           npm run dry
           npm test
           npm run stress
