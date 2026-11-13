@@ -22,6 +22,7 @@ const suites = [
   ['zero', 'test/zero.mjs'],
   ['freshness', 'test/freshness.mjs'],
   ['updates', 'test/updates.mjs'],
+  ['channel', 'test/channel.mjs'],
   ['shapes', 'test/shapes.mjs'],
   ['doclint', 'test/doclint.mjs'],
   ['ledger', 'test/ledger.mjs'],
@@ -29,7 +30,6 @@ const suites = [
   ['liveness', 'test/liveness.mjs'],
   ['briefing', 'test/briefing.mjs'],
   ['push', 'test/push.mjs'],
-  ['updates', 'test/updates.mjs'],
   // Offline only: the android harness runs against a simulated transport and a
   // verbatim device capture. The real-device suite (test/live.mjs) needs hardware and
   // is deliberately not part of the gate.

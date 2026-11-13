@@ -33,7 +33,7 @@ const opts = {
   canWatch: true,
   outbox: {
     recent: [
-      { key: '2026-11-13|10:12|DTW', announce: '2026-11-13|10:12', state: 'sent', kind: 'opened', dest: 'DTW', createdAt: NOW - 300000, at: NOW - 290000, reason: null },
+      { key: '2026-11-13|10:12|DTW', announce: '2026-11-13|10:12', state: 'sent', kind: 'opened', dest: 'DTW', createdAt: NOW - 300000, at: NOW - 290000, reason: null, ack: 'shown' },
       { key: '2026-11-13|12:51|DFW', announce: '2026-11-13|12:51', state: 'pending', kind: 'cheaper', dest: 'DFW', createdAt: NOW - 3600000, at: NOW + 60000, reason: 'push: HTTP 429' },
       { key: null, announce: '2026-11-13|18:00|MCO', state: 'dead', kind: 'briefing', dest: 'MCO', createdAt: NOW - 7200000, at: NOW - 3600000, reason: 'push: HTTP 410' },
     ],
@@ -57,7 +57,7 @@ ok(/class="ev sent[^"]*"[\s\S]{0,200}data-target="2026-11-13\|10:12"/.test(page)
 ok(/class="updrow"[^>]*data-date="/.test(page), 'and is tappable, carrying the row key the focus reader uses');
 
 // --- delivery-state honesty, in the log itself -------------------------------
-ok(/class="evstate">delivered</.test(page), 'a delivered entry says delivered');
+ok(/class="evstate">delivered · shown</.test(page), 'a delivered entry says delivered, and says the phone confirmed it');
 ok(/class="evstate warn">retrying</.test(page), 'a retrying entry says retrying');
 ok(/class="evstate bad">dead</.test(page), 'a dead entry says dead');
 ok(/HTTP 429/.test(page), 'a retrying entry carries the reason it is retrying');

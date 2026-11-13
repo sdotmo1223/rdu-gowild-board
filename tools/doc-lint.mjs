@@ -78,11 +78,46 @@ function claimsIn(text) {
   return claims;
 }
 
+// U-E: the owner-verify list is a contract, not a note. It lives in HANDOFF until the
+// last item closes, every item says whether it is still open, and a closed item has to
+// name owner-side evidence -- a screenshot from the phone or the owner's own statement.
+// An agent-side observation cannot close one of these by editing this list quietly.
+const MIN_OWNER_ITEMS = 4;
+
+export function ownerVerifyProblems(text) {
+  const problems = [];
+  const at = String(text || '').search(/\*\*Owner-verifies/i);
+  if (at < 0) return problems;
+  const after = text.slice(at);
+  const nextHeading = after.indexOf('\n## ');
+  const block = nextHeading === -1 ? after : after.slice(0, nextHeading);
+  const starts = [...block.matchAll(/^\d+\.\s+\*\*/gm)].map((m) => m.index);
+  if (starts.length < MIN_OWNER_ITEMS) {
+    problems.push({
+      doc: 'HANDOFF.md',
+      claim: 'owner-verify list',
+      why: `holds ${starts.length} items; the contract is at least ${MIN_OWNER_ITEMS}`,
+    });
+    return problems;
+  }
+  starts.forEach((start, i) => {
+    const item = block.slice(start, i + 1 < starts.length ? starts[i + 1] : block.length);
+    const label = (item.match(/^\d+\.\s+\*\*([^*]+)\*\*/) || [])[1] || 'an owner-verify item';
+    if (!/\((Open|Closed)\b/.test(item)) {
+      problems.push({ doc: 'HANDOFF.md', claim: label, why: 'states no Open/Closed status' });
+    } else if (/\(Closed\b/.test(item) && !/owner/i.test(item)) {
+      problems.push({ doc: 'HANDOFF.md', claim: label, why: 'closed without naming owner-side evidence' });
+    }
+  });
+  return problems;
+}
+
 // Pure enough to test: exists() and workflows are injected.
 export function lintDocs(docs, { exists = existsSync, workflows = [] } = {}) {
   const problems = [];
   const flowSet = new Set(workflows);
   for (const [name, text] of Object.entries(docs || {})) {
+    if (name === 'HANDOFF.md') problems.push(...ownerVerifyProblems(text));
     const seen = new Set();
     for (const token of claimsIn(text)) {
       if (seen.has(token)) continue;

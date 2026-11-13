@@ -1276,9 +1276,44 @@ close, and none of them is closed by an agent-side symptom:
    browser restart; it must come back to the same origin state. *(Open.)*
 3. **The first real ring.** One watch event caused by a sweep, arriving as a notification,
    tapping through to its own row. `/api/push/test` proves the transport; it does not
-   prove the watch. *(TASKS T1, still open.)*
+   prove the watch. *(Open \u2014 tracked as TASKS T1.)*
 4. **Denied → allowed recovery.** The public WebAPK on this phone is
    `POST_NOTIFICATION: ignore`; the settings path in the updates block is written for that
    case and has not been walked end to end. *(Open.)*
 
 Until 3 is done, "the app notifies for itself" is proven as a transport, not as a watch.
+
+## 2026-11-13 (evening) — the deaf notifier, the walk, and log depth (U-A…U-E)
+
+**U-A — zero devices is now a masthead statement.** When `push.devices` is 0 *and* a tier
+has something to say (a log entry, or a watch standing by), the page draws
+`No device enrolled — nothing can notify you.` in bad ink, with the enrolment control
+inline. Healthy-and-enrolled adds no line at all; zero devices with nothing watching stays
+quiet but keeps the control in the log. The affordance is `pushBoxHtml`'s own button moved
+up — the banner and the log can never disagree, and there is exactly one
+`id="push-enable"` in the document (asserted).
+
+**U-B — Check now.** The enrolment box gained `Check now`, which POSTs `/api/push/test`,
+prints what the Worker answered, then re-reads `/api/push/state` for the phone's
+acknowledgement. Two sentences on purpose: *sent, not confirmed yet* is the push service's
+201; *delivered and confirmed by the phone* is the ack. **Not verified on the handset** —
+the button is built and the routes are live, but no one has pressed it on the S23.
+
+**U-C — the phone's word, in the existing ink.** A sent entry with `ack: 'shown'` reads
+`delivered · shown` in normal ink; without it, `delivered · unconfirmed` in warn ink. The
+ladder (delivered / retrying / dead / expired) is otherwise untouched, and a test asserts
+every state label is one of those four plus the one suffix — no new vocabulary.
+
+**U-D — depth behind a disclosure.** With `retentionDays >= 7` the always-open window is
+capped at 30 entries; the next 30 sit under `Older updates`, still day-grouped and still
+carrying kind ink, with a line saying how many of how many are shown. A 24-hour store does
+not grow a disclosure it cannot fill; it keeps the older wording, verbatim.
+
+**U-E — the owner list is guarded now.** `tools/doc-lint.mjs` fails the gate when the list
+drops below four items, when an item states no Open/Closed status, or when an item is
+closed without naming owner-side evidence. It caught its own first real defect: item 3 said
+"TASKS T1, still open" instead of an Open marker.
+
+5. **Press Check now on the phone.** Open the token page, press Check now, and confirm the
+   result line reads *delivered and confirmed by the phone* rather than *sent, not
+   confirmed yet*. *(Open — this is the U-B acceptance, and only the phone can answer it.)*

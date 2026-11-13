@@ -6,7 +6,7 @@
 // one, because the dead reference has no `.yml` on it -- so the bare-name case is
 // asserted first, against a fixture that is deliberately wrong.
 import assert from 'node:assert/strict';
-import { lintDocs, runFromDisk } from '../tools/doc-lint.mjs';
+import { lintDocs, ownerVerifyProblems, runFromDisk } from '../tools/doc-lint.mjs';
 
 let checks = 0;
 const ok = (cond, msg) => {
@@ -95,4 +95,32 @@ eq(lintDocs({ 'README.md': 'Actions \u2192 `gowild-sweep` \u2192 Run workflow.' 
   }
 }
 
+// --- U-E: the owner-verify list is a contract --------------------------------
+{
+  const doc = (items) => `# HANDOFF\n\n**Owner-verifies, together.**\n\n${items.join('\n\n')}\n\nUntil it is done, nothing claims success.\n`;
+  const open = (n) => `${n}. **Check ${n}.** Something only the owner can see. *(Open.)*`;
+  const items = [open(1), open(2), open(3), open(4)];
+
+  eq(ownerVerifyProblems(doc(items)).length, 0, 'four open items are a valid contract');
+  eq(
+    ownerVerifyProblems(doc([open(1), open(2), open(3)])).length,
+    1,
+    'a list that has quietly shrunk below four is a problem',
+  );
+  const silent = doc([open(1), open(2), '3. **Check 3.** No status at all.', open(4)]);
+  ok(
+    ownerVerifyProblems(silent).some((p) => /states no Open\/Closed status/.test(p.why)),
+    'an item that states no status fails the gate',
+  );
+  const shortcut = doc([open(1), open(2), '3. **Check 3.** Agent saw it work. *(Closed \u2014 agent-side.)*', open(4)]);
+  ok(
+    ownerVerifyProblems(shortcut).some((p) => /closed without naming owner-side evidence/.test(p.why)),
+    'closing on agent-side evidence fails, because only the owner can close one',
+  );
+  const proper = doc([open(1), open(2), '3. **Check 3.** The ring landed. *(Closed \u2014 owner: screenshot, 12:14 ET.)*', open(4)]);
+  eq(ownerVerifyProblems(proper).length, 0, 'a closed item that names the owner is accepted');
+  eq(ownerVerifyProblems('# nothing here').length, 0, 'a document without the list is not accused');
+}
+
+console.log(`doclint: ${checks} checks passed`);
 console.log(`doclint: ${checks} checks passed`);

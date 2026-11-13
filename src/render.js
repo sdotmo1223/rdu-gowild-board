@@ -226,9 +226,32 @@ const ALERT_KIND = {
 // The one control that makes this app the only face: without an enrolled device there
 // is nowhere for an update to arrive, and the page says so instead of implying a bell
 // rings. The client half is at the bottom of this file.
-function pushBoxHtml() {
-  return '<div class="pushbox"><p class="pushnote" id="push-state">Checking whether this device is enrolled\u2026</p>' +
-    '<button type="button" class="act" id="push-enable">Enable app notifications</button></div>';
+function pushBoxHtml(opts) {
+  const compact = opts && opts.compact ? ' compact' : '';
+  return `<div class="pushbox${compact}"><p class="pushnote" id="push-state">Checking whether this device is enrolled\u2026</p>` +
+    '<span class="pushacts"><button type="button" class="act" id="push-enable">Enable app notifications</button>' +
+    '<button type="button" class="act ghost" id="push-check" hidden>Check now</button></span>' +
+    '<p class="pushresult" id="push-result" hidden></p></div>';
+}
+
+// U-A: is anything actually waiting to be notified? A log entry means something already
+// fired, a watch means something is standing by. Both point at a channel that must exist.
+function tiersTalking(ob, ctx) {
+  const list = ob && Array.isArray(ob.recent) ? ob.recent : [];
+  const watches = ctx && Array.isArray(ctx.watches) ? ctx.watches : [];
+  return list.length > 0 || watches.length > 0;
+}
+
+// U-A, and it is the last place this project could still fail quietly: zero enrolled
+// devices while a tier has something to say. Measured 2026-11-13 -- every subscription
+// was gone, the tier retried into an empty list, and the page above the fold was serene.
+// The affordance is pushBoxHtml's own button, moved up, never a second implementation.
+function pushBanner(ob, ctx) {
+  const push = ctx && ctx.push;
+  if (!push || Number(push.devices) > 0) return '';
+  if (!tiersTalking(ob, ctx)) return '';
+  return '<div class="pushbanner" role="status"><p class="pblead">' +
+    'No device enrolled \u2014 nothing can notify you.</p>' + pushBoxHtml({ compact: true }) + '</div>';
 }
 
 // Kind is not decoration. A watch alert is something the reader asked for and can act
@@ -266,9 +289,16 @@ function updatesSection(ob, ctx) {
   const dead = Number(ob && ob.dead) || 0;
   const pending = Number(ob && ob.pending) || 0;
 
+  // U-D: a deeper store must not mean an unbounded page. The always-open window is fixed,
+  // and the rest is behind a disclosure the reader opens on purpose.
+  const ACTIVE_WINDOW = 30;
+  const held = Number(ob && ob.retentionDays) >= 7;
+  const active = held ? list.slice(0, ACTIVE_WINDOW) : list;
+  const rest = held ? list.slice(ACTIVE_WINDOW, ACTIVE_WINDOW * 2) : [];
+
   let groups = '';
   let lastDay = null;
-  for (const e of list) {
+  for (const e of active) {
     const day = etDay(e.createdAt || e.at || now);
     if (day !== lastDay) {
       if (lastDay !== null) groups += '</ul>';
@@ -279,13 +309,20 @@ function updatesSection(ob, ctx) {
     const rowDate = spec[0] || '';
     const rowDep = spec[1] || '';
     const tappable = rowDate && rowDep;
-    const stateTone = STATE_TONE[e.state] || '';
+    // U-C: delivered is not the same fact as shown. The phone's acknowledgement extends
+    // the existing ladder (delivered / retrying / dead / expired) rather than inventing
+    // a tier above it, so the ink rules stay learnable.
+    const acked = e.state === 'sent' && e.ack === 'shown';
+    const stateText = e.state === 'sent'
+      ? `delivered \u00b7 ${acked ? 'shown' : 'unconfirmed'}`
+      : STATE_TEXT[e.state] || e.state;
+    const stateTone = e.state === 'sent' ? (acked ? '' : ' warn') : STATE_TONE[e.state] || '';
     const kindTone = KIND_TONE[e.kind] || 'info';
     const inner =
       `<b>${esc(e.dest)}</b>` +
       `<span class="ek">${esc(ALERT_KIND[e.kind] || e.kind)}</span>` +
       `<time>${esc(hhmm(e.at))}</time>` +
-      `<span class="evstate${stateTone}">${esc(STATE_TEXT[e.state] || e.state)}</span>`;
+      `<span class="evstate${stateTone}">${esc(stateText)}</span>`;
     const attrs = ` data-kind="${esc(e.kind)}"${e.key ? ` data-ev="${esc(e.key)}"` : ''}${e.announce ? ` data-target="${esc(e.announce)}"` : ''}`;
     groups += tappable
       ? `<li class="ev ${esc(e.state)} kind-${esc(kindTone)}"${attrs}><a class="updrow" href="#rows" data-date="${esc(rowDate)}" data-dep="${esc(rowDep)}">${inner}</a>${e.reason ? `<span class="evwhy">${esc(e.reason)}</span>` : ''}</li>`
@@ -293,11 +330,34 @@ function updatesSection(ob, ctx) {
   }
   if (lastDay !== null) groups += '</ul>';
 
+  // U-D: everything past the window, still grouped by day, still carrying its kind ink --
+  // behind one summary so the page does not grow with retention.
+  let restHtml = '';
+  if (rest.length) {
+    restHtml = '<details class="evolder"><summary>Older updates</summary>';
+    let restDay = null;
+    for (const e of rest) {
+      const d = etDay(e.createdAt || e.at || now);
+      if (d !== restDay) {
+        if (restDay !== null) restHtml += '</ul>';
+        restHtml += `<p class="evday">${esc(dayHeading(d, now))}</p><ul class="evlist">`;
+        restDay = d;
+      }
+      restHtml +=
+        `<li class="evold kind-${esc(KIND_TONE[e.kind] || 'info')}"><b>${esc(e.dest)}</b>` +
+        `<span class="ek">${esc(ALERT_KIND[e.kind] || e.kind)}</span>` +
+        `<time>${esc(hhmm(e.at))}</time>` +
+        `<span class="evstate${STATE_TONE[e.state] || ''}">${esc(STATE_TEXT[e.state] || e.state)}</span></li>`;
+    }
+    if (restDay !== null) restHtml += '</ul>';
+    restHtml += `<p class="evnote">Showing the ${rest.length} most recent of ${list.length - ACTIVE_WINDOW} older entries this store still holds.</p></details>`;
+  }
+
   const count = list.length;
   const head = count
     ? `<p class="evnote">${count} in the last 24 hours${dead ? ` \u00b7 ${dead} never arrived` : ''}${pending ? ` \u00b7 ${pending} retrying` : ''}. Times are ET. Tap an update to find the flight it is about.</p>`
     : `<p class="evnote">Nothing has fired in the last 24 hours. This log fills as the sweeps run: a watch that opens, sells out, gets cheaper or is about to leave lands here, and the same update arrives as a notification from this app.</p>`;
-  const older = count >= 8
+  const older = !held && count >= 8
     ? `<p class="evolder">Older updates are not kept: the outbox holds the last 24 hours, up to eight entries. Nothing older than that is stored, so this view cannot show it rather than hiding it.</p>`
     : '';
 
@@ -305,7 +365,7 @@ function updatesSection(ob, ctx) {
     `<div class="updtop"><h2 id="updhead">Updates</h2>` +
     `<span class="updcount">${count ? `${count} today` : 'nothing yet'}</span>` +
     `<a class="updjump" href="#rows">to the board</a></div>` +
-    head + groups + older + pushBoxHtml() +
+    head + groups + restHtml + older + (ctx && ctx.pushInBanner ? '' : pushBoxHtml()) +
     '</section>';
 }
 
@@ -1174,6 +1234,20 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
   .evstate.faint { color:var(--faint); }
   .evwhy { flex:1 1 100%; padding-left:2px; font-size:8px; line-height:1.5; color:var(--faint); }
   .evolder { margin:10px 0 0; font-family:var(--mono); font-size:8px; line-height:1.6; color:var(--faint); }
+  .evolder summary { cursor:pointer; color:var(--dim); letter-spacing:.08em; text-transform:uppercase; }
+  .evold { display:flex; flex-wrap:wrap; gap:4px 8px; align-items:baseline; font-family:var(--mono);
+           font-size:8px; letter-spacing:.04em; color:var(--faint); }
+  /* U-A: the deaf-notifier banner. Same ink family as the stale data banner on purpose --
+     it is a machine-state statement, not a new kind of warning. */
+  .pushbanner { display:flex; flex-wrap:wrap; gap:8px 12px; align-items:baseline; margin:0 0 14px;
+                padding:10px 12px; border-left:3px solid var(--bad); background:rgba(255,80,80,.06); }
+  .pblead { margin:0; font-family:var(--mono); font-size:10px; line-height:1.5; letter-spacing:.02em; color:var(--bad); }
+  .pushacts { display:flex; flex:none; gap:14px; align-items:baseline; padding-bottom:2px; }
+  .pushresult { flex:1 1 100%; margin:2px 0 0; font-family:var(--mono); font-size:8.5px; line-height:1.6;
+                letter-spacing:.04em; color:var(--dim); }
+  .pushresult.good { color:var(--acid); }
+  .pushresult.warn { color:var(--warn); }
+  .pushresult.bad { color:var(--bad); }
   .pushbox { display:flex; flex-wrap:wrap; gap:10px; align-items:baseline; margin:12px 0 0;
              padding-top:10px; border-top:1px solid var(--rule); }
   .pushnote { flex:1 1 220px; margin:0; font-family:var(--mono); font-size:8.5px; line-height:1.6; letter-spacing:.06em; color:var(--dim); }
@@ -1329,9 +1403,10 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
     <span>Read-only</span>
   </div>
 </header>
+${pushBanner(ob, watchCtx)}
 ${jumpBar(ob, { ...watchCtx, now })}
 ${bestDealHtml(view, now, watchCtx)}
-${updatesSection(ob, { ...watchCtx, now })}
+${updatesSection(ob, { ...watchCtx, now, pushInBanner: Boolean(pushBanner(ob, watchCtx)) })}
 ${coverageHtml(view)}
 ${banner}
 ${watchBar(watchCtx)}
@@ -1753,7 +1828,17 @@ window.__wcfg = ${watchJson};
   (function () {
     var btn = document.getElementById('push-enable');
     var out = document.getElementById('push-state');
+    var chk = document.getElementById('push-check');
+    var res = document.getElementById('push-result');
     if (!btn || !out) return;
+    // U-B: what the phone says about a test, kept separate from what the push service
+    // answered. A 201 is "accepted", never "shown".
+    function result(t, tone) {
+      if (!res) return;
+      res.hidden = false;
+      res.textContent = t;
+      res.className = 'pushresult' + (tone ? ' ' + tone : '');
+    }
     // What this actually costs, in the one place the reader turns it on. The old ntfy
     // path kept a second app running; Web Push wakes the service worker only when an
     // update arrives. Cheaper, not free -- and saying so is the point of the line.
@@ -1777,6 +1862,10 @@ window.__wcfg = ${watchJson};
     function enrolled() {
       btn.textContent = 'Notifications on';
       btn.disabled = true;
+      if (chk) {
+        chk.hidden = false;
+        chk.disabled = false;
+      }
       say('This device is enrolled. Updates arrive here, in the app, and tapping one opens the departure it is about.');
     }
     function notYet() {
@@ -1833,6 +1922,41 @@ window.__wcfg = ${watchJson};
           say('Could not enrol this device: ' + (e && e.message ? e.message : e));
         });
     });
+    // U-B: prove the channel from the page. Four taps instead of a terminal, and the
+    // answer is the phone's, not the push service's.
+    if (chk) {
+      chk.addEventListener('click', function () {
+        var token = location.pathname.split('/').pop();
+        chk.disabled = true;
+        result('Asking the Worker to send a test\u2026');
+        fetch('/api/push/test?token=' + encodeURIComponent(token), { method: 'POST' })
+          .then(function (r) { return r.json(); })
+          .then(function (j) {
+            if (!j || !j.ok) {
+              result('The Worker could not send: ' + ((j && (j.message || j.state)) || 'no reason given'), 'bad');
+              return null;
+            }
+            var n = Number(j.devices) || 1;
+            result('Sent to ' + n + ' device' + (n === 1 ? '' : 's') + ' \u2014 not confirmed yet: the push service accepted it, the phone has not said it appeared.', 'warn');
+            return fetch('/api/push/state?token=' + encodeURIComponent(token))
+              .then(function (r) { return r.json(); })
+              .then(function (s) {
+                var c = (s && s.canary) || null;
+                if (c && c.state === 'ok') {
+                  result('Delivered and confirmed by the phone.', 'good');
+                } else if (c && c.state === 'gap') {
+                  result('Sent, but the phone never confirmed it. Android may be holding the notification.', 'warn');
+                } else {
+                  result('Sent \u2014 pending confirmation from the phone.', 'warn');
+                }
+              });
+          })
+          .catch(function (e) {
+            result('Could not test the channel: ' + (e && e.message ? e.message : e), 'bad');
+          })
+          .then(function () { chk.disabled = false; });
+      });
+    }
   })();
 })();
 </script>
