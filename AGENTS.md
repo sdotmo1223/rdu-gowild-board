@@ -40,7 +40,11 @@ This file = the rules.
    produced no run records at all for an hour. ($0 is only affordable because the repo
    is public: GitHub Free meters 2,000 Actions minutes/month on private repos, which a
    15-minute Playwright cron exhausts in about a week. Keep it public.)
-5. **Read-only.** Never request checkout, payment, or booking paths.
+5. **Read-only with a human handoff.** The board never authenticates to Frontier on a
+   customer's behalf, never stores Frontier credentials, and never requests
+   checkout, payment, or booking endpoints itself. It may link to Frontier's own
+   search pages; the customer completes login, payment and booking on Frontier's
+   site.
 6. **The session cookie is optional and secret.** It is never logged, printed,
    committed, or pasted into chat. Only the pair count may be reported. It lives
    in `FRONTIER_COOKIE` or the gitignored `.dev.vars`.
