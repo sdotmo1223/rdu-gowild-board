@@ -282,6 +282,8 @@ export async function outboxStatus(env, profile, now = Date.now()) {
     .sort((a, b) => Number(b.createdAt) - Number(a.createdAt))
     .slice(0, 8)
     .map((e) => ({
+      key: e.key || null,
+      announce: e.announce || null,
       state: e.state,
       kind: e.kind,
       dest: e.dest,

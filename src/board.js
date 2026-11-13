@@ -84,15 +84,21 @@ export function buildCoverage(state, now = Date.now()) {
   let oldestRoute = null;
   let oldestRouteAgeMin = null;
   let neverAnswered = 0;
+  // Per-route ages, so a row can say how old its route's last reading is. This is the
+  // ledger's own unit: "ATL checked 14 min ago" is a fact about ATL, not about the
+  // fare on that row, and the row must not imply otherwise.
+  const byRoute = {};
   for (const code of codes) {
     const okAt = Number(cov[code].lastOkAt);
     // A route that has never answered is not "0 minutes old". Counting it as age
     // would hide it; counting it as fresh would be a lie.
     if (!Number.isFinite(okAt) || okAt <= 0) {
       neverAnswered += 1;
+      byRoute[code] = null;
       continue;
     }
     const age = Math.max(0, Math.round((now - okAt) / 60000));
+    byRoute[code] = age;
     if (oldestRouteAgeMin === null || age > oldestRouteAgeMin) {
       oldestRouteAgeMin = age;
       oldestRoute = code;
@@ -103,6 +109,7 @@ export function buildCoverage(state, now = Date.now()) {
     oldestRoute,
     oldestRouteAgeMin,
     neverAnswered,
+    byRoute,
     warn: (oldestRouteAgeMin !== null && oldestRouteAgeMin >= COVERAGE_ALERT_MIN) || neverAnswered > 0,
   };
 }

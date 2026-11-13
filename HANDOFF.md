@@ -963,3 +963,34 @@ deep link in any push. `src/index.js` routes are `/`, `/api/ingest`, `/api/dispa
 and the collector's own `InternalSelect` URL template (`/Flight/InternalSelect?o1=…
 &d1=…&dd1=…&ADT=1&mon=true&promo=`) do exist, so the route-age line and a purchase
 link are sourceable today; the rest waits on its producer.
+
+## 2026-11-12 — TASK 1 (page side): the tap lands on the flight
+
+Three surfaces shipped on top of TASK 0's deploy (version `a2736116-7c1f-4d61-b020-21605e345d39`).
+
+- **`?focus=<eventKey>`.** The alert log now carries each outbox entry's `key` and the
+  departure it was about (`announce`), so a click URL can point at one. On load the
+  page unfolds the log, lights the matching entry, scrolls the row for that
+  date+departure into the middle of the screen and outlines it in acid. Verified in a
+  real browser: `{focus:1, ev:1}` with the row outlined — no fetch, both objects were
+  already on the page.
+- **Route age under every price**, sourced from `state.coverage[route].lastOkAt`
+  (`buildCoverage` now also returns `byRoute`). It reads "checked ≤ 3 min" in dim ink,
+  turns warn past 60 min, and disappears entirely when there is no ledger — where the
+  header then says *"no route ledger yet — cannot say when each route was last
+  checked"* instead of naming a route count. This is route granularity and the chip
+  says so; a row still has no timestamp of its own and none is invented.
+- **`SEARCH ↗` on every row**, opening Frontier's own `InternalSelect` for that exact
+  date — the same URL shape the collector already requests. It is labelled *Search*,
+  not *Book*, and the row keeps "est. all-in" beside the price: this page hands you to
+  Frontier's live search, it never books or pays, and the fare it prints is a snapshot.
+
+**Not built, and why:** the recheck affordance. A recheck needs an endpoint this
+Worker does not have (`/api/dispatch` exists but is gated on a token the page must
+never hold), and a button that cannot act is worse than the honest chip it would sit
+next to. The chip already states thin in the same grammar as the header.
+
+**Live evidence** (`docs/design-2026-11-12/live-rows.png`): 109 rows carry the search
+link, `href` verified as `…InternalSelect?o1=RDU&d1=DTW&dd1=2026-11-13&ADT=1&mon=true&promo=`,
+and the chips read `checked ≤ 3 min` against real KV. Gates: lint 0, test 0 (17
+suites, shapes 269), stress 70/70, check 0.

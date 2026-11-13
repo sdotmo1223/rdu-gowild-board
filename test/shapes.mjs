@@ -325,15 +325,52 @@ for (const [name, state] of Object.entries(shapes)) {
   ok(/not re-checked this hour/.test(carriedPage), 'and the ruling says what that means');
   ok(!/all 14 routes checked within the hour/.test(carriedPage), 'the header never claims a fresh check over carried rows');
 
+  // Route age comes from the coverage ledger, never from the row: the row has no
+  // timestamp of its own. With no ledger the chip must not appear at all.
+  const ledger = {
+    ...two,
+    coverage: { ATL: { lastOkAt: NOW - 14 * 60000 }, MCO: { lastOkAt: NOW - 96 * 60000 } },
+  };
+  const ledgerPage = renderPage(buildBoard(ledger, NOW), ledger, [], NOW, {
+    basePath: '/s/abcdefgh1234',
+    origin: 'RDU',
+  });
+  ok(/class="rcheck">checked ≤ 14 min/.test(ledgerPage), 'a fresh route states its age under the price');
+  ok(/class="rcheck warn">checked ≤ 1h 36m/.test(ledgerPage), 'a route older than an hour states it in warn ink');
+  const noLedger = { ...two, coverage: null };
+  const noLedgerPage = renderPage(buildBoard(noLedger, NOW), noLedger, [], NOW, {
+    basePath: '/s/abcdefgh1234',
+    origin: 'RDU',
+  });
+  ok(!/class="rcheck/.test(noLedgerPage), 'no ledger, no route-age chip -- it is never guessed');
+
+  // The purchase affordance is a link to Frontier's own search for this date, and the
+  // row keeps saying the fare is estimated.
+  ok(/class="act book" href="https:\/\/booking\.flyfrontier\.com\/Flight\/InternalSelect\?o1=RDU&amp;d1=ATL;&/.test(ledgerPage) || /d1=ATL&dd1=2026-11-12/.test(ledgerPage), 'the row links to Frontier\'s search for its own date');
+  ok(/est\. all-in/.test(ledgerPage), 'the row still labels the fare estimated all-in beside it');
+  ok(!/<form|method="post"/i.test(ledgerPage), 'the page itself submits nothing');
+
   // The alert log is drawn from the outbox the Worker already reads.
   const ob = {
-    recent: [{ state: 'dead', kind: 'soldout', dest: 'PHL', at: NOW - 3600000, createdAt: NOW - 3700000 }],
+    recent: [
+      {
+        key: 'soldout|PHL|12:30',
+        announce: '2026-11-12|12:30',
+        state: 'dead',
+        kind: 'soldout',
+        dest: 'PHL',
+        at: NOW - 3600000,
+        createdAt: NOW - 3700000,
+      },
+    ],
     dead: 1,
   };
   const logPage = renderPage(view, two, [], NOW, { basePath: '/s/abcdefgh1234', origin: 'RDU', outbox: ob });
   ok(/class="evlog"/.test(logPage), 'the alert log renders when the outbox has entries');
   ok(/class="ev dead"/.test(logPage), 'a dead event keeps its own state class');
   ok(!/class="evlog"/.test(page), 'and no log is invented when the outbox is empty');
+  ok(/data-ev="soldout\|PHL\|12:30"/.test(logPage), 'the log entry carries the key a push can point at');
+  ok(/data-target="2026-11-12\|12:30"/.test(logPage), 'and the departure it was about');
 }
 
 console.log(`shapes: ${checks} checks passed`);

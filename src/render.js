@@ -228,10 +228,21 @@ function eventLogHtml(ob) {
   const rows = list
     .map(
       (e) =>
-        `<li class="ev ${esc(e.state)}"><b>${esc(e.dest)}</b><span class="ek">${esc(ALERT_KIND[e.kind] || e.kind)}</span><time>${esc(hhmm(e.at))}</time><span class="est">${esc(state[e.state] || e.state)}</span></li>`,
+        `<li class="ev ${esc(e.state)}"${e.key ? ` data-ev="${esc(e.key)}"` : ''}${e.announce ? ` data-target="${esc(e.announce)}"` : ''}><b>${esc(e.dest)}</b><span class="ek">${esc(ALERT_KIND[e.kind] || e.kind)}</span><time>${esc(hhmm(e.at))}</time><span class="est">${esc(state[e.state] || e.state)}</span></li>`,
     )
     .join('');
   return `<details class="evlog"${Number(ob.dead) > 0 ? ' open' : ''}><summary>Last 24h of alerts \u00b7 ${list.length}</summary><p class="evnote">Times are ET. A dead event is one that never reached you; the watch that fired it is still armed.</p><ul class="evlist">${rows}</ul></details>`;
+}
+
+// How old this row's route reading is, under the price. It says "checked" and not
+// "this fare was checked", because the ledger is per route per sweep and the row has
+// no timestamp of its own.
+function routeCheck(r, ctx) {
+  const ages = ctx && ctx.routeAges;
+  if (!ages || !Object.prototype.hasOwnProperty.call(ages, r.dest)) return '';
+  const age = Number(ages[r.dest]);
+  if (!Number.isFinite(age)) return '';
+  return `<span class="rcheck${age >= 60 ? ' warn' : ''}">checked \u2264 ${esc(spanText(age))}</span>`;
 }
 
 function rowHtml(r, ctx = {}) {
@@ -266,11 +277,13 @@ function rowHtml(r, ctx = {}) {
           ${ctx && ctx.canWatch ? `<button type="button" class="act bell" data-dest="${esc(r.dest)}" data-date="${esc(r.date)}" aria-pressed="${watched ? 'true' : 'false'}" title="Watch ${esc(r.dest)}">${watched ? 'Watching' : 'Watch'}</button>` : ''}
           <button type="button" class="act pin" aria-pressed="false">Pin ${esc(r.dest)}</button>
           <button type="button" class="act ics">Calendar</button>
+          <a class="act book" href="https://booking.flyfrontier.com/Flight/InternalSelect?o1={ORIGIN}&d1=${esc(r.dest)}&dd1=${esc(r.date)}&ADT=1&mon=true&promo=" target="_blank" rel="noopener noreferrer" title="Opens Frontier's own search for this date. The fare there is live; the fare here is a snapshot.">Search &#8599;</a>
         </div>
       </div>
       <div class="fare">
         <span class="amt">$${r.allin.toFixed(2)}</span>
         <span class="unit">est. all-in</span>
+        ${routeCheck(r, ctx)}
       </div>
     </li>`;
 }
@@ -640,6 +653,10 @@ export function renderPage(view, state, freq, now = Date.now(), opts = {}) {
     watches: Array.isArray(opts.watches) ? opts.watches : [],
     channels: opts.channels || {},
     watched: watchedSet,
+    // The route ledger is the only honest source of per-row age: rows carry no
+    // timestamp of their own, and inventing one would be the lie this board exists
+    // not to tell.
+    routeAges: (view.coverage && view.coverage.byRoute) || {},
   };
   // Only what the sheet needs to draw itself: no observation rows, no KV keys and
   // no secrets. `<` is escaped so a reason string can never close the script tag.
@@ -895,6 +912,17 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
   /* an expired departing event is the system working, not a failure */
   .ev.dropped .est { color:var(--faint); }
   .ev.dead b { color:#f0b6ab; }
+  .ev.ev-active { color:var(--bone); }
+  .ev.ev-active .est { color:var(--acid); }
+
+  /* a row a push pointed at, arrived rather than sought */
+  li.row.is-focus { outline:1px solid var(--acid); outline-offset:2px; background:rgba(217,242,77,.05); }
+
+  /* the route ledger, under the price it qualifies */
+  .rcheck { display:block; margin-top:3px; font-family:var(--mono); font-size:7.5px;
+            letter-spacing:.06em; color:var(--faint); white-space:nowrap; }
+  .rcheck.warn { color:var(--warn); }
+  a.act.book { text-decoration:none; }
 
   /* pins, said out loud instead of being an invisible localStorage trick */
   .pinbar { display:none; align-items:baseline; gap:9px; margin:10px 0 0; padding:7px 10px;
@@ -1236,6 +1264,37 @@ window.__wcfg = ${watchJson};
     localStorage.setItem(PINS, JSON.stringify(p));
     applyPins();
   });
+  // A push names the event it was about: /?focus=<eventKey>. Land on the flight
+  // itself, with the log entry that fired it lit, instead of at the top of a long
+  // page. Nothing is fetched -- both the row and the event are already here.
+  (function () {
+    var want = '';
+    try { want = new URLSearchParams(location.search).get('focus') || ''; } catch (e) { want = ''; }
+    if (!want) return;
+    var ev = null;
+    var evs = document.querySelectorAll('.ev');
+    for (var i = 0; i < evs.length; i++) {
+      if (evs[i].getAttribute('data-ev') === want) { ev = evs[i]; break; }
+    }
+    if (!ev) return;
+    ev.className += ' ev-active';
+    // The entry that fired the push has to be visible, not folded inside a summary.
+    var box = ev.parentNode;
+    while (box && box.nodeName !== 'DETAILS') box = box.parentNode;
+    if (box) box.open = true;
+    var spec = (ev.getAttribute('data-target') || '').split('|');
+    if (spec.length < 2) return;
+    var rows = document.querySelectorAll('li.row');
+    for (var j = 0; j < rows.length; j++) {
+      var dep = rows[j].getAttribute('data-dep') || '';
+      if (rows[j].getAttribute('data-date') === spec[0] && dep.indexOf(spec[1]) >= 0) {
+        rows[j].className += ' is-focus';
+        rows[j].scrollIntoView({ block: 'center' });
+        break;
+      }
+    }
+  })();
+
   var pinClear = document.getElementById('pinclear');
   if (pinClear) {
     pinClear.addEventListener('click', function () {
