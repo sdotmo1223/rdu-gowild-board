@@ -10,7 +10,7 @@ import { outboxStatus } from './outbox.mjs';
 import { maybeDispatch } from './dispatch.mjs';
 import { buildLedger } from './ledger.mjs';
 import { ICON_192_PNG, ICON_512_PNG } from './pwa-icons.mjs';
-import { publicKey, toB64u, saveSubscription, listSubscriptions, dropSubscription, sendToAll, sendEmpty, readCanary, recordSeen } from './push.mjs';
+import { publicKey, toB64u, saveSubscription, listSubscriptions, dropSubscription, sendToAll, sendEmpty, readCanary, recordSeen, canaryStateFor } from './push.mjs';
 import { runPolicy } from './policy.mjs';
 import { readSettings, writeSettings } from './settings.mjs';
 import {
@@ -461,7 +461,7 @@ async function handlePush(request, env, url, now) {
       // What the channel itself believes: the last delivery, the last acknowledgement,
       // and whether the two disagree. Added because `devices: 1` and a 201 look healthy
       // while the phone shows nothing at all.
-      canary: await readCanary(env, now).catch(() => null),
+      canary: canaryStateFor(subs.length, await readCanary(env, now).catch(() => null)),
       subscriptions: subs.map((s) => ({ id: s.id, profile: s.profile, label: s.label, at: s.at, lastOk: s.lastOk, lastError: s.lastError })),
     });
   }
@@ -642,6 +642,7 @@ export default {
       }
       if (!state) return json({ ok: false, state: 'no-data', message: 'Collector has never written a snapshot.' });
       const view = buildBoard(state, now);
+      const boardDevices = await listSubscriptions(env).catch(() => []);
       return json({
         ok: true,
         updatedAt: view.updatedAt,
@@ -708,8 +709,8 @@ export default {
         // shows an event as delivered while the app has not acknowledged a push in an
         // hour is a board that is lying politely.
         push: {
-          devices: (await listSubscriptions(env).catch(() => [])).length,
-          canary: await readCanary(env, now).catch(() => null),
+          devices: boardDevices.length,
+          canary: canaryStateFor(boardDevices.length, await readCanary(env, now).catch(() => null)),
         },
         frequency: frequencyTable(state, ROUTES),
         schedule: weeklyPattern(state),
