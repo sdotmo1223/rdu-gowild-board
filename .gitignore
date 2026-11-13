@@ -23,6 +23,8 @@ threads/
 
 # local board token; never commit (it is the /s/<TOKEN> path)
 .board-token
+# GitHub Actions:write token for the stale-board dispatch receiver
+.dispatch-token
 board.live.html
 .verify.log
 
