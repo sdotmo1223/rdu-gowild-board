@@ -10,7 +10,7 @@
 import { buildBoard } from './board.js';
 import { ORIGIN, PROFILE, ROUTES, easternDate } from './routes.js';
 import { outboxStatus } from './outbox.mjs';
-import { deliver, resolveTopic } from './watch.mjs';
+import { deliver } from './watch.mjs';
 import { briefingDue, readSettings } from './settings.mjs';
 import { buildBriefing } from './briefing.mjs';
 import { buildHealthNotice, isDegraded } from './health.mjs';
@@ -22,12 +22,10 @@ export const PROBE_KEY = 'link:probe';
 export const POLICY_KEY = 'policy:last';
 
 async function push(env, alert) {
-  const topic = await resolveTopic(env);
-  if (!topic) return { sent: [], failed: [{ channel: 'push', reason: 'no topic configured' }] };
-  // Three tries, because this provider throttles Worker egress in short bursts and a
-  // 429 here means "not now", not "never". The daily briefing and the transition
-  // notices can afford the delay; a cron tick has nothing else to do.
-  return deliver({ ...env, NTFY_TOPIC: topic }, alert, ['push'], { tries: 3 });
+  // The app carries these now, so the only configuration that matters is whether a
+  // device has enrolled. `deliver` reports that as a failure with a sentence, which is
+  // what the policy log shows instead of a silently skipped tier.
+  return deliver(env, alert, ['push'], { tries: 3 });
 }
 
 // One GET per week, no session, no credentials. `redirect: manual` so Frontier's own

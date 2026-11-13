@@ -10,6 +10,7 @@ import { outboxStatus } from './outbox.mjs';
 import { maybeDispatch } from './dispatch.mjs';
 import { buildLedger } from './ledger.mjs';
 import { ICON_192_PNG, ICON_512_PNG } from './pwa-icons.mjs';
+import { publicKey, toB64u, saveSubscription, listSubscriptions, dropSubscription, sendToAll, sendEmpty } from './push.mjs';
 import { runPolicy } from './policy.mjs';
 import { readSettings, writeSettings } from './settings.mjs';
 import {
@@ -25,7 +26,7 @@ import {
 
 // Minimal offline shell. Cached per token path so the secret link is never
 // registered at the origin root.
-const SW_JS = `const CACHE = 'gowild-v2';
+const SW_JS = `const CACHE = 'gowild-v4';
 self.addEventListener('install', (e) => { self.skipWaiting(); });
 self.addEventListener('activate', (e) => { e.waitUntil(self.clients.claim()); });
 self.addEventListener('fetch', (event) => {
@@ -50,6 +51,35 @@ self.addEventListener('fetch', (event) => {
       if (hit) return hit;
       throw err;
     }
+  })());
+});
+// The app notifies for itself: no second app, no topic, and the tap lands on the row
+// the update was about. The payload arrives encrypted to this device, which is why it
+// can carry a link to the token page at all.
+self.addEventListener('push', (event) => {
+  let d = {};
+  try { d = event.data ? event.data.json() : {}; } catch (e) { d = {}; }
+  const opts = {
+    body: d.body || '',
+    tag: d.tag || 'gowild',
+    renotify: Boolean(d.renotify),
+    icon: 'icon-192.png',
+    badge: 'icon-192.png',
+    data: { url: d.url || './' },
+  };
+  event.waitUntil(self.registration.showNotification(d.title || 'GoWild', opts));
+});
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = (event.notification.data && event.notification.data.url) || './';
+  const absolute = new URL(target, self.registration.scope).href;
+  const bare = absolute.split('?')[0];
+  event.waitUntil((async () => {
+    const open = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (let i = 0; i < open.length; i += 1) {
+      if (open[i].url.split('?')[0] === bare) return open[i].focus();
+    }
+    return self.clients.openWindow(absolute);
   })());
 });`;
 
@@ -127,8 +157,10 @@ async function maybeStaleAlert(env, now, key = 'state', label = 'RDU') {
     // they cannot read back out of GitHub secrets: CI already holds it. The same
     // resolution feeds the bells, so a page can never say push is off while a
     // working topic is sitting in KV.
-    const configured = await resolveTopic(env);
-    if (!validTopic(configured)) return null;
+    // The app carries this now. With no enrolled device there is nowhere to send it,
+    // and an answer that says so is better than a no-op that looks like a delivery.
+    const subs = await listSubscriptions(env).catch(() => []);
+    if (!subs.length) return { sent: false, reason: 'no device enrolled for app notifications' };
     const alertKey = `${STALE_ALERT_KEY}:${key}`;
     const last = Number(await env.BOARD.get(alertKey)) || 0;
     if (last && now - last < 6 * 3600 * 1000) return null;
@@ -138,20 +170,17 @@ async function maybeStaleAlert(env, now, key = 'state', label = 'RDU') {
     if (!shouldSendStaleAlert(view.ageMin, last, now)) return null;
     await env.BOARD.put(alertKey, String(now));
     const hours = Math.max(1, Math.round((view.ageMin || 0) / 60));
-    await fetch(`https://ntfy.sh/${encodeURIComponent(configured)}`, {
-      method: 'POST',
-      headers: {
-        Title: `GoWild ${label}: collector silent ${hours}h`,
-        Priority: 'high',
-        Tags: 'warning',
-        'Content-Type': 'text/plain; charset=utf-8',
-      },
+    const out = await sendToAll(env, subs, {
+      title: `GoWild ${label}: collector silent ${hours}h`,
       body:
-        `No ${label} snapshot for ${hours}h, past the 3h limit.\n` +
-        'The page is still rendering the last good sweep, which is why it looks alive.\n' +
+        `No ${label} snapshot for ${hours}h, past the 3h limit. ` +
+        'The page is still rendering the last good sweep, which is why it looks alive. ' +
         'Check Actions: the cron or the write path has stopped.',
+      tag: 'gowild-stale',
+      url: env.BOARD_TOKEN ? `/s/${env.BOARD_TOKEN}` : '/rdu',
+      urgency: 'high',
     });
-    return { sent: true };
+    return { sent: out.sent.length > 0, failed: out.failed };
   } catch (err) {
     console.error('stale alert failed', err && err.message);
     return null;
@@ -402,6 +431,88 @@ async function handleIngest(request, env, url, ctx) {
   });
 }
 
+// The app's notification endpoints. One face means one place to look: `state` is what
+// the app shows, `subscribe` is how a device enrols, `test` is how the owner proves the
+// channel without waiting for a fare to move.
+//
+//   GET  /api/push/state      -> devices, and whether the keys exist at all
+//   POST /api/push/subscribe  -> {endpoint, keys:{p256dh,auth}}
+//   POST /api/push/remove     -> {id}
+//   POST /api/push/test       -> one push to every device, no sweep needed
+async function handlePush(request, env, url, now) {
+  const presented = bearerToken(request) || url.searchParams.get('token');
+  if (!sameSecret(presented, env.BOARD_TOKEN)) {
+    return json({ ok: false, state: 'unauthorized', message: 'Send ?token=<BOARD_TOKEN> or an Authorization: Bearer header.' }, 401);
+  }
+  const key = publicKey(env);
+  const action = url.pathname.slice('/api/push/'.length);
+  const profile = (url.searchParams.get('profile') || 'rdu').toLowerCase();
+
+  if (action === 'state' && request.method === 'GET') {
+    const subs = await listSubscriptions(env).catch(() => []);
+    return json({
+      ok: true,
+      vapid: Boolean(key && env.VAPID_PRIVATE),
+      devices: subs.length,
+      subscriptions: subs.map((s) => ({ id: s.id, profile: s.profile, label: s.label, at: s.at, lastOk: s.lastOk, lastError: s.lastError })),
+    });
+  }
+
+  if (action === 'subscribe' && request.method === 'POST') {
+    if (!key || !env.VAPID_PRIVATE) {
+      return json({ ok: false, state: 'no-vapid', message: 'VAPID keys are not set on the Worker, so a device cannot be enrolled.' }, 503);
+    }
+    let body = null;
+    try {
+      body = await request.json();
+    } catch {
+      body = null;
+    }
+    const res = await saveSubscription(env, body, { profile, label: String((body && body.label) || '').slice(0, 40), at: now });
+    return json({ ok: res.ok, ...(res.ok ? { id: res.id, count: res.count } : { state: 'bad-shape', message: res.reason }) }, res.ok ? 200 : 400);
+  }
+
+  if (action === 'remove' && request.method === 'POST') {
+    let body = null;
+    try {
+      body = await request.json();
+    } catch {
+      body = null;
+    }
+    const id = body && typeof body.id === 'string' ? body.id : '';
+    if (!id) return json({ ok: false, state: 'bad-shape', message: 'Expected {"id":"..."}.' }, 400);
+    await dropSubscription(env, id);
+    return json({ ok: true, devices: (await listSubscriptions(env)).length });
+  }
+
+  if (action === 'test' && request.method === 'POST') {
+    const subs = await listSubscriptions(env);
+    if (!subs.length) {
+      return json({ ok: false, state: 'no-devices', message: 'No device has subscribed yet: open the token page and press the enable button.' }, 409);
+    }
+    const focus = url.searchParams.get('focus');
+    // Safe only because the payload is encrypted to the device. It is the one reason a
+    // token may appear in a notification at all.
+    const link = `/s/${env.BOARD_TOKEN}${focus ? `?focus=${encodeURIComponent(focus)}` : ''}`;
+    // A body-less push first: it separates "the push service never delivered" from
+    // "Chrome delivered something it could not decrypt", which look identical here.
+    if (url.searchParams.get('empty')) {
+      const results = [];
+      for (const sub of subs) results.push({ id: sub.id, ...(await sendEmpty(sub, env, now)) });
+      return json({ ok: results.every((r) => r.ok), empty: true, results });
+    }
+    const out = await sendToAll(env, subs, {
+      title: 'GoWild test',
+      body: 'If this appeared, the app notifies for itself.',
+      tag: 'gowild-test',
+      url: link,
+    });
+    return json({ ok: out.failed.length === 0, devices: subs.length, ...out });
+  }
+
+  return json({ ok: false, state: 'unknown', message: 'GET state, POST subscribe, remove or test.' }, 404);
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -483,6 +594,15 @@ export default {
     // The bell's endpoint. Gated inside the handler so the refusal is a sentence,
     // not an empty 401 body from a guard three screens away.
     if (url.pathname === '/api/watch') return handleWatch(request, env, url, now);
+
+    // The app's own notification channel. The public key is public (the browser needs
+    // it to subscribe); subscribing, listing and testing are token-gated like every
+    // other write.
+    if (url.pathname === '/api/push/key') {
+      const key = publicKey(env);
+      return json({ ok: Boolean(key), key: key ? toB64u(key) : null }, key ? 200 : 503);
+    }
+    if (url.pathname.startsWith('/api/push/')) return handlePush(request, env, url, now);
 
     // Authorised before any storage read: an unauthenticated caller must not be
     // able to make the Worker touch KV, and must not learn anything from a

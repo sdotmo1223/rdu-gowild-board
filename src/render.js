@@ -225,10 +225,26 @@ const ALERT_KIND = {
 
 // A push that fired must leave a trace the board can show, or the reader taps a
 // notification and lands on a list with no memory of it. Entries come from the
+// The one control that makes this app the only face: without an enrolled device there
+// is nowhere for an update to arrive, and the page says so instead of implying a bell
+// rings. The client half is at the bottom of this file.
+function pushBoxHtml() {
+  return '<div class="pushbox"><p class="pushnote" id="push-state">Checking whether this device is enrolled\u2026</p>' +
+    '<button type="button" class="act" id="push-enable">Enable app notifications</button></div>';
+}
+
 // outbox that already exists in KV; nothing is fetched and nothing is invented.
 function eventLogHtml(ob) {
   const list = ob && Array.isArray(ob.recent) ? ob.recent : [];
-  if (!list.length) return '';
+  // Never nothing. An update log that is absent when it is empty is indistinguishable
+  // from one that is broken, and a push whose entry has aged out used to open the board
+  // at the top with no explanation at all.
+  if (!list.length) {
+    return `<details class="evlog" open><summary>Updates \u00b7 nothing yet</summary>` +
+      `<p class="evnote">No alert has fired in the last 24 hours. This log fills as the sweeps run: a watch that opens, sells out, gets cheaper or is about to leave lands here, and the same update arrives as a notification from this app.</p>` +
+      `<ul class="evlist"></ul></details>` +
+      pushBoxHtml();
+  }
   const state = { sent: 'delivered', pending: 'retrying', dead: 'dead', dropped: 'expired' };
   const rows = list
     .map(
@@ -236,7 +252,7 @@ function eventLogHtml(ob) {
         `<li class="ev ${esc(e.state)}"${e.key ? ` data-ev="${esc(e.key)}"` : ''}${e.announce ? ` data-target="${esc(e.announce)}"` : ''}><b>${esc(e.dest)}</b><span class="ek">${esc(ALERT_KIND[e.kind] || e.kind)}</span><time>${esc(hhmm(e.at))}</time><span class="est">${esc(state[e.state] || e.state)}</span></li>`,
     )
     .join('');
-  return `<details class="evlog"${Number(ob.dead) > 0 ? ' open' : ''}><summary>Last 24h of alerts \u00b7 ${list.length}</summary><p class="evnote">Times are ET. A dead event is one that never reached you; the watch that fired it is still armed.</p><ul class="evlist">${rows}</ul></details>`;
+  return `<details class="evlog"${Number(ob.dead) > 0 ? ' open' : ''}><summary>Updates \u00b7 ${list.length} in the last 24h</summary><p class="evnote">Times are ET. A dead event is one that never reached the app; the watch that fired it is still armed.</p><ul class="evlist">${rows}</ul></details>` + pushBoxHtml();
 }
 
 // How old this row's route reading is, under the price. It says "checked" and not
@@ -1040,6 +1056,8 @@ ${basePath ? `<link rel="manifest" href="${basePath}/manifest.webmanifest">` : '
 
   /* what fired, so a push and its row are the same object to the eye */
   .evlog { margin:12px 0 0; padding:9px 0; border-top:1px solid var(--rule); border-bottom:1px solid var(--rule); }
+  .pushbox { display:flex; flex-wrap:wrap; gap:10px; align-items:baseline; margin:8px 0 0; }
+  .pushnote { flex:1 1 220px; margin:0; font-family:var(--mono); font-size:8.5px; line-height:1.6; letter-spacing:.06em; color:var(--dim); }
   .evlog summary { font-size:8.5px; }
   .evnote { margin:8px 0 0; font-family:var(--mono); font-size:8px; letter-spacing:.04em;
             line-height:1.6; color:var(--faint); }
@@ -1579,6 +1597,78 @@ window.__wcfg = ${watchJson};
   if (window.__basePath && 'serviceWorker' in navigator) {
     navigator.serviceWorker.register(window.__basePath + '/sw.js', { scope: window.__basePath }).catch(function () {});
   }
+  // Enrolment for the app's own notifications. The button is the only path, because a
+  // permission prompt needs a real tap; the status line is always drawn, so a device
+  // that is not enrolled says so rather than looking like a silent success.
+  (function () {
+    var btn = document.getElementById('push-enable');
+    var out = document.getElementById('push-state');
+    if (!btn || !out) return;
+    function say(t) { out.textContent = t; }
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+      btn.disabled = true;
+      say('This browser cannot receive app notifications.');
+      return;
+    }
+    if (Notification.permission === 'denied') {
+      btn.disabled = true;
+      say('Notifications are blocked for this app in Android settings, so nothing can arrive.');
+    }
+    function enrolled() {
+      btn.textContent = 'Notifications on';
+      btn.disabled = true;
+      say('This device is enrolled. Updates arrive here, in the app, and tapping one opens the departure it is about.');
+    }
+    navigator.serviceWorker.ready
+      .then(function (reg) { return reg.pushManager.getSubscription(); })
+      .then(function (sub) {
+        if (sub) enrolled();
+        else if (Notification.permission !== 'denied') say('Not enrolled on this device yet.');
+      })
+      .catch(function () { say('Could not read this device\u2019s push state.'); });
+    btn.addEventListener('click', function () {
+      btn.disabled = true;
+      say('Asking the phone\u2026');
+      var token = location.pathname.split('/').pop();
+      Notification.requestPermission()
+        .then(function (perm) {
+          if (perm !== 'granted') {
+            btn.disabled = false;
+            say('Permission was not granted, so nothing can be delivered.');
+            return null;
+          }
+          return navigator.serviceWorker.ready
+            .then(function (reg) {
+              return fetch('/api/push/key')
+                .then(function (r) { return r.json(); })
+                .then(function (j) {
+                  if (!j || !j.key) throw new Error('the Worker has no push key');
+                  var raw = atob(j.key.replace(/-/g, '+').replace(/_/g, '/'));
+                  var bytes = new Uint8Array(raw.length);
+                  for (var i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+                  return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytes });
+                })
+                .then(function (sub) {
+                  return fetch('/api/push/subscribe?token=' + encodeURIComponent(token), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ endpoint: sub.endpoint, keys: sub.toJSON().keys, label: 'app' }),
+                  });
+                })
+                .then(function (r) { return r.json(); })
+                .then(function (j) {
+                  if (j && j.ok) { enrolled(); return; }
+                  btn.disabled = false;
+                  say('The Worker refused the enrolment: ' + ((j && (j.message || j.state)) || 'no reason given'));
+                });
+            });
+        })
+        .catch(function (e) {
+          btn.disabled = false;
+          say('Could not enrol this device: ' + (e && e.message ? e.message : e));
+        });
+    });
+  })();
 })();
 </script>
 </body></html>`);

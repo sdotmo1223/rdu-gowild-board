@@ -102,6 +102,8 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `src/watch.mjs` | per-route bells: `normalizeWatch()`, `observe()`, `planWatch()` (available / sold out / cheaper / departing), `channelStatus()`, push+email+text delivery, `evaluateWatches()` on ingest |
 | `.github/workflows/sweep.yml` | the only collector cron: every origin, sequential, per-profile request budget. The older board.yml and lga.yml workflows were deleted 2026-11-11 — both were disabled_manually and both presented the read token to a write endpoint, so re-enabling either could only fail. Their names are deliberately not in backticks: tools/doc-lint.mjs treats a backticked workflow name as a claim that the file exists, and these two must stay deleted |
 | `src/pwa-icons.mjs` | the install icons as base64 PNG 192/512, generated from the same artwork as `ICON_SVG`. An SVG-only manifest lets Chrome show an install dialog and then mint nothing — measured on the S23 on 2026-11-12, and why this file exists |
+| `src/push.mjs` | Web Push with no dependency: VAPID ES256 (RFC 8292), aes128gcm payload encryption (RFC 8291), the subscription store and `sendToAll`. It exists because the app is the only face — one notification stream, one log, no second app. A 201 from the push service means *accepted*, never *shown*: **Chrome silently drops a payload it cannot decrypt**, so the suite decrypts what this module encrypts rather than trusting the status code |
+| `test/push-stub.mjs` | the device side of the same crypto, generated per run so no key is committed. `npm test` asserts what the notification actually says, not that a request was made |
 | `src/index.js` | Worker router: `/s/<TOKEN>`, `/api/board` (token-gated), `/api/ingest` (token-gated snapshot write), PWA assets |
 | `collector/collect.mjs` | Playwright sweep → KV (or `state.json` with no credentials) |
 | `collector/parse.mjs` | `extractJourneys`, `normalizeFlight`, `parseRoute`, `classifyFailure` |
@@ -181,7 +183,7 @@ npx wrangler deploy
 | `SWEEP_SHARD=0\|1` | manual override for one half of the rotation; the cron never sets it |
 | `SWEEP_ALL_DATES=1` | keep asking about today after its last departure instead of carrying it |
 | `HEADLESS=0` | run headed, offscreen (for a local scheduler) |
-| `NTFY_TOPIC` | optional phone push, no account needed. The collector sends it with each snapshot, so the Worker can push without a second secret; a Worker secret of the same name overrides it |
+| `VAPID_PUBLIC`, `VAPID_PRIVATE` | the app's own push keypair (P-256, base64url). Both are required before any bell can ring; the public half is served at `/api/push/key` so a device can enrol itself. ntfy was retired on 2026-11-13 — there is no topic any more |
 | `WATCH` | optional standing question, e.g. `ATL<=25,MCO<=30`; alerts once per 6 h per matching departure set. This is the board-wide env watch; the page's per-route bells live in KV (`w:<profile>:<DEST>`) instead |
 | `RESEND_API_KEY`, `ALERT_EMAIL`, `ALERT_FROM` | optional email channel for watches. Resend's free tier; `ALERT_FROM` defaults to `onboarding@resend.dev`, which may only send to your own address. Absent ⇒ the bell says email is off, it does not accept a watch it cannot deliver |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`, `ALERT_PHONE` | optional text channel for watches. Twilio is **not** free, so this stays off until all four exist |

@@ -26,7 +26,7 @@ not doing, with the reason).
 
 ### T1 — Prove a watch actually rings
 
-- **Status:** open · **Size:** 15 min · **Needs:** one deploy + one sweep tick
+- **Status:** open · **Size:** 15 min · **Needs:** one sweep tick · **Channel changed 2026-11-13:** the app now notifies for itself (Web Push) and ntfy is retired. The transport is proven end to end on the S23 — a `/api/push/test` notification renders with its payload and the subscription is enrolled — so what remains is the same evidence bar it always had: **one watch event, caused by a sweep, arriving on the phone**.
 - **Intent:** a bell that cannot deliver is worse than no bell, because it looks armed.
 - **Why (re-diagnosed 2026-11-11):** the original note blamed a missing Worker
   secret. The real defect was narrower and worse: `NTFY_TOPIC` **is** a repo secret

@@ -19,12 +19,14 @@ import {
   normalizeWatch,
   observe,
   planWatch,
-  pushRequest,
+  appPushPayload,
   shouldNotify,
   textRequest,
   watchKey,
 } from '../src/watch.mjs';
 import { readOutbox } from '../src/outbox.mjs';
+import { VAPID, SUBSCRIPTION, seedDevice, decryptPayload } from './push-stub.mjs';
+import { encryptPayload } from '../src/push.mjs';
 import worker from '../src/index.js';
 
 let checks = 0;
@@ -88,12 +90,12 @@ eq(watchKey('rdu', 'phl'), 'w:rdu:PHL', 'one key per destination, so two edits c
 // --- channels that are not configured must say so ---------------------------
 const bare = channelStatus({});
 ok(CHANNELS.every((c) => bare[c].ready === false), 'no configuration means no channel claims to be ready');
-ok(/NTFY_TOPIC/.test(bare.push.reason), 'the push reason names the variable to set');
+ok(/VAPID/.test(bare.push.reason), 'the push reason names the keys to set, not a third-party topic');
 ok(/RESEND_API_KEY/.test(bare.email.reason), 'the email reason names the first missing variable');
 ok(/TWILIO_ACCOUNT_SID/.test(bare.text.reason), 'the text reason names the first missing variable');
 ok(!/secret-value/.test(JSON.stringify(bare)), 'a reason never contains a value');
 const full = channelStatus({
-  NTFY_TOPIC: 'gowild-abc',
+  ...VAPID,
   RESEND_API_KEY: 're_123',
   ALERT_EMAIL: 'me@example.com',
   TWILIO_ACCOUNT_SID: 'AC123',
@@ -102,7 +104,7 @@ const full = channelStatus({
   ALERT_PHONE: '+15551111111',
 });
 ok(CHANNELS.every((c) => full[c].ready === true), 'every channel is ready when its variables exist');
-ok(channelStatus({ NTFY_TOPIC: 'has space' }).push.ready === false, 'a value that is not a topic is not a channel');
+ok(channelStatus({ VAPID_PUBLIC: 'only-half' }).push.ready === false, 'half a keypair is not a channel');
 ok(channelStatus({ RESEND_API_KEY: 're_1' }).email.ready === false, 'half an email configuration is not configured');
 
 // --- observation ------------------------------------------------------------
@@ -215,11 +217,17 @@ const env = {
   TWILIO_FROM: '+15550000000',
   ALERT_PHONE: '+15551111111',
 };
-const alert = { title: 'GoWild open: PHL Nov 8', body: 'Body', priority: 'high' };
-const push = pushRequest(env, alert);
-ok(push.url === 'https://ntfy.sh/gowild-abc', 'push goes to the topic, not to a URL from the payload');
-ok(push.init.headers.Title === alert.title, 'the push title rides as a header');
-ok(!/[^\x20-\x7E]/.test(push.init.headers.Title), 'the push header stays ASCII');
+const alert = { title: 'GoWild open: PHL Nov 8', body: 'Body', priority: 'high', dest: 'PHL', key: '2026-11-08|10:12|PHL' };
+// Push is no longer a plain request to a provider: it is one encrypted message per
+// enrolled device. What is asserted here is the payload the app renders and the link
+// the tap follows, not an HTTP header.
+const payload = appPushPayload({ ...env, BOARD_TOKEN: 'tok12345678' }, alert);
+ok(/^\/s\/tok12345678\?focus=/.test(payload.url), 'the tap links to the board at this event');
+ok(decodeURIComponent(payload.url).indexOf('2026-11-08|10:12|PHL') > 0, 'the focus key is the event, not a guess');
+ok(appPushPayload(env, alert).url === '/rdu', 'without a token the link stays on the public board');
+ok(payload.tag === 'gowild-PHL', 'the tag collapses repeat notices for one destination');
+ok(payload.urgency === 'high', 'a high-priority alert rides as a high-urgency push');
+ok(payload.title === alert.title && payload.body === alert.body, 'the title and body are the alert\u2019s own');
 
 const email = emailRequest(env, alert);
 ok(email.url === 'https://api.resend.com/emails', 'email uses the provider endpoint');
@@ -240,8 +248,9 @@ ok(Buffer.from(text.init.headers.Authorization.slice(6), 'base64').toString() ==
 ok(!/twtok/.test(text.url) && !/twtok/.test(text.init.body), 'the auth token never appears in the URL or body');
 ok(textRequest({ ...env, ALERT_PHONE: '' }, alert) === null, 'half a text configuration builds no request');
 
-eq(buildRequests(env, alert, ['push']).length, 1, 'only the requested channel is built');
-eq(buildRequests({ NTFY_TOPIC: 'gowild-abc' }, alert, ['push', 'email', 'text']).length, 1, 'an unconfigured channel is skipped, not attempted');
+eq(buildRequests(env, alert, ['push']).length, 0, 'push is not a plain request any more: it is built per device');
+eq(buildRequests(env, alert, ['email']).length, 1, 'only the requested channel is built');
+eq(buildRequests({ NTFY_TOPIC: 'gowild-abc' }, alert, ['push', 'email', 'text']).length, 0, 'an unconfigured channel is skipped, not attempted');
 eq(buildRequests(env, alert, []).length, 0, 'no channels means no requests');
 
 // --- delivery never throws --------------------------------------------------
@@ -251,13 +260,23 @@ globalThis.fetch = async (url, init) => {
   seen.push({ url: String(url), init });
   return new Response('ok', { status: 200 });
 };
-const delivered = await deliver(env, alert, ['push', 'email']);
+const devStore = kv();
+await seedDevice(devStore);
+const pushEnv = { ...env, ...VAPID, BOARD: devStore };
+const delivered = await deliver(pushEnv, alert, ['push', 'email']);
 eq(delivered.sent.length, 2, 'two configured channels both send');
 eq(delivered.failed.length, 0, 'and none fail');
+const pushCall = seen.find((r) => /fcm\.googleapis\.com/.test(r.url));
+ok(Boolean(pushCall), 'the push goes to the enrolled device endpoint');
+eq(pushCall.init.headers['Content-Encoding'], 'aes128gcm', 'and it is an encrypted body, not a provider form');
+ok(!Buffer.from(pushCall.init.body).toString('latin1').includes('GoWild open'), 'the title is not readable on the wire');
+const decoded = await decryptPayload(pushCall.init.body);
+eq(decoded.title, alert.title, 'the device receives the alert\u2019s own title');
+ok(decoded.url.startsWith('/'), 'and a path the app can open');
 globalThis.fetch = async () => {
   throw new Error('network down');
 };
-const broke = await deliver(env, alert, ['push']);
+const broke = await deliver(pushEnv, alert, ['push']);
 eq(broke.sent.length, 0, 'a dead provider sends nothing');
 eq(broke.failed.length, 1, 'but says which channel failed');
 ok(/network down/.test(broke.failed[0].reason), 'the reason is reported, not swallowed');
@@ -286,7 +305,8 @@ function kv() {
 }
 
 const store = kv();
-const cfgEnv = { BOARD: store, NTFY_TOPIC: 'gowild-abc' };
+const cfgEnv = { BOARD: store, ...VAPID };
+await seedDevice(store);
 await store.put(watchKey('rdu', 'PHL'), JSON.stringify(watch()));
 
 seen = [];
@@ -311,7 +331,10 @@ const goneSnap = snap([]);
 seen = [];
 await evaluateWatches(cfgEnv, 'rdu', oneRow, goneSnap, NOW + 120000);
 eq(seen.length, 1, 'a destination that vanishes is reported');
-ok(/gone/i.test(seen[0].init.headers.Title), 'and the push says it is gone');
+{
+  const body = await decryptPayload(seen[0].init.body);
+  ok(/gone/i.test(body.title), 'and the push says it is gone');
+}
 
 // Armed on an empty route, then seats appear: that is the promise the bell makes.
 const store3 = kv();
@@ -319,10 +342,14 @@ const emptySnap = snap([]);
 const armedEmpty = watch({ last: observe(buildBoard(emptySnap, NOW), emptySnap, watch(), NOW) });
 await store3.put(watchKey('rdu', 'PHL'), JSON.stringify(armedEmpty));
 seen = [];
-await evaluateWatches({ BOARD: store3, NTFY_TOPIC: 'gowild-abc' }, 'rdu', emptySnap, oneRow, NOW + 120000);
+await seedDevice(store3);
+await evaluateWatches({ BOARD: store3, ...VAPID }, 'rdu', emptySnap, oneRow, NOW + 120000);
 eq(seen.length, 1, 'a watch armed on nothing is told when seats appear');
-ok(/open/i.test(seen[0].init.headers.Title), 'and the push says the route opened');
-ok(/ntfy\.sh\/gowild-abc/.test(seen[0].url), 'delivered on the push channel that was configured');
+{
+  const body = await decryptPayload(seen[0].init.body);
+  ok(/open/i.test(body.title), 'and the push says the route opened');
+}
+ok(/fcm\.googleapis\.com/.test(seen[0].url), 'delivered by the app to its own device');
 
 // A provider that is down must not stop the record being kept.
 globalThis.fetch = async () => {
@@ -331,7 +358,8 @@ globalThis.fetch = async () => {
 const store2 = kv();
 const baseline = observe(buildBoard(oneRow, NOW), oneRow, watch(), NOW);
 await store2.put(watchKey('rdu', 'PHL'), JSON.stringify(watch({ last: baseline })));
-const failedRun = await evaluateWatches({ BOARD: store2, NTFY_TOPIC: 'gowild-abc' }, 'rdu', oneRow, goneSnap, NOW + 180000);
+await seedDevice(store2);
+const failedRun = await evaluateWatches({ BOARD: store2, ...VAPID }, 'rdu', oneRow, goneSnap, NOW + 180000);
 ok(failedRun !== null, 'evaluation returns instead of throwing');
 const saved2 = await store2.get(watchKey('rdu', 'PHL'), 'json');
 // RANK 2 changed where a failure lives: it is no longer stamped on the watch as if
@@ -423,8 +451,9 @@ const ingestEnv = {
   BOARD: ingestStore,
   BOARD_TOKEN: 'tok-abcdefgh',
   BOARD_WRITE_TOKEN: 'wtok-abcdefgh',
-  NTFY_TOPIC: 'gowild-abc',
+  ...VAPID,
 };
+await seedDevice(ingestStore);
 let waited = null;
 const ctx = { waitUntil: (p) => { waited = p; } };
 seen = [];
@@ -447,7 +476,9 @@ eq(ingest.status, 200, 'the snapshot is accepted');
 ok(waited && typeof waited.then === 'function', 'watch evaluation is scheduled off the response path');
 await waited;
 eq(seen.length, 1, 'and a snapshot landing reaches the push channel');
-ok(/ntfy\.sh\/gowild-abc/.test(seen[0].url), 'on the channel the watch asked for');
+ok(/fcm\.googleapis\.com/.test(seen[0].url), 'on the app\u2019s own device endpoint');
+const ingestPush = await decryptPayload(seen[0].init.body);
+ok(/open/i.test(ingestPush.title), 'and the notification it renders is the event that fired');
 const ingestSaved = await ingestStore.get(watchKey('rdu', 'PHL'), 'json');
 eq(ingestSaved.lastEvent.kind, 'available', 'the event is recorded against the watch');
 
@@ -511,33 +542,21 @@ try {
 }
 ok(parsed, 'the script with the watch sheet actually parses');
 
-// --- Phase A: the tap has to land somewhere ------------------------------------
-// A notification that only opens the topic list is a dead end. The Click header is
-// the whole handoff, and it must never carry the board token: ntfy keeps messages for
-// ~12 hours, so a secret in a payload outlives the phone's lock screen.
+// --- the tap lands on the event, and only the device can read the link -------
+// A notification that opens a topic list is a dead end. The link is the whole handoff,
+// and it may carry the board token only because the body is encrypted to the device's
+// own key: there is no provider cache any more, so nothing sits at rest holding it.
 {
-  const withBase = { NTFY_TOPIC: 'gowild-abc123', BOARD_URL: 'https://board.example.dev/' };
-  const alert = {
-    title: 'GoWild soon: PHL Nov 12',
-    body: 'body',
-    priority: 'high',
-    clickPath: '/rdu?focus=departing%7CPHL%7C2026-11-12%7C21%3A53%7C15.41',
-  };
-  const req = pushRequest(withBase, alert);
-  ok(req && req.init && req.init.headers, 'a push request is built');
-  eq(
-    req.init.headers.Click,
-    'https://board.example.dev/rdu?focus=departing%7CPHL%7C2026-11-12%7C21%3A53%7C15.41',
-    'Click is the public board plus the focus path, with one slash between them',
-  );
-  ok(!/token/i.test(req.init.headers.Click), 'the click target carries no token');
-  ok(!/token/i.test(JSON.stringify(req.init.headers)), 'and no header does');
+  const eventAlert = { title: 'GoWild soon: PHL Nov 12', body: 'body', priority: 'high', key: '2026-11-12|21:53|PHL' };
+  const withTok = appPushPayload({ BOARD_TOKEN: 'tok-abcdefgh' }, eventAlert);
+  eq(withTok.url, '/s/tok-abcdefgh?focus=2026-11-12%7C21%3A53%7CPHL', 'the tap opens the private board at this event');
+  ok(decodeURIComponent(withTok.url).endsWith('focus=2026-11-12|21:53|PHL'), 'with the event key, not a guess');
+  eq(appPushPayload({}, eventAlert).url, '/rdu', 'without a token the link stays on the public board');
+  eq(appPushPayload({ BOARD_TOKEN: 'tok-abcdefgh' }, { title: 't', body: 'b' }).url, '/s/tok-abcdefgh', 'an alert with no event key still lands on the board');
 
-  const noBase = pushRequest({ NTFY_TOPIC: 'gowild-abc123' }, alert);
-  ok(noBase && noBase.init && !noBase.init.headers.Click, 'without a configured board URL there is no Click, not a broken one');
-
-  const noPath = pushRequest(withBase, { title: 't', body: 'b' });
-  ok(noPath && !noPath.init.headers.Click, 'an alert with no focus path gets no Click');
+  const sealed = await encryptPayload(withTok, SUBSCRIPTION.keys.p256dh, SUBSCRIPTION.keys.auth);
+  ok(!Buffer.from(sealed).toString('latin1').includes('tok-abcdefgh'), 'the token is not readable on the wire');
+  eq((await decryptPayload(sealed)).url, withTok.url, 'only the device recovers the link');
 }
 
 console.log(`watch: ${checks} checks passed`);

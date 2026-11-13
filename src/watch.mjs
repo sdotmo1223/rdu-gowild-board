@@ -1,4 +1,5 @@
 import { validTopic } from './alerts.mjs';
+import { listSubscriptions, sendToAll } from './push.mjs';
 import { enqueueEntries, entryFor, sweepOutbox } from './outbox.mjs';
 import { buildBoard, MAX_ROW_AGE_MIN } from './board.js';
 import { easternStamp } from './routes.js';
@@ -97,13 +98,16 @@ export async function resolveTopic(env) {
 
 export function channelStatus(env, topic = null) {
   const e = env || {};
-  const pushReady = validTopic(topic) || validTopic(e.NTFY_TOPIC);
+    // The app notifies for itself now: readiness is the VAPID keypair, not a third-party
+  // topic. `topic` stays in the signature so callers that still resolve one keep
+  // working, but it no longer decides whether a bell can ring.
+  const pushReady = Boolean(e.VAPID_PUBLIC && e.VAPID_PRIVATE);
   const emailReady = Boolean(e.RESEND_API_KEY && e.ALERT_EMAIL);
   const textReady = Boolean(e.TWILIO_ACCOUNT_SID && e.TWILIO_AUTH_TOKEN && e.TWILIO_FROM && e.ALERT_PHONE);
   return {
     push: pushReady
       ? { ready: true }
-      : { ready: false, reason: 'NTFY_TOPIC is not set on the Worker' },
+      : { ready: false, reason: 'the app push keys (VAPID_PUBLIC/VAPID_PRIVATE) are not set on the Worker' },
     email: emailReady
       ? { ready: true }
       : {
@@ -318,37 +322,37 @@ export function describeEvent(ev, origin = 'RDU') {
 // One request builder per channel, exported so the payload shape is asserted in a
 // test instead of discovered in production. None of them puts a secret in a URL.
 
-// An absolute Click target, or null when the Worker has not been told its public
-// origin. A missing Click is a small loss; a guessed one sends the phone to a host
-// that does not exist.
-function clickTarget(env, alert) {
-  const base = env && typeof env.BOARD_URL === 'string' ? env.BOARD_URL.replace(/\/+$/, '') : '';
-  const path = alert && typeof alert.clickPath === 'string' ? alert.clickPath : '';
-  if (!base || !path.startsWith('/') || /token/i.test(path)) return null;
-  return `${base}${path}`;
+// The push payload the installed app renders. It is the one place a token may appear in
+// a notification, because the body is encrypted to the device's own key (RFC 8291) --
+// the reason the old ntfy channel could never link to the private board at all.
+//
+// `alert.key` is the event key, and the same key the log entry carries, so a tap lands
+// on the row the update was about instead of at the top of a long page.
+export function appPushPayload(env, alert) {
+  const token = env && typeof env.BOARD_TOKEN === 'string' ? env.BOARD_TOKEN : '';
+  const focus = alert && (alert.key || alert.announce);
+  const path = token ? `/s/${token}${focus ? `?focus=${encodeURIComponent(focus)}` : ''}` : '/rdu';
+  return {
+    title: alert.title,
+    body: alert.body,
+    tag: (alert && (alert.tag || (alert.dest ? `gowild-${alert.dest}` : null))) || 'gowild',
+    url: path,
+    urgency: alert.priority === 'high' ? 'high' : 'normal',
+  };
 }
 
-export function pushRequest(env, alert) {
-  const topic = env && env.NTFY_TOPIC;
-  if (!validTopic(topic)) return null;
-  return {
-    channel: 'push',
-    url: `https://ntfy.sh/${encodeURIComponent(topic)}`,
-    init: {
-      method: 'POST',
-      headers: {
-        Title: ascii(alert.title),
-        Priority: alert.priority || 'default',
-        Tags: 'airplane',
-        'Content-Type': 'text/plain; charset=utf-8',
-        // Phase A: the tap opens the public board at the row this push is about.
-        // The path never carries a token, so a message sitting in ntfy's cache for
-        // twelve hours cannot hand anyone a key to the board.
-        ...(clickTarget(env, alert) ? { Click: clickTarget(env, alert) } : {}),
-      },
-      body: alert.body,
-    },
-  };
+// Every device the app has enrolled, one push each. Kept separate from the request
+// builders because this channel is cryptographic rather than a plain POST, and a
+// failure here must read as a delivery failure, not a build error.
+async function deliverPush(env, alert, out) {
+  const subs = await listSubscriptions(env, alert && alert.profile ? alert.profile : null).catch(() => []);
+  if (!subs.length) {
+    out.failed.push({ channel: 'push', reason: 'no device has enrolled for app notifications' });
+    return;
+  }
+  const res = await sendToAll(env, subs, appPushPayload(env, alert));
+  if (res.sent.length) out.sent.push('push');
+  for (const f of res.failed) out.failed.push({ channel: 'push', reason: f.reason });
 }
 
 export function emailRequest(env, alert) {
@@ -407,7 +411,8 @@ export function buildRequests(env, alert, channels) {
   for (const c of CHANNELS) {
     if (!channels.includes(c)) continue;
     if (!status[c].ready) continue;
-    const req = c === 'push' ? pushRequest(env, alert) : c === 'email' ? emailRequest(env, alert) : textRequest(env, alert);
+    if (c === 'push') continue;
+    const req = c === 'email' ? emailRequest(env, alert) : textRequest(env, alert);
     if (req) out.push(req);
   }
   return out;
@@ -453,11 +458,19 @@ export async function deliver(env, alert, channels, opts = {}) {
   const tries = Number(opts.tries) >= 1 ? Number(opts.tries) : 2;
   const sent = [];
   const failed = [];
+  const want = Array.isArray(channels) ? channels : [];
   let reqs = [];
   try {
-    reqs = buildRequests(env, alert, Array.isArray(channels) ? channels : []);
+    reqs = buildRequests(env, alert, want);
   } catch (err) {
     failed.push({ channel: 'build', reason: String((err && err.message) || err).slice(0, 120) });
+  }
+  if (want.includes('push') && channelStatus(env).push.ready) {
+    try {
+      await deliverPush(env, alert, { sent, failed });
+    } catch (err) {
+      failed.push({ channel: 'push', reason: String((err && err.message) || err).slice(0, 120) });
+    }
   }
   for (const req of reqs) {
     const res = await sendOnce(req, tries);

@@ -1170,3 +1170,49 @@ lit, silently. Three separable things follow:
 **Not built here on purpose:** the fallback in (2) and the click URL in (3) are collector /
 infra work, and this pass was scoped to the design surfaces. They are written down so the
 next round starts from the measurement rather than from a guess.
+
+## 2026-11-13 — one face: the app notifies for itself, and ntfy is gone
+
+The owner's ask was that updates stop arriving through ntfy and instead appear in the
+GoWild app as an integrated log, so only one app is involved. Two things had to exist for
+that to be honest: a way for the app to raise a notification on its own, and a log that is
+visible even when it is empty.
+
+**The channel: Web Push, no dependency, no provider.** `src/push.mjs` implements VAPID
+(ES256) and aes128gcm payload encryption on WebCrypto, which the Worker already has. A
+device enrols itself from the page's new *Enable app notifications* button; the private key
+is a Worker secret (`VAPID_PRIVATE`) and the public half is served at `/api/push/key`.
+`sendToAll` fans one update to every enrolled device, drops a device on 404/410 instead of
+retrying it forever, and records `lastOk`/`lastError` per device so a dead enrollee is
+visible rather than remembered. Watches, the daily briefing and the stale-collector alert
+all deliver through it; `NTFY_TOPIC` is no longer read for delivery.
+
+**The wrong turn, and why it matters.** The first encrypted push returned HTTP 201 and
+produced nothing on the phone. Chrome had displayed a notification for the *previous*,
+body-less one, so "accepted" looked like "delivered". Chasing it took a temporary
+breadcrumb in the service worker, which showed that a **body-less** push arrives
+(`data:"no"`) while an encrypted one does not arrive at all — i.e. Chrome was dropping the
+message silently because it could not decrypt it. The bug was mine: I appended the HKDF
+`0x01` block counter to the `Content-Encoding: aes128gcm` and `...:nonce` info strings,
+which WebCrypto already appends internally, so the key was wrong by exactly one byte of
+input and nothing anywhere said so. With that fixed, the notification rendered with its
+body, and the test suite now **decrypts what the Worker encrypts** rather than trusting a
+201 — `test/push-stub.mjs` is the device side of the same crypto.
+
+**The log is always drawn.** `eventLogHtml` returned nothing when no alert had fired in
+24 h, so the page had no log at all and a `?focus=` link to an aged-out event opened the
+board at the top with nothing to explain it. It now renders `Updates · nothing yet` with a
+sentence saying what will fill it, plus the enrolment control. Combined with the existing
+one-minute refresh while the tab is visible, the log fills on its own.
+
+**Measured on the S23.** Enrolment: permission granted, subscription stored
+(`count:1`, endpoint on `fcm.googleapis.com`). Delivery: `POST /api/push/test` → the
+notification `GoWild test / If this appeared, the app notifies for itself.` on the lock
+screen, service worker receiving `data:"yes"`. Page: `Updates · nothing yet` and
+`Notifications on` at 411 CSS px. Evidence: `docs/design-2026-11-12/phone-app-updates-log.png`.
+
+**Still open, and honestly so:** the observed ring above is a *test* push, not a watch
+event caused by a sweep — that is T1, unchanged in what it demands. The public `/rdu` app
+installed on 2026-11-12 also has OS-level notifications set to `ignore`
+(`cmd appops get org.chromium.webapk.ad001edd74762af0f_v2 POST_NOTIFICATION`), so it will
+never show one; the private app is the one that matters and it is `allow`.

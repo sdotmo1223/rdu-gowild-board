@@ -15,6 +15,7 @@ import { buildBoard } from '../src/board.js';
 import { easternDate, easternStamp } from '../src/routes.js';
 import { renderPage } from '../src/render.js';
 import { evaluateWatches, observe, watchKey } from '../src/watch.mjs';
+import { VAPID, SUBSCRIPTION } from './push-stub.mjs';
 import {
   MAX_ATTEMPTS,
   outboxKey,
@@ -102,7 +103,13 @@ async function armedWatch(store, at) {
   return s;
 }
 
-const pushEnv = (store) => ({ BOARD: store, NTFY_TOPIC: 'gowild-abc' });
+// Push is per-device now, so an env without an enrolled device has nowhere to send.
+// The seed goes straight into the stub's map (synchronously) so every existing call
+// site keeps its shape.
+const pushEnv = (store) => {
+  store._m.set('push:rdu-seed', JSON.stringify(SUBSCRIPTION));
+  return { BOARD: store, ...VAPID };
+};
 const realFetch = globalThis.fetch;
 const http = (status) => async () => new Response('', { status });
 
