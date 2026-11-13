@@ -91,7 +91,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 | `src/timing.mjs` | release-timing model: median local hour + median lead hours, `MIN_SAMPLES = 10` (below it the page states the count and the shortfall, never an hour) |
 | `src/pricing.mjs` | fare mechanics: records **every** itinerary (pre-flip standard fare included) into `state.fares`, measures when a fare flips, whether it follows the flight or the load, and the GoWild/std ratio |
 | `src/schedule.mjs` | per-date operating matrix + week-over-week stable-vs-rotating verdict |
-| `src/alerts.mjs` | ntfy.sh push, deduped per error state to once / 6 h |
+| `src/alerts.mjs` | what an alert says and when it is allowed to say it (deduped per error state to once / 6 h). Delivery lives in `src/push.mjs` and `src/outbox.mjs`; ntfy is gone |
 | `src/attempt.mjs` | `buildLastAttempt()` / `applyAttempt()`: one record per sweep attempt, so a dead tick and the last good snapshot are separable |
 | `src/outbox.mjs` | the delivery outbox: `entryFor()`, `enqueueEntries()`, `sweepOutbox()` (5 attempts, 1/2/4/8 min backoff, DEAD tombstones, `departing` TTL) and `outboxStatus()` for the board banner |
 | `src/dispatch.mjs` | `maybeDispatch()`: the Cloudflare Cron Trigger's stale-board gate, the 10-minute cooldown, and the GitHub `workflow_dispatch` call |

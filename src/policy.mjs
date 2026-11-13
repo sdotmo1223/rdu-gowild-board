@@ -10,6 +10,7 @@
 import { buildBoard } from './board.js';
 import { ORIGIN, PROFILE, ROUTES, easternDate } from './routes.js';
 import { outboxStatus } from './outbox.mjs';
+import { readCanary } from './push.mjs';
 import { deliver } from './watch.mjs';
 import { briefingDue, readSettings } from './settings.mjs';
 import { buildBriefing } from './briefing.mjs';
@@ -107,6 +108,9 @@ export async function runPolicy(env, now = Date.now()) {
       degraded: isDegraded(lastSuccess, lastDispatch, now),
       link: probe && probe.state ? probe.state : 'ok',
       linkStatus: probe && probe.status,
+      // Delivered-and-unacknowledged is invisible everywhere else: the push service
+      // said 201, the outbox says sent, and the phone shows nothing.
+      canary: await readCanary(env, now).catch(() => null),
     };
     const lastFp = await kv.get(HEALTH_KEY);
     const notice = buildHealthNotice(signal, lastFp, now);

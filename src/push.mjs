@@ -190,6 +190,21 @@ export async function sendEmpty(sub, env, now = Date.now()) {
 
 export const PUSH_PREFIX = 'push:';
 
+// Two records the canary needs, kept beside the subscriptions they describe.
+//   push:lastdelivery -- the Worker handed a push to a push service, and it said 201.
+//   push:lastseen     -- the device itself said it received one.
+// A delivery with no matching acknowledgement is the only evidence available from
+// outside the phone that Chrome accepted a payload it could not decrypt: the service
+// answers 201, no notification appears, and nothing in the Worker's own logs disagrees.
+export const DELIVERY_KEY = 'push:lastdelivery';
+export const SEEN_KEY = 'push:lastseen';
+
+// A device confirms within seconds of a push arriving, so half an hour of silence is
+// not slowness -- it is a message that did not land. Deliberately generous: a phone
+// switched off for an hour reports one notice, not a stream of them, because health is
+// transition-only and the fingerprint carries the state, never the minute count.
+export const CANARY_GAP_MIN = 30;
+
 async function endpointId(endpoint) {
   const digest = await crypto.subtle.digest('SHA-256', enc.encode(String(endpoint)));
   return toB64u(new Uint8Array(digest)).slice(0, 22);
@@ -260,5 +275,47 @@ export async function sendToAll(env, subs, payload, now = Date.now()) {
           .catch(() => {});
     }
   }
+  if (sent.length && env && env.BOARD && typeof env.BOARD.put === 'function') {
+    // Written only after the push service accepted something. This is the fact the
+    // canary compares against, so it must mean "a push service took a payload", not
+    // "we called sendToAll".
+    await env.BOARD.put(DELIVERY_KEY, JSON.stringify({ at: now, devices: sent.length })).catch(() => {});
+  }
   return { sent, failed };
+}
+
+// The device half of the canary. It only ever moves forward: a stale retry must not
+// make a confirmed delivery look unconfirmed again.
+export async function recordSeen(env, at, now = Date.now()) {
+  const kv = env && env.BOARD;
+  if (!kv || typeof kv.put !== 'function') return { ok: false, reason: 'no store' };
+  const t = Number(at);
+  if (!Number.isFinite(t) || t <= 0) return { ok: false, reason: 'at must be a millisecond timestamp' };
+  if (t > now + 5 * 60 * 1000) return { ok: false, reason: 'at is in the future' };
+  const prev = await kv.get(SEEN_KEY, 'json').catch(() => null);
+  const held = Number(prev && prev.at) || 0;
+  if (held >= t) return { ok: true, at: held, stale: true };
+  await kv.put(SEEN_KEY, JSON.stringify({ at: t }));
+  return { ok: true, at: t };
+}
+
+// What the Worker can say about the channel without the phone in its hand:
+//   unknown -- nothing has ever been delivered, so there is nothing to compare;
+//   ok      -- the last delivery was acknowledged by the device;
+//   waiting -- delivered, no acknowledgement yet, still inside the threshold;
+//   gap     -- delivered and never acknowledged, past the threshold.
+// A gap is not proof of a decrypt failure (the phone may simply be off), which is why
+// it is a health notice and not an alert: one line, once, on the transition.
+export async function readCanary(env, now = Date.now()) {
+  const kv = env && env.BOARD;
+  const read = async (key) => (kv && typeof kv.get === 'function' ? kv.get(key, 'json').catch(() => null) : null);
+  const delivered = await read(DELIVERY_KEY);
+  const seen = await read(SEEN_KEY);
+  const deliveredAt = Number(delivered && delivered.at) || 0;
+  const seenAt = Number(seen && seen.at) || 0;
+  const base = { deliveredAt: deliveredAt || null, seenAt: seenAt || null, devices: Number(delivered && delivered.devices) || null };
+  if (!deliveredAt) return { ...base, state: 'unknown', gapMin: null };
+  if (seenAt >= deliveredAt) return { ...base, state: 'ok', gapMin: 0 };
+  const waitedMin = Math.max(0, Math.round((now - deliveredAt) / 60000));
+  return { ...base, state: waitedMin > CANARY_GAP_MIN ? 'gap' : 'waiting', gapMin: waitedMin };
 }

@@ -24,15 +24,7 @@ import {
 } from './parse.mjs';
 import { appendTransitions, recordObservation, recordFirstSeen } from '../src/history.js';
 import { applyAttempt, buildLastAttempt } from '../src/attempt.mjs';
-import {
-  buildAlert,
-  buildZeroAlert,
-  buildWatchAlert,
-  buildHeartbeatAlert,
-  zeroCoverage,
-  parseWatch,
-  sendAlert,
-} from '../src/alerts.mjs';
+import { buildHeartbeatAlert, zeroCoverage } from '../src/alerts.mjs';
 import { recordSchedule } from '../src/schedule.mjs';
 import { recordFares } from '../src/pricing.mjs';
 import { readCookieString, applyCookies } from './cookies.mjs';
@@ -608,14 +600,16 @@ async function main() {
   // Liveness: a resumed cron, or one profile that stopped writing while the others
   // ran. Wrapped, because a notification must never cost a paid-for sweep.
   try {
+    // The heartbeat used to be an ntfy push from here. The Worker's stale alert is the
+    // live path now -- it still runs when the cron is dead, which this process cannot --
+    // so the collector records the gap in its own run log and nothing else. No stamp is
+    // written: `lastHeartbeatAt` used to mark an intent to send, and nothing was sent.
     const heartbeat = buildHeartbeatAlert(previous, now);
     if (heartbeat) {
-      await sendAlert(process.env.NTFY_TOPIC, heartbeat);
-      state.lastHeartbeatAt = now;
       console.log(`heartbeat: previous snapshot was ${Math.round((now - previous.updatedAt) / 60000)} min old`);
     }
   } catch (err) {
-    console.error(`heartbeat alert failed: ${err.message}`);
+    console.error(`heartbeat check failed: ${err.message}`);
   }
   // NOTE: state.sweeps is assigned only in the success branch below. Assigning it
   // here would replace the last good board with fourteen empty results on a sweep
@@ -859,70 +853,11 @@ async function main() {
     }
   }
 
-  // Push alerts: only on real change, and deduped per error state inside
-  // buildAlert so a blocked sweep cannot buzz the phone every 15 minutes.
-  const topic = process.env.NTFY_TOPIC;
-  // A standing question that can never be answered is a silent failure, so say it
-  // in the run log where a reader will see it.
-  if (!topic && process.env.WATCH) {
-    console.warn(`WATCH=${process.env.WATCH} is set but NTFY_TOPIC is not, so no watch alert can be sent`);
-  }
-  // Alerting is a side effect and must never cost the snapshot: a throw in here
-  // used to abort main() before the write, discarding a sweep already paid for.
-  try {
-  // A probe tick must not buzz the phone about far-out dates that are not on the
-  // board: the reader would be told about a departure the page does not list.
-  if (topic && !probeDue) {
-    const fresh = (state.history || []).filter((h) => h.ts === now);
-    // The watchlist is answered first because it is the more specific question, and
-    // one event must not buzz the phone twice.
-    // Judged against what is bookable right now, not against this run's
-    // transitions: a fare already under the watch price when WATCH was set never
-    // produces a transition, and a send that failed must be retried next tick
-    // instead of being lost with its transition.
-    const watchAlert = buildWatchAlert(state, boardRows, process.env.WATCH, now);
-    // Only a delivered watch alert may suppress the digest. Recording the intent
-    // instead meant one ntfy outage dropped both pushes for the same fare.
-    let watchSent = false;
-    if (watchAlert) {
-      try {
-        await sendAlert(topic, watchAlert);
-        const fired =
-          state.watchFired && typeof state.watchFired === 'object' ? state.watchFired : {};
-        fired[watchAlert.key] = now;
-        const keys = Object.keys(fired).sort((a, b) => Number(fired[b]) - Number(fired[a]));
-        for (const k of keys.slice(200)) delete fired[k];
-        state.watchFired = fired;
-        watchSent = true;
-        console.log(`watch alert sent: ${watchAlert.title}`);
-      } catch (err) {
-        console.error(`watch alert failed: ${err.message}`);
-      }
-    }
-    // The watch already reported its own rows. Drop just those rows from the digest
-    // rather than the whole digest, which would swallow every other fare found in
-    // the same tick.
-    const watched = parseWatch(process.env.WATCH);
-    const digestRows = watchSent
-      ? fresh.filter(
-          (r) => !watched.some((w) => r.dest === w.dest && typeof r.allin === 'number' && r.allin <= w.max),
-        )
-      : fresh;
-    const alert = buildAlert(state, digestRows, now) || buildZeroAlert(state, now);
-    if (alert) {
-      try {
-        await sendAlert(topic, alert);
-        state.lastAlert = { kind: alert.kind, at: now };
-        if (alert.kind === 'zero') state.lastZeroAt = now;
-        console.log(`alert sent: ${alert.title}`);
-      } catch (err) {
-        console.error(`alert failed: ${err.message}`);
-      }
-    }
-  }
-  } catch (err) {
-    console.error(`alerting failed (snapshot still written): ${err.message}`);
-  }
+  // Notifications live in the Worker now: the ingest call evaluates every watch, the
+  // outbox retries a failed delivery, and the tiers run on the cron. The collector used
+  // to push through ntfy from here, which meant two independent delivery paths and a
+  // second place for one of them to fail quietly.
+  console.log(`alerts: the Worker owns delivery (WATCH=${process.env.WATCH || "none"})`);
 
   console.log(
     `sweeps=${sweeps.length}/${total} requests=${requests} flights=${allFlights.length} blocked=${blockedCount} ` +
@@ -930,10 +865,9 @@ async function main() {
   );
 
   if (ingest) {
-    // The topic rides along with the snapshot so the Worker can push without a
-    // second secret the owner cannot read back. The Worker strips it before storing.
-    const notifyTopic = process.env.NTFY_TOPIC;
-    const blob = JSON.stringify(notifyTopic ? { ...state, notifyTopic } : state);
+    // No topic rides along any more: the app subscribes with the Worker's own VAPID
+    // key, so there is no third-party secret to hand over with the snapshot.
+    const blob = JSON.stringify(state);
     const res = await ingestFetch(ingest, ingest.url, { method: 'POST', body: blob, token: ingest.writeToken });
     if (!res.ok) throw new Error(`ingest write failed (HTTP ${res.status}): ${res.text.slice(0, 200)}`);
     console.log(`ingest write complete: ${blob.length} bytes via the Worker.`);

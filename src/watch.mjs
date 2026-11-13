@@ -1,4 +1,3 @@
-import { validTopic } from './alerts.mjs';
 import { listSubscriptions, sendToAll } from './push.mjs';
 import { enqueueEntries, entryFor, sweepOutbox } from './outbox.mjs';
 import { buildBoard, MAX_ROW_AGE_MIN } from './board.js';
@@ -77,30 +76,10 @@ export function normalizeWatch(input, now = Date.now(), known = null) {
 // Which channels can actually deliver, and why the others cannot. The reason is a
 // missing variable name, never its value, and it is shown in the page: a channel
 // that is switched off has to say so rather than accept a watch it will not send.
-// The push topic can arrive two ways, and only one of them is a Worker secret.
-// `NTFY_TOPIC` as a Worker secret wins; otherwise the collector's snapshot write
-// stores it in KV (`notify:topic`), because a GitHub secret cannot be read back in
-// the Worker. Measured 2026-11-11: the KV value was present and the stale alert used
-// it, while every bell read `env.NTFY_TOPIC` only -- so the sheet drew push as OFF
-// and refused to arm a watch it could actually have delivered. One resolution, used
-// by the sheet, the arming call and delivery itself.
-export async function resolveTopic(env) {
-  if (!env) return null;
-  if (validTopic(env.NTFY_TOPIC)) return env.NTFY_TOPIC;
-  try {
-    if (!env.BOARD || typeof env.BOARD.get !== 'function') return null;
-    const stored = await env.BOARD.get('notify:topic');
-    return validTopic(stored) ? stored : null;
-  } catch {
-    return null;
-  }
-}
-
-export function channelStatus(env, topic = null) {
+export function channelStatus(env) {
   const e = env || {};
-    // The app notifies for itself now: readiness is the VAPID keypair, not a third-party
-  // topic. `topic` stays in the signature so callers that still resolve one keep
-  // working, but it no longer decides whether a bell can ring.
+  // The app notifies for itself: readiness is the VAPID keypair, and no third-party
+  // topic exists to be missing any more.
   const pushReady = Boolean(e.VAPID_PUBLIC && e.VAPID_PRIVATE);
   const emailReady = Boolean(e.RESEND_API_KEY && e.ALERT_EMAIL);
   const textReady = Boolean(e.TWILIO_ACCOUNT_SID && e.TWILIO_AUTH_TOKEN && e.TWILIO_FROM && e.ALERT_PHONE);
@@ -337,6 +316,9 @@ export function appPushPayload(env, alert) {
     body: alert.body,
     tag: (alert && (alert.tag || (alert.dest ? `gowild-${alert.dest}` : null))) || 'gowild',
     url: path,
+    // Where the device says "I got this". Encrypted with the rest of the payload, so
+    // the token it carries is no more exposed than the link already is.
+    ack: token ? `/api/push/seen?token=${encodeURIComponent(token)}` : null,
     urgency: alert.priority === 'high' ? 'high' : 'normal',
   };
 }
@@ -526,8 +508,7 @@ export async function evaluateWatches(env, profile, prevState, nextState, now = 
     // Resolve the topic once, from env or KV, then hand delivery an env-shaped
     // object that carries it. Without this a watch armed for push silently has its
     // only channel dropped by buildRequests().
-    const topic = await resolveTopic(env);
-    const eff = topic ? { ...env, NTFY_TOPIC: topic } : env;
+    const eff = env;
     const watches = await listWatches(env, profile);
     if (!watches.length) {
       // Nothing to plan, but a queued event may still owe a retry.

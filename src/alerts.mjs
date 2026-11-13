@@ -1,8 +1,9 @@
 import { ORIGIN, MAX_ALL_IN, ROUTES } from './routes.js';
 
-// Zero-cost push notifications via ntfy.sh.
-// No account, no key, no card: the topic name is the only secret and it lives in
-// an env var. The collector posts plain text; the phone subscribes to the topic.
+// What an alert says, and when it is allowed to say it. Delivery lives elsewhere now
+// (src/push.mjs for the transport, src/outbox.mjs for the retries), because a message
+// and the way it leaves the building fail for different reasons and were being
+// debugged in the same place.
 //
 // Deliberate restraint: an alert only fires when the digest changes and there are
 // genuinely new rows, or when the collector's error state changes. A blocked
@@ -183,37 +184,11 @@ export function buildWatchAlert(state, fresh, spec, now) {
   };
 }
 
-// Same rule as the watch path: an absolute, token-free Click target or nothing at
-// all. Callers that do not know the board's public origin simply do not get one.
-function clickHeader(boardUrl, alert) {
-  const base = typeof boardUrl === 'string' ? boardUrl.replace(/\/+$/, '') : '';
-  const path = alert && typeof alert.clickPath === 'string' ? alert.clickPath : '';
-  if (!base || !path.startsWith('/') || /token/i.test(path)) return {};
-  return { Click: `${base}${path}` };
-}
 
-export async function sendAlert(topic, alert, opts = {}) {
-  if (!topic || !alert) return { sent: false, reason: 'no-topic-or-alert' };
-  // The dry-run harness must execute this branch (it is where the 2026-11-04
-  // ReferenceError lived) without pushing anything to a real phone.
-  if (process.env.NTFY_DRY === '1') {
-    console.log(`[dry] alert would be sent: ${alert.title}`);
-    return { sent: true, dry: true };
-  }
-  const res = await fetch(`https://ntfy.sh/${encodeURIComponent(topic)}`, {
-    method: 'POST',
-    headers: {
-      Title: alert.title,
-      Priority: alert.priority || 'default',
-      Tags: 'airplane',
-      'Content-Type': 'text/plain; charset=utf-8',
-      ...clickHeader(opts.boardUrl, alert),
-    },
-    body: alert.message,
-  });
-  if (!res.ok) throw new Error(`ntfy ${res.status}`);
-  return { sent: true };
-}
+// The ntfy transport that lived here is gone: delivery is the Worker's Web Push path
+// (src/push.mjs) and the outbox that retries it. The builders above stay because the
+// worker and the suites still reason about what an alert says; only the way it used to
+// leave the building is removed.
 
 // --- Liveness ----------------------------------------------------------------
 // The board cannot report its own absence: nothing inside the collector runs to say
@@ -245,12 +220,6 @@ export function buildHeartbeatAlert(state, now, thresholdMin = STALE_ALERT_AFTER
 
 // Worker side: the only component still running when the cron is dead. Pure, so the
 // decision is testable without a KV binding or a network call.
-// ntfy topics are a name, not a URL: keep it to something a URL can carry and a
-// reader can retype. A value that fails this is ignored, never posted.
-export function validTopic(t) {
-  return typeof t === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(t);
-}
-
 export function shouldSendStaleAlert(ageMin, lastAt, now, thresholdMin = STALE_ALERT_AFTER_MIN) {
   const age = Number(ageMin);
   if (!Number.isFinite(age) || age <= thresholdMin) return false;

@@ -163,7 +163,6 @@ jobs:
           BOARD_INGEST_URL: ${{ vars.BOARD_INGEST_URL }}
           BOARD_TOKEN: ${{ secrets.BOARD_TOKEN }}
           BOARD_WRITE_TOKEN: ${{ secrets.BOARD_WRITE_TOKEN }}
-          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           FULL: ${{ inputs.full && '1' || '0' }}
           WANT: ${{ inputs.profiles }}
           ONLY: ${{ inputs.only }}

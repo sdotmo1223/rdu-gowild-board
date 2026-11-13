@@ -10,9 +10,9 @@
 // alert and write path against a fixture payload, so an unresolved identifier or a
 // dead branch fails a gate in under a second instead of failing the 10:18 cron.
 //
-// NTFY_TOPIC is set on purpose (with NTFY_DRY=1 so nothing is delivered): the
-// alert block is the exact code path that broke, and skipping it would make this
-// harness blind to the bug it was built for.
+// WATCH is set on purpose: the handover line names it, and the 2026-11-04 bug lived
+// in the alert block that used to read it. The collector now says out loud that the
+// Worker owns delivery, and this harness fails if that line ever disappears.
 import { spawnSync } from 'node:child_process';
 import { readFileSync, existsSync, rmSync } from 'node:fs';
 import { easternStamp } from '../src/routes.js';
@@ -25,8 +25,6 @@ const env = {
   COLLECTOR_DRY_RUN: '1',
   COLLECTOR_FIXTURE: 'test/fixtures/route.json',
   STATE_OUT: STATE,
-  NTFY_TOPIC: 'dry-run',
-  NTFY_DRY: '1',
   WATCH: 'ATL<=25',
   // Deterministic single-date, single-route sweep: the harness tests wiring, not
   // rotation, and the budget keeps the fixture parse cheap.
@@ -51,7 +49,10 @@ const expect = (name, ok, detail) => {
 expect('collector exited cleanly', r.status === 0, `exit ${r.status}, signal ${r.signal}`);
 expect('no unresolved identifier', !/is not defined/.test(out));
 expect('sweep ran to completion', /sweeps=\d+\/\d+ requests=\d+/.test(out), out.slice(-200));
-expect('alert block executed', /\[dry\] alert|alert sent|alert failed|WATCH=/.test(out));
+// The collector no longer sends anything: the ingest call is where every watch is
+// evaluated, and a second delivery path from CI is exactly the duplicate that hides a
+// failure. The harness asserts the handover instead of a push.
+expect('the Worker owns delivery', /alerts: the Worker owns delivery/.test(out));
 expect('snapshot written', existsSync(STATE));
 
 let state = null;

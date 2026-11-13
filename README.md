@@ -183,7 +183,15 @@ The enrolment is the app's own, so nobody has to copy a topic string anywhere.
 4. **Prove the real path.** Press the bell on a departure inside three hours and wait for
    the next sweep (or `gh workflow run sweep.yml --repo sdotmo1223/rdu-gowild-board -f profiles=rdu`).
 
-5. **If nothing arrives**, the failure is almost never the Worker: a 201 from the push
+5. **One device setting to know about, and it is the owner's to change.** Android holds
+   notification permission **per origin**, so the private app (the WebAPK on `/s/<token>`)
+   can be `allow` while the public `/rdu` one is `ignore` — the board then looks armed and
+   is silent. Enrol on the token page and keep that app as the one that notifies:
+   `adb shell cmd appops get org.chromium.webapk.<id> POST_NOTIFICATION` answers `allow`
+   for the enrollment that works. An agent must not change this setting on the owner's
+   behalf; the page should say which origin it is asking for.
+
+6. **If nothing arrives**, the failure is almost never the Worker: a 201 from the push
    service only means *accepted*, not *shown*. Check, in this order: the OS-level
    notification permission for the WebAPK (`adb shell cmd appops get org.chromium.webapk.*
    POST_NOTIFICATION` — `ignore` here means Android is dropping them, not the Worker); the
@@ -290,7 +298,8 @@ with honest sample sizes, pin and calendar export, and a token-scoped PWA shell.
 | `CF_API_TOKEN`, `CF_ACCOUNT_ID`, `CF_KV_NAMESPACE_ID` | alternative direct-KV write path |
 | *(none of the above)* | writes `state.json` locally instead of uploading |
 | `HEADLESS=0` | run headed, parked offscreen (for a local scheduler) |
-| `NTFY_TOPIC` | optional phone push, no account needed |
+| `VAPID_PUBLIC`, `VAPID_PRIVATE` | the app's own push keys; without them a bell says push is off rather than accepting a watch it cannot deliver |
+| `VAPID_SUBJECT` | optional `mailto:` for the VAPID JWT; defaults to a repo address |
 | `WARMUP_URL` | defaults to `https://booking.flyfrontier.com/` |
 
 A no-credential run now writes `state.json`; render it with `node tools/render-state.mjs`.

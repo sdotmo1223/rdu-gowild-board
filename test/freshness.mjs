@@ -33,8 +33,6 @@ const env = {
   // Exactly what sweep.yml now sets for RDU.
   SWEEP_MAX_REQUESTS: '28',
   SWEEP_DAYS: '2',
-  NTFY_TOPIC: 'dry-run',
-  NTFY_DRY: '1',
 };
 delete env.SWEEP_ONLY;
 delete env.FULL_SWEEP;

@@ -23,7 +23,10 @@ export function isDegraded(lastSuccessAt, lastDispatchAt, now = Date.now(), thre
 export function healthFingerprint(signal) {
   const s = signal && typeof signal === 'object' ? signal : {};
   const link = String(s.link || 'ok');
-  return `${Number(s.pending) || 0}|${Number(s.dead) || 0}|${s.degraded ? 1 : 0}|${link}`;
+  // The canary's state, never its minute count: a gap that lasts an hour must stay one
+  // notice, and the count moves every tick.
+  const canary = s.canary && typeof s.canary === 'object' ? String(s.canary.state || 'unknown') : 'unknown';
+  return `${Number(s.pending) || 0}|${Number(s.dead) || 0}|${s.degraded ? 1 : 0}|${link}|${canary}`;
 }
 
 export function buildHealthNotice(signal, lastFingerprint, now = Date.now()) {
@@ -33,7 +36,9 @@ export function buildHealthNotice(signal, lastFingerprint, now = Date.now()) {
   const degraded = Boolean(s.degraded);
   const link = String(s.link || 'ok');
   const linkBad = link === 'broken' || link === 'drifted';
-  if (!pending && !dead && !degraded && !linkBad) return null;
+  const canary = s.canary && typeof s.canary === 'object' ? s.canary : null;
+  const canaryGap = Boolean(canary && canary.state === 'gap');
+  if (!pending && !dead && !degraded && !linkBad && !canaryGap) return null;
 
   const fingerprint = healthFingerprint(s);
   // Transition only: the caller stores this fingerprint, so a problem that persists
@@ -43,6 +48,14 @@ export function buildHealthNotice(signal, lastFingerprint, now = Date.now()) {
   if (dead) lines.push(`${dead} watch notification${dead === 1 ? '' : 's'} could not be delivered after every retry${s.reason ? ` (${s.reason})` : ''}. The watch is still armed; that event will not be retried.`);
   if (pending) lines.push(`${pending} watch notification${pending === 1 ? '' : 's'} is retrying, not lost${s.reason ? `: ${s.reason}` : ''}.`);
   if (degraded) lines.push(`The stale-board trigger has not recovered the board in over ${DEGRADED_AFTER_MIN} minutes: no dispatch and no successful run. The board may be serving an old snapshot.`);
+  if (canaryGap) {
+    // The one failure no delivery log can see: the push service accepted the payload,
+    // Chrome could not decrypt it, and the notification simply never appeared.
+    const gap = Math.max(0, Number(canary.gapMin) || 0);
+    lines.push(
+      `The app has not acknowledged a push in ${gap} minute${gap === 1 ? '' : 's'}. The last delivery was accepted, so the message left the Worker: Chrome drops a payload it cannot decrypt without an error, and the app may be receiving nothing while every send looks successful.`,
+    );
+  }
   if (linkBad) {
     lines.push(
       link === 'broken'
@@ -54,9 +67,15 @@ export function buildHealthNotice(signal, lastFingerprint, now = Date.now()) {
   return {
     kind: 'health',
     tier: 'health',
-    title: dead ? 'GoWild health: delivery failing' : degraded ? 'GoWild health: trigger degraded' : 'GoWild health: search link may be broken',
+    title: dead
+      ? 'GoWild health: delivery failing'
+      : canaryGap
+        ? 'GoWild health: app not acknowledging'
+        : degraded
+          ? 'GoWild health: trigger degraded'
+          : 'GoWild health: search link may be broken',
     message: lines.join('\n'),
-    priority: dead || link === 'broken' ? 'high' : 'default',
+    priority: dead || link === 'broken' || canaryGap ? 'high' : 'default',
     fingerprint,
     now,
   };

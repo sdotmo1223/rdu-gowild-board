@@ -5,12 +5,12 @@ import { bookabilityHeatmap } from './heatmap.mjs';
 import { releaseTiming } from './timing.mjs';
 import { weeklyPattern } from './schedule.mjs';
 import { ROUTES, PROFILES, PROFILE } from './routes.js';
-import { shouldSendStaleAlert, validTopic } from './alerts.mjs';
+import { shouldSendStaleAlert } from './alerts.mjs';
 import { outboxStatus } from './outbox.mjs';
 import { maybeDispatch } from './dispatch.mjs';
 import { buildLedger } from './ledger.mjs';
 import { ICON_192_PNG, ICON_512_PNG } from './pwa-icons.mjs';
-import { publicKey, toB64u, saveSubscription, listSubscriptions, dropSubscription, sendToAll, sendEmpty } from './push.mjs';
+import { publicKey, toB64u, saveSubscription, listSubscriptions, dropSubscription, sendToAll, sendEmpty, readCanary, recordSeen } from './push.mjs';
 import { runPolicy } from './policy.mjs';
 import { readSettings, writeSettings } from './settings.mjs';
 import {
@@ -19,7 +19,6 @@ import {
   listWatches,
   normalizeWatch,
   removeWatch,
-  resolveTopic,
   saveWatch,
   watchKey,
 } from './watch.mjs';
@@ -67,7 +66,13 @@ self.addEventListener('push', (event) => {
     badge: 'icon-192.png',
     data: { url: d.url || './' },
   };
-  event.waitUntil(self.registration.showNotification(d.title || 'GoWild', opts));
+  // A push the phone actually received has to say so. Without this the Worker cannot
+  // separate "delivered" from "the push service took it and Chrome dropped it without
+  // decrypting" -- both look like a 201 from here. The ack rides inside the encrypted
+  // payload, so it carries the token without exposing it.
+  const work = [self.registration.showNotification(d.title || 'GoWild', opts)];
+  if (d.ack) work.push(fetch(d.ack + '&at=' + Date.now(), { method: 'POST', cache: 'no-store' }).catch(() => {}));
+  event.waitUntil(Promise.all(work));
 });
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
@@ -241,7 +246,7 @@ async function handleWatch(request, env, url, now) {
   }
   // Resolve the topic before answering, so the sheet never draws a channel as off
   // when the collector has already stored a working one in KV.
-  const channels = channelStatus(env, await resolveTopic(env));
+  const channels = channelStatus(env);
   if (request.method === 'GET') {
     const watches = await listWatches(env, PROFILE);
     // The outbox is part of the bell's state, not an internal detail: a pending entry
@@ -413,7 +418,6 @@ async function handleIngest(request, env, url, ctx) {
   }
   try {
     await env.BOARD.put(key, body);
-    if (validTopic(notifyTopic) && notifyTopic !== env.NTFY_TOPIC) await env.BOARD.put('notify:topic', notifyTopic);
   } catch (err) {
     return json({ ok: false, state: 'kv-error', message: String(err && err.message) }, 500);
   }
@@ -454,6 +458,10 @@ async function handlePush(request, env, url, now) {
       ok: true,
       vapid: Boolean(key && env.VAPID_PRIVATE),
       devices: subs.length,
+      // What the channel itself believes: the last delivery, the last acknowledgement,
+      // and whether the two disagree. Added because `devices: 1` and a 201 look healthy
+      // while the phone shows nothing at all.
+      canary: await readCanary(env, now).catch(() => null),
       subscriptions: subs.map((s) => ({ id: s.id, profile: s.profile, label: s.label, at: s.at, lastOk: s.lastOk, lastError: s.lastError })),
     });
   }
@@ -508,6 +516,13 @@ async function handlePush(request, env, url, now) {
       url: link,
     });
     return json({ ok: out.failed.length === 0, devices: subs.length, ...out });
+  }
+
+  // The device's own word that a push arrived. Only ever moves forward, so a retried
+  // acknowledgement cannot un-confirm a delivery.
+  if (action === 'seen' && request.method === 'POST') {
+    const res = await recordSeen(env, url.searchParams.get('at') || now, now);
+    return json({ ok: res.ok, ...res }, res.ok ? 200 : 400);
   }
 
   return json({ ok: false, state: 'unknown', message: 'GET state, POST subscribe, remove or test.' }, 404);
@@ -689,6 +704,13 @@ export default {
         // the failure this board exists to remove, so the outcome rides with the
         // board instead of sitting in a log someone would have to go looking for.
         policy: await env.BOARD.get('policy:last', 'json').catch(() => null),
+        // The channel's own state, from the same records the canary reads. A board that
+        // shows an event as delivered while the app has not acknowledged a push in an
+        // hour is a board that is lying politely.
+        push: {
+          devices: (await listSubscriptions(env).catch(() => [])).length,
+          canary: await readCanary(env, now).catch(() => null),
+        },
         frequency: frequencyTable(state, ROUTES),
         schedule: weeklyPattern(state),
         heatmap: bookabilityHeatmap(state),
@@ -707,10 +729,15 @@ export default {
       const watches = await listWatches(env, PROFILE).catch(() => []);
       // The bell can only be armed for a channel that resolves, and the topic usually
       // lives in KV rather than in the Worker's own environment.
-      const channels = channelStatus(env, await resolveTopic(env));
+      const channels = channelStatus(env);
       // Dead deliveries are the only notification failure the page can report, and
       // the only place the reader would ever find out.
       const outbox = await outboxStatus(env, PROFILE).catch(() => null);
+      // U3: the notifier's own health, so the masthead can never be quietly down. Zero
+      // devices or an old last-delivery is drawn as a condition, not left blank.
+      const devices = await listSubscriptions(env).catch(() => []);
+      const lastOk = devices.reduce((max, s) => Math.max(max, Number(s.lastOk) || 0), 0);
+      const pushState = { devices: devices.length, lastOk: lastOk || null };
       if (ctx && typeof ctx.waitUntil === 'function') {
         ctx.waitUntil(maybeStaleAlert(env, now, 'state', PROFILES[PROFILE].origin));
       }
@@ -722,6 +749,7 @@ export default {
           watches,
           channels,
           outbox,
+          push: pushState,
           // Every profile the Worker knows about, with the one this page is. The page
           // must be able to show an origin it cannot serve rather than omit it.
           origins: Object.keys(PROFILES).map((k) => ({
