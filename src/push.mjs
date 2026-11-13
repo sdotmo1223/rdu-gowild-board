@@ -319,3 +319,15 @@ export async function readCanary(env, now = Date.now()) {
   const waitedMin = Math.max(0, Math.round((now - deliveredAt) / 60000));
   return { ...base, state: waitedMin > CANARY_GAP_MIN ? 'gap' : 'waiting', gapMin: waitedMin };
 }
+
+// An unenrolled phone is not a decryption failure. Measured 2026-11-13 18:45Z: the
+// canary called a delivery a gap, health built its notice, the push service answered
+// 410, the subscription was correctly deleted -- and from then on the tier retried a
+// notice into zero devices every fifteen minutes while the canary kept blaming Chrome
+// for a phone that had simply un-enrolled. With nothing enrolled there is nothing to
+// learn from a delivery log, so the canary says exactly that and health stays quiet:
+// the page's own enroll button is the only thing that can fix it.
+export function canaryStateFor(devices, canary) {
+  if (!(Number(devices) > 0)) return { state: 'no-device' };
+  return canary && typeof canary === 'object' ? canary : { state: 'unknown' };
+}

@@ -10,7 +10,7 @@
 import { buildBoard } from './board.js';
 import { ORIGIN, PROFILE, ROUTES, easternDate } from './routes.js';
 import { outboxStatus } from './outbox.mjs';
-import { readCanary } from './push.mjs';
+import { canaryStateFor, listSubscriptions, readCanary } from './push.mjs';
 import { deliver } from './watch.mjs';
 import { briefingDue, readSettings } from './settings.mjs';
 import { buildBriefing } from './briefing.mjs';
@@ -98,6 +98,9 @@ export async function runPolicy(env, now = Date.now()) {
   // --- health: transitions only ----------------------------------------------
   try {
     const box = await outboxStatus(env, PROFILE).catch(() => null);
+    // Enrollment decides what the canary is allowed to claim. With no device, a stale
+    // delivery is not evidence of anything, and a notice cannot be sent anyway.
+    const deviceCount = (await listSubscriptions(env).catch(() => [])).length;
     const lastDispatch = Number(await kv.get('dispatch:last')) || 0;
     const state = await kv.get('state', 'json').catch(() => null);
     const lastSuccess = state && state.lastSweep && state.lastSweep.at;
@@ -110,12 +113,16 @@ export async function runPolicy(env, now = Date.now()) {
       linkStatus: probe && probe.status,
       // Delivered-and-unacknowledged is invisible everywhere else: the push service
       // said 201, the outbox says sent, and the phone shows nothing.
-      canary: await readCanary(env, now).catch(() => null),
+      canary: canaryStateFor(deviceCount, await readCanary(env, now).catch(() => null)),
     };
     const lastFp = await kv.get(HEALTH_KEY);
     const notice = buildHealthNotice(signal, lastFp, now);
     if (!notice) {
       out.health = 'quiet';
+    } else if (!deviceCount) {
+      // Recorded, not retried: there is nowhere to send it, and a tier that retries into
+      // zero devices every fifteen minutes teaches the reader to ignore it.
+      out.health = 'no-device';
     } else {
       // Every notice opens the board, token-free, like every other push.
       notice.clickPath = notice.clickPath || `/${String(ORIGIN).toLowerCase()}`;

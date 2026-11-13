@@ -18,6 +18,7 @@ import {
   listSubscriptions,
   recordSeen,
   readCanary,
+  canaryStateFor,
   DELIVERY_KEY,
   SEEN_KEY,
   CANARY_GAP_MIN,
@@ -162,6 +163,20 @@ const NOW = 1_800_000_000_000;
   eq(buildHealthNotice(fine, null, NOW), null, 'a confirmed delivery raises nothing');
   const waiting = { pending: 0, dead: 0, degraded: false, link: 'ok', canary: { state: 'waiting' } };
   eq(buildHealthNotice(waiting, null, NOW), null, 'and neither does one still inside the threshold');
+}
+
+// --- 6. An unenrolled phone is not a decryption failure ----------------------
+// Measured 2026-11-13 18:45Z: the canary called a delivery a `gap`, health built its
+// notice, the push service answered 410, the subscription was correctly deleted -- and
+// from then on the tier retried a notice into zero devices every fifteen minutes while
+// the canary kept reporting a gap against a phone that had simply un-enrolled. The
+// honest answer with no device is "nothing can be delivered", not "Chrome ate it".
+{
+  const gap = { deliveredAt: NOW - 45 * 60_000, seenAt: null, state: 'gap', gapMin: 45 };
+  eq(canaryStateFor(0, gap), { state: 'no-device' }, 'with no enrolled device the canary claims no decrypt failure');
+  eq(canaryStateFor(1, gap), gap, 'with a device it is the canary it was');
+  const signal = { pending: 0, dead: 0, degraded: false, link: 'ok', canary: canaryStateFor(0, gap) };
+  eq(buildHealthNotice(signal, null, NOW), null, 'and a no-device canary raises no notice');
 }
 
 console.log(`push: ${checks} checks, ${failed} failed`);
