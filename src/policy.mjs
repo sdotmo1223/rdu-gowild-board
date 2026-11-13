@@ -24,7 +24,10 @@ export const POLICY_KEY = 'policy:last';
 async function push(env, alert) {
   const topic = await resolveTopic(env);
   if (!topic) return { sent: [], failed: [{ channel: 'push', reason: 'no topic configured' }] };
-  return deliver({ ...env, NTFY_TOPIC: topic }, alert, ['push'], { tries: 1 });
+  // Three tries, because this provider throttles Worker egress in short bursts and a
+  // 429 here means "not now", not "never". The daily briefing and the transition
+  // notices can afford the delay; a cron tick has nothing else to do.
+  return deliver({ ...env, NTFY_TOPIC: topic }, alert, ['push'], { tries: 3 });
 }
 
 // One GET per week, no session, no credentials. `redirect: manual` so Frontier's own
