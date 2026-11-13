@@ -538,6 +538,16 @@ export function renderPage(view, state, freq, now = Date.now(), opts = {}) {
   // would ever mention it. A dead delivery is the one notification failure the board
   // has to say out loud, because the reader is waiting for a push that will not come.
   const ob = opts.outbox && typeof opts.outbox === 'object' ? opts.outbox : null;
+  // A retrying delivery is the same silence in a lighter shade: the watch fired, the
+  // provider refused, and the board used to say nothing until the fifth failure made
+  // the event dead. Saying it while it is still retrying is the whole point of
+  // holding it instead of dropping it.
+  if (ob && Number(ob.pending) > 0) {
+    const n = Number(ob.pending);
+    const next = Number(ob.nextAttemptAt) > 0 ? `${hhmm(ob.nextAttemptAt)} ET` : 'soon';
+    banner += `<div class="banner warn"><strong>Watch delivery retrying</strong>
+      <span>${n} notification${n === 1 ? '' : 's'} has not been delivered yet${ob.pendingReason ? ` \u2014 ${esc(ob.pendingReason)}` : ''}. Next attempt ${next}. The event is held, not lost.</span></div>`;
+  }
   if (ob && Number(ob.dead) > 0) {
     banner += `<div class="banner bad"><strong>Watch delivery failing</strong>
       <span>${Number(ob.dead)} notification${Number(ob.dead) === 1 ? '' : 's'} could not be delivered after every retry${ob.lastReason ? ` \u2014 ${esc(ob.lastReason)}` : ''}. The watch is still armed; that event will not be retried.</span></div>`;

@@ -394,5 +394,48 @@ const http = (status) => async () => new Response('', { status });
   }
 }
 
+// --- 11. a pending failure is stated, not silent -------------------------------
+// Measured 2026-11-13: an always-watch on PHL was armed 2.7 min before an ingest. The
+// event WAS planned on that first ingest and ntfy.sh answered HTTP 429, so the entry
+// sat `pending` with `lastReason: "push: HTTP 429"` for over half an hour while
+// /api/watch showed `lastEvent: null` and the page showed nothing at all. Both of
+// those were individually correct -- `lastEvent` may only advance after a 2xx, and a
+// pending entry is not a dead one -- and together they made a ringing bell
+// indistinguishable from a watch that never fired.
+{
+  const store = kv();
+  const s = await armedWatch(store, NOW - 60000);
+  const env = pushEnv(store);
+  globalThis.fetch = async () => new Response('', { status: 429 });
+  await evaluateWatches(env, 'rdu', s, s, NOW);
+
+  const list = await readOutbox(store, 'rdu');
+  eq(list.length, 1, 'a 429 holds the event instead of losing it');
+  eq(list[0].state, 'pending', 'and a 429 is retryable, so it stays pending');
+  ok(/429/.test(list[0].lastReason || ''), 'the outbox records the provider status');
+
+  const saved = await store.get(watchKey('rdu', 'PHL'), 'json');
+  eq(saved.lastEvent, null, 'lastEvent still waits for a 2xx');
+
+  const status = await outboxStatus(store, 'rdu');
+  eq(status.pending, 1, 'the status counts the pending delivery');
+  ok(/429/.test(status.pendingReason || ''), 'and states why it has not arrived yet');
+  ok(Number(status.nextAttemptAt) > NOW, 'and when the next attempt is due');
+  eq(status.lastReason, null, 'a pending failure is never reported as a dead one');
+
+  const view = buildBoard(s, NOW);
+  const page = renderPage(view, s, [], NOW, {
+    basePath: '/s/abcdefgh1234',
+    origin: 'RDU',
+    canWatch: true,
+    watches: [saved],
+    channels: { push: { ready: true } },
+    outbox: status,
+  });
+  ok(/delivery retrying/i.test(page), 'the board says a delivery is retrying');
+  ok(/429/.test(page), 'and names the provider status before the event dies');
+  ok(!/gowild-abc/.test(page), 'without putting the topic on the page');
+}
+
 globalThis.fetch = realFetch;
 console.log(`outbox: ${checks} checks passed`);

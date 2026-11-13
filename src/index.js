@@ -199,7 +199,12 @@ async function handleWatch(request, env, url, now) {
   const channels = channelStatus(env, await resolveTopic(env));
   if (request.method === 'GET') {
     const watches = await listWatches(env, PROFILE);
-    return json({ ok: true, canWatch: true, channels, watches: watches.map(publicWatch).filter(Boolean) });
+    // The outbox is part of the bell's state, not an internal detail: a pending entry
+    // that keeps failing is invisible in `lastEvent` (which waits for a 2xx) and used
+    // to be invisible here too, so "the watch never fired" and "the push is being
+    // retried" looked identical from every caller.
+    const outbox = await outboxStatus(env, PROFILE).catch(() => null);
+    return json({ ok: true, canWatch: true, channels, outbox, watches: watches.map(publicWatch).filter(Boolean) });
   }
   if (request.method !== 'POST') {
     return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, POST' } });

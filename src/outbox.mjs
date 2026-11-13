@@ -259,6 +259,15 @@ export async function outboxStatus(env, profile, now = Date.now()) {
   const pending = list.filter((e) => e.state === 'pending');
   const dead = list.filter((e) => e.state === 'dead');
   const dropped = list.filter((e) => e.state === 'dropped');
+  // A pending entry that has already failed at least once is the one state where a
+  // bell is not ringing AND the system knows why. Measured 2026-11-13: a `departing`
+  // push sat pending on "push: HTTP 429" for half an hour while every surface said
+  // nothing, because `lastEvent` may only advance after a 2xx (correct) and the banner
+  // counted only dead entries (the silence).
+  const newestPending =
+    pending
+      .filter((e) => e.lastReason)
+      .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))[0] || null;
   const ended = [...dead, ...dropped].sort((a, b) => Number(b.deadAt || 0) - Number(a.deadAt || 0))[0] || null;
   return {
     pending: pending.length,
@@ -266,7 +275,10 @@ export async function outboxStatus(env, profile, now = Date.now()) {
     dropped: dropped.length,
     // Dead only: a dropped `departing` event is the system working correctly, and a
     // banner about it would train the reader to ignore the banner that matters.
+    // Dead only: a retrying entry is reported by pendingReason, so the banner can say
+    // "retrying" without pretending the event is gone.
     lastReason: dead.length ? ended && ended.lastReason : null,
+    pendingReason: newestPending ? newestPending.lastReason : null,
     lastDeadAt: dead.length ? Number(ended && ended.deadAt) || null : null,
     nextAttemptAt: pending.length ? Math.min(...pending.map((e) => Number(e.nextAt) || 0)) : null,
     now: Number(now) || 0,
