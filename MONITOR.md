@@ -22,7 +22,57 @@ In `sweep.yml`, in this order, each cheaper than the next:
 3. **`npm run dry`** — executes the collector's real `main()` against a fixture: plan, parse, merge, alerts, write. No network, no production write (0 requests).
 4. Chromium install, then the sweep.
 
-`deploy.yml` runs lint, dry, test and stress before it may publish.
+`deploy.yml` runs lint, the doc lint, dry, test and stress before it may publish, then
+loads the live page in a browser after the upload.
+
+## 2026-11-12 — every claim has to survive a test
+
+Ten changes, each written as a failing test first. The theme is the same in all of
+them: the board was honest about fares and vague about itself.
+
+- **`lastAttempt`** (`src/attempt.mjs`). Every sweep writes `{at, requests, ok, reason}`.
+  A dead tick advances it while `updatedAt` and `aborted` stay where the last good
+  sweep put them, so `/api/board` can no longer show a new request count under an old
+  timestamp.
+- **Delivery outbox** (`src/outbox.mjs`). Events are queued with a key and rendered
+  copy; `announced`/`lastEvent` move only after a 2xx. Recoverable failures back off
+  1/2/4/8 min to a five-attempt ceiling, then the entry is DEAD, kept as a tombstone,
+  and the board says **Watch delivery failing** with the provider's own status. A
+  `departing` event past its departure is dropped, never sent late.
+- **Cron dispatch receiver** (`src/dispatch.mjs`, `[triggers]` in `wrangler.toml`).
+  Every 15 min the Worker reads its own board age and asks GitHub to dispatch the
+  collector when the board is older than 40 min, with a 10-minute cooldown. Deploy log
+  confirms `schedule: */15 * * * *`. **Inert until `GH_DISPATCH_TOKEN` exists** — the
+  route reports exactly that instead of failing.
+- **Zero-alert coverage union.** "Not one GoWild seat from RDU" now requires the union
+  of routes asked to be all 14; the page's station-level sentence uses the same rule.
+- **28 requests per tick.** RDU asks 14 routes x 2 dates; pacing is untouched
+  (sequential, 2-5 s). Per-tick refusals are tallied in `state.refusalDays` and the
+  rollback rule is written in both `sweep.yml` and `collector/collect.mjs`.
+- **Shape matrix** (`test/shapes.mjs`). Eleven payload shapes plus a 120-blob fuzz. It
+  found a real 500: `src/timing.mjs` iterated `state.sweeps` without checking it was an
+  array, so a corrupted KV blob would have taken the page down.
+- **Doc lint** (`tools/doc-lint.mjs`, a deploy gate). It failed immediately on two
+  references that were already dead — README's `board-collect`, and AGENTS naming the
+  deleted `board.yml`/`lga.yml` — and the health suite count in AGENTS (34 -> 48).
+- **Fixture dating.** `state.live.json` carries `capturedOn: 2026-11-03`; `lga-board.png`
+  carries a PNG `tEXt` comment with the same date. Both were captured then, not today.
+
+Live evidence, sweep run `43334067291` (2026-11-13 00:04Z):
+
+```
+sweep plan: 14/14 routes x 2 date(s) = 28 requests (whole list, no shard, budget 28)
+sweeps=28/28 requests=28 flights=197 blocked=0 aborted=no
+ingest write complete: 623289 bytes
+```
+
+After it: `lastAttempt {requests: 28, ok: true}`, `lastSweep {routes: 14, refused: 0,
+blocked: 0, ok: 28}`, oldest route **2 min** (was 727 min), withheld rows **0** (was
+15), rows offered **20** (was 11). Deploy run `43333872528` reports `Deployed
+triggers` + `smoke ok`.
+
+Still on the owner: subscribe the phone to the topic (README has the literal steps),
+and mint `GH_DISPATCH_TOKEN` so the cron receiver stops being a no-op.
 
 ## Measured reliability
 

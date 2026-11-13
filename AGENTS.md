@@ -136,7 +136,7 @@ These were measured on 2026-11-02 and cost real debugging time to establish.
 
 ```bash
 npm run lint                 # no-undef: the defect class `node --check` cannot see
-npm test                     # every suite in test/all.mjs (18 suites); all must pass
+npm test                     # every suite in test/all.mjs (17 suites); all must pass
 npm run stress               # adversarial: 70 checks
 node test/profiles.mjs       # multi-origin: 9 checks
 node --check <file>          # syntax gate, used on every file
