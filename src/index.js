@@ -98,19 +98,48 @@ const png = (b64) => {
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
   return new Response(bytes, {
-    headers: { 'Content-Type': 'image/png', 'Cache-Control': 'max-age=86400' },
+    headers: { 'Content-Type': 'image/png', 'Cache-Control': 'max-age=86400', 'X-Content-Type-Options': 'nosniff' },
   });
 };
 
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body, null, 2), {
     status,
-    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+    },
   });
 
-const html = (body) =>
+// One policy for every HTML response, and `no-referrer` is the load-bearing one: the
+// token page carries the secret in its own path, so any referrer header hands that
+// path to whatever the page links to next. Everything else is the ordinary floor --
+// no MIME sniffing, no framing, no plugin surfaces, and a CSP that allows the page's
+// own inline style/script blocks (the board ships both inline) while refusing any
+// script, frame or connect target that is not this origin.
+const HTML_HEADERS = {
+  'Content-Type': 'text/html; charset=utf-8',
+  'Cache-Control': 'no-store',
+  'Referrer-Policy': 'no-referrer',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+  'Content-Security-Policy':
+    "default-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; " +
+    "img-src 'self' data:; style-src 'self' 'unsafe-inline'; " +
+    "script-src 'self' 'unsafe-inline'; connect-src 'self'; " +
+    "manifest-src 'self'; worker-src 'self'",
+};
+
+const html = (body) => new Response(body, { headers: HTML_HEADERS });
+
+// The bare-text paths (404s and method refusals) get the same sniffing floor as
+// everything else; they carry no secret, but a sniffed 404 is still a browser guess.
+const text = (body, status = 200, extra = {}) =>
   new Response(body, {
-    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+    status,
+    headers: { 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff', ...extra },
   });
 
 const INGEST_MAX_BYTES = 6 * 1024 * 1024;
@@ -257,7 +286,7 @@ async function handleWatch(request, env, url, now) {
     return json({ ok: true, canWatch: true, channels, outbox, watches: watches.map(publicWatch).filter(Boolean) });
   }
   if (request.method !== 'POST') {
-    return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, POST' } });
+    return text('Method not allowed', 405, { Allow: 'GET, POST' });
   }
   let raw;
   try {
@@ -359,7 +388,7 @@ async function handleIngest(request, env, url, ctx) {
     }
   }
   if (request.method !== 'POST') {
-    return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, POST' } });
+    return text('Method not allowed', 405, { Allow: 'GET, POST' });
   }
   // Proves the credentials, the profile and the binding without writing
   // anything, so a caller can fail in one second instead of after a two-minute
@@ -528,8 +557,54 @@ async function handlePush(request, env, url, now) {
   return json({ ok: false, state: 'unknown', message: 'GET state, POST subscribe, remove or test.' }, 404);
 }
 
+// Best-effort throttle, per isolate. A Worker isolate is ephemeral and this map dies
+// with it, so it is a cost boundary, not a security boundary -- the real control is a
+// Cloudflare rate-limiting rule on /api/* and /s/*. What this buys is that a failed
+// credential cannot be retried in a tight loop for free, and that a runaway client
+// cannot spend collector runs through /api/dispatch.
+const ATTEMPTS = new Map();
+const THROTTLE_WINDOW_MS = 60_000;
+const THROTTLE_MAX = 10;
+
+function throttled(key, now) {
+  const rec = ATTEMPTS.get(key);
+  if (!rec || now - rec.start > THROTTLE_WINDOW_MS) {
+    if (ATTEMPTS.size > 2000) ATTEMPTS.clear();
+    ATTEMPTS.set(key, { start: now, n: 1 });
+    return false;
+  }
+  rec.n += 1;
+  return rec.n > THROTTLE_MAX;
+}
+
 export default {
+  // A token in the query string is written to every log between here and the browser:
+  // Cloudflare's request log, the browser's history, any proxy. It still works, but it
+  // announces itself now, so the header form is the one that gets adopted next.
   async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const now = Date.now();
+    const ip = request.headers.get('cf-connecting-ip') || 'local';
+    // Only a request that actually presented a credential can be a guess. Counting
+    // every 404 would throttle a browser asking for a favicon.
+    const presented =
+      /^Bearer\s+\S+$/i.test(request.headers.get('authorization') || '') || url.searchParams.has('token');
+    if (presented && throttled(`auth:${ip}`, now)) {
+      return text('Too many attempts', 429, { 'Retry-After': '60' });
+    }
+    const res = await this.handle(request, env, ctx);
+    if (!url.searchParams.has('token')) return res;
+    console.warn('deprecated query token on', url.pathname);
+    const headers = new Headers(res.headers);
+    headers.set('Deprecation', 'true');
+    headers.set(
+      'Warning',
+      '299 - "token in the query string is deprecated; send Authorization: Bearer <BOARD_TOKEN> instead"',
+    );
+    return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+  },
+
+  async handle(request, env, ctx) {
     const url = new URL(request.url);
     const now = Date.now();
     // The staleness check is scheduled by each route that renders a profile, not here:
@@ -593,7 +668,7 @@ export default {
         const policy = await env.BOARD.get('policy:last', 'json').catch(() => null);
         return json({ ok: true, settings: await readSettings(env), policy });
       }
-      if (request.method !== 'POST') return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, POST' } });
+      if (request.method !== 'POST') return text('Method not allowed', 405, { Allow: 'GET, POST' });
       let patch = null;
       try {
         patch = await request.json();
@@ -723,7 +798,7 @@ export default {
     if (match) {
       // One comparison rule for one secret: sameSecret is constant-time, and the
       // page must not use a different rule from the API that guards the same data.
-      if (!sameSecret(match[1], env.BOARD_TOKEN)) return new Response('Not found', { status: 404 });
+      if (!sameSecret(match[1], env.BOARD_TOKEN)) return text('Not found', 404);
       const view = buildBoard(state, now);
       // The token path is the only place a watch can be created, so it is the only
       // place the bell exists. A KV hiccup here costs the bells, never the board.
@@ -820,7 +895,7 @@ export default {
     let asset = null;
     const tokAsset = url.pathname.match(/^\/s\/([A-Za-z0-9_-]{8,})\/(manifest\.webmanifest|sw\.js|icon\.svg|icon-192\.png|icon-512\.png)$/);
     if (tokAsset) {
-      if (!sameSecret(tokAsset[1], env.BOARD_TOKEN)) return new Response('Not found', { status: 404 });
+      if (!sameSecret(tokAsset[1], env.BOARD_TOKEN)) return text('Not found', 404);
       asset = { base: `/s/${tokAsset[1]}`, name: tokAsset[2], origin: PROFILES[PROFILE].origin };
     } else {
       const pubAsset = url.pathname.match(/^\/([a-z]{3})\/(manifest\.webmanifest|sw\.js|icon\.svg|icon-192\.png|icon-512\.png)$/);
@@ -845,14 +920,14 @@ export default {
           ],
         });
         return new Response(body, {
-          headers: { 'Content-Type': 'application/manifest+json', 'Cache-Control': 'no-store' },
+          headers: { 'Content-Type': 'application/manifest+json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' },
         });
       }
       if (asset.name === 'icon-192.png') return png(ICON_192_PNG);
       if (asset.name === 'icon-512.png') return png(ICON_512_PNG);
       if (asset.name === 'icon.svg') {
         return new Response(ICON_SVG, {
-          headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'max-age=86400' },
+          headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'max-age=86400', 'X-Content-Type-Options': 'nosniff' },
         });
       }
       return new Response(SW_JS, {
@@ -860,11 +935,12 @@ export default {
           'Content-Type': 'text/javascript; charset=utf-8',
           'Service-Worker-Allowed': asset.base,
           'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff',
         },
       });
     }
 
-    return new Response('Not found', { status: 404 });
+    return text('Not found', 404);
   },
 
   // Cloudflare Cron Trigger, every 15 minutes (see [triggers] in wrangler.toml). It
