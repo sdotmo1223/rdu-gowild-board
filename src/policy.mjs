@@ -115,14 +115,19 @@ export async function runPolicy(env, now = Date.now()) {
       // said 201, the outbox says sent, and the phone shows nothing.
       canary: canaryStateFor(deviceCount, await readCanary(env, now).catch(() => null)),
     };
+    // Enrollment is the tier's own condition, not a detail of a notice: with nothing
+    // enrolled the health tier cannot ring at all, and reporting `quiet` there would
+    // read as "all well" in the one state where every other tier is also mute.
+    if (!deviceCount) {
+      out.health = 'no-device';
+      const stop = new Error('no device enrolled');
+      stop.code = 'NO_DEVICE';
+      throw stop;
+    }
     const lastFp = await kv.get(HEALTH_KEY);
     const notice = buildHealthNotice(signal, lastFp, now);
     if (!notice) {
       out.health = 'quiet';
-    } else if (!deviceCount) {
-      // Recorded, not retried: there is nowhere to send it, and a tier that retries into
-      // zero devices every fifteen minutes teaches the reader to ignore it.
-      out.health = 'no-device';
     } else {
       // Every notice opens the board, token-free, like every other push.
       notice.clickPath = notice.clickPath || `/${String(ORIGIN).toLowerCase()}`;
@@ -135,7 +140,9 @@ export async function runPolicy(env, now = Date.now()) {
       }
     }
   } catch (err) {
-    out.health = `error: ${(err && err.message) || err}`;
+    // `no-device` was already recorded; it is not an error, and the generic handler
+    // must not overwrite it with one.
+    if (!(err && err.code === 'NO_DEVICE')) out.health = `error: ${(err && err.message) || err}`;
   }
 
   // A tier that fails silently is the failure mode this board exists to remove. The
